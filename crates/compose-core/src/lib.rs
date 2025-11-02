@@ -735,6 +735,7 @@ pub struct SlotTable {
     /// Maps anchor IDs to their current physical positions in the slots array.
     /// This indirection layer provides positional stability during slot reorganization.
     anchors: Vec<usize>, // index = anchor_id.0
+    anchors_dirty: bool,
     /// Counter for allocating unique anchor IDs.
     next_anchor_id: Cell<usize>,
     /// Tracks whether the most recent start() reused a gap slot.
@@ -834,6 +835,7 @@ impl SlotTable {
             cursor: 0,
             group_stack: Vec::new(),
             anchors: Vec::new(),
+            anchors_dirty: false,
             next_anchor_id: Cell::new(1), // Start at 1 (0 is INVALID)
             last_start_was_gap: false,
         }
@@ -1099,7 +1101,7 @@ impl SlotTable {
 
     /// Update all anchor positions to match their current physical positions in the slots array.
     /// This should be called after any operation that modifies slot positions (insert, remove, etc.)
-    fn update_all_anchor_positions(&mut self) {
+    fn rebuild_all_anchor_positions(&mut self) {
         let mut max_anchor = 0usize;
         for slot in &self.slots {
             let idx = slot.anchor_id().0;
@@ -1529,7 +1531,7 @@ impl SlotTable {
                 self.shift_group_frames(cursor, moved.len() as isize);
                 self.slots.splice(cursor..cursor, moved);
                 // Update all anchor positions after group move
-                self.update_all_anchor_positions();
+                self.anchors_dirty = true;
                 let frame = GroupFrame {
                     key,
                     start: cursor,
@@ -1560,7 +1562,8 @@ impl SlotTable {
         );
         self.last_start_was_gap = parent_force;
         // Update all anchor positions after insertion
-        self.update_all_anchor_positions();
+        self.shift_anchor_positions_from(cursor, 1);
+        self.update_anchor_for_slot(cursor);
         self.cursor = cursor + 1;
         self.group_stack.push(GroupFrame {
             key,
@@ -1571,7 +1574,29 @@ impl SlotTable {
         self.update_group_bounds();
         cursor
     }
-
+    fn update_anchor_for_slot(&mut self, slot_index: usize) {
+        let anchor_id = self.slots[slot_index].anchor_id().0;
+        if anchor_id == 0 {
+            return;
+        }
+        if anchor_id >= self.anchors.len() {
+            self.anchors.resize(anchor_id + 1, INVALID_ANCHOR_POS);
+        }
+        self.anchors[anchor_id] = slot_index;
+    }
+    fn shift_anchor_positions_from(&mut self, start_slot: usize, delta: isize) {
+        for pos in &mut self.anchors {
+            if *pos != INVALID_ANCHOR_POS && *pos >= start_slot {
+                *pos = (*pos as isize + delta) as usize;
+            }
+        }
+    }
+    fn flush_anchors_if_dirty(&mut self) {
+        if self.anchors_dirty {
+            self.anchors_dirty = false;
+            self.rebuild_all_anchor_positions();
+        }
+    }
     pub fn end(&mut self) {
         if let Some(frame) = self.group_stack.pop() {
             let end = self.cursor;
@@ -1608,6 +1633,7 @@ impl SlotTable {
                 }
             }
         }
+        self.flush_anchors_if_dirty();
     }
 
     fn start_recompose(&mut self, index: usize) {
