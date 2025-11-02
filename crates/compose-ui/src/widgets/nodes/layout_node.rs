@@ -3,7 +3,8 @@ use compose_core::{Node, NodeId};
 use compose_foundation::{BasicModifierNodeContext, ModifierNodeChain};
 use compose_ui_layout::{Constraints, MeasurePolicy};
 use indexmap::IndexSet;
-use std::{cell::RefCell, rc::Rc};
+use std::hash::Hash;
+use std::{cell::RefCell, hash::Hasher, rc::Rc};
 
 #[derive(Clone)]
 struct MeasurementCacheEntry {
@@ -11,10 +12,54 @@ struct MeasurementCacheEntry {
     measured: Rc<MeasuredNode>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum IntrinsicKind {
+    MinWidth(f32),
+    MaxWidth(f32),
+    MinHeight(f32),
+    MaxHeight(f32),
+}
+
+impl IntrinsicKind {
+    fn discriminant(&self) -> u8 {
+        match self {
+            IntrinsicKind::MinWidth(_) => 0,
+            IntrinsicKind::MaxWidth(_) => 1,
+            IntrinsicKind::MinHeight(_) => 2,
+            IntrinsicKind::MaxHeight(_) => 3,
+        }
+    }
+
+    fn value_bits(&self) -> u32 {
+        match self {
+            IntrinsicKind::MinWidth(value)
+            | IntrinsicKind::MaxWidth(value)
+            | IntrinsicKind::MinHeight(value)
+            | IntrinsicKind::MaxHeight(value) => value.to_bits(),
+        }
+    }
+}
+
+impl PartialEq for IntrinsicKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.discriminant() == other.discriminant() && self.value_bits() == other.value_bits()
+    }
+}
+
+impl Eq for IntrinsicKind {}
+
+impl Hash for IntrinsicKind {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.discriminant().hash(state);
+        self.value_bits().hash(state);
+    }
+}
+
 #[derive(Default)]
 struct NodeCacheState {
     epoch: u64,
     measurements: Vec<MeasurementCacheEntry>,
+    intrinsics: Vec<(IntrinsicKind, f32)>,
 }
 
 #[derive(Clone, Default)]
@@ -26,6 +71,7 @@ impl LayoutNodeCacheHandles {
     pub(crate) fn clear(&self) {
         let mut state = self.state.borrow_mut();
         state.measurements.clear();
+        state.intrinsics.clear();
         state.epoch = 0;
     }
 
@@ -33,6 +79,7 @@ impl LayoutNodeCacheHandles {
         let mut state = self.state.borrow_mut();
         if state.epoch != epoch {
             state.measurements.clear();
+            state.intrinsics.clear();
             state.epoch = epoch;
         }
     }
@@ -59,6 +106,28 @@ impl LayoutNodeCacheHandles {
                 constraints,
                 measured,
             });
+        }
+    }
+
+    pub(crate) fn get_intrinsic(&self, kind: &IntrinsicKind) -> Option<f32> {
+        let state = self.state.borrow();
+        state
+            .intrinsics
+            .iter()
+            .find(|(stored_kind, _)| stored_kind == kind)
+            .map(|(_, value)| *value)
+    }
+
+    pub(crate) fn store_intrinsic(&self, kind: IntrinsicKind, value: f32) {
+        let mut state = self.state.borrow_mut();
+        if let Some((_, existing)) = state
+            .intrinsics
+            .iter_mut()
+            .find(|(stored_kind, _)| stored_kind == &kind)
+        {
+            *existing = value;
+        } else {
+            state.intrinsics.push((kind, value));
         }
     }
 }

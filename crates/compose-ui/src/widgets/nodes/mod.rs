@@ -6,6 +6,7 @@ mod spacer_node;
 mod text_node;
 
 pub use button_node::ButtonNode;
+pub use layout_node::IntrinsicKind;
 pub use layout_node::LayoutNode;
 pub(crate) use layout_node::LayoutNodeCacheHandles;
 pub use spacer_node::SpacerNode;

@@ -118,10 +118,13 @@ impl TextMeasurer for CachedRusttypeTextMeasurer {
         self.cache
             .lock()
             .expect("text metrics cache poisoned")
-            .insert(text, TextMetrics {
-                width: metrics.width,
-                height: metrics.height,
-            });
+            .insert(
+                text,
+                TextMetrics {
+                    width: metrics.width,
+                    height: metrics.height,
+                },
+            );
         metrics
     }
 }
