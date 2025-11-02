@@ -1,6 +1,6 @@
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use crate::collections::map::HashSet;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use crate::snapshot_id_set::{SnapshotId, SnapshotIdSet};

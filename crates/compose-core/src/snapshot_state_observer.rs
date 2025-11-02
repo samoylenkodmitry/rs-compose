@@ -5,7 +5,7 @@ use crate::snapshot_v2::{
 use crate::state::StateObject;
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use crate::collections::map::HashSet;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -153,7 +153,10 @@ impl SnapshotStateObserverInner {
                     return;
                 }
                 let mut entry = entry_for_observer.borrow_mut();
-                entry.observed.insert(state.object_id().as_usize());
+                let id = state.object_id().as_usize();
+                if !entry.observed.iter().any(|&x| x == id) {
+                    entry.observed.push(id);
+                }
             }
         });
 
@@ -249,9 +252,9 @@ impl SnapshotStateObserverInner {
             return;
         }
 
-        let mut modified_ids = HashSet::new();
+        let mut modified_ids: SmallVec<usize, MAX_OBSERVED_STATES> = SmallVec::new();
         for state in modified {
-            modified_ids.insert(state.object_id().as_usize());
+            modified_ids.push(state.object_id().as_usize());
         }
 
         let scopes = self.scopes.borrow();
@@ -288,10 +291,12 @@ impl SnapshotStateObserverInner {
     }
 }
 
+use smallvec::SmallVec;
+const MAX_OBSERVED_STATES: usize = 8;
 struct ScopeEntry {
     scope: Box<dyn Any>,
     on_changed: Rc<dyn Fn(&dyn Any)>,
-    observed: HashSet<StateObjectId>,
+    observed: SmallVec<StateObjectId, MAX_OBSERVED_STATES>,
 }
 
 impl ScopeEntry {
@@ -302,7 +307,7 @@ impl ScopeEntry {
         Self {
             scope: Box::new(scope),
             on_changed,
-            observed: HashSet::new(),
+            observed: SmallVec::new(),
         }
     }
 

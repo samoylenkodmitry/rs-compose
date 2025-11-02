@@ -13,20 +13,11 @@ pub mod default {
 
 #[cfg(not(feature = "std-hash"))]
 pub mod default {
+    // fast branch
     pub use ahash::AHasher as DefaultHasher;
 
     #[inline]
     pub fn new() -> DefaultHasher {
         DefaultHasher::default()
     }
-}
-
-/// convenience: hash a single value with whichever default is active
-#[inline]
-pub fn hash_one<T: Hash>(v: &T) -> u64 {
-    #[allow(unused_imports)]
-    use crate::hash::default;
-    let mut h = default::new();
-    v.hash(&mut h);
-    h.finish()
 }
