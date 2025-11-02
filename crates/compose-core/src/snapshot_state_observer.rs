@@ -208,8 +208,10 @@ impl SnapshotStateObserverInner {
         scope: impl Any + Clone + PartialEq + 'static,
         on_changed: Rc<dyn Fn(&dyn Any)>,
     ) -> Rc<RefCell<ScopeEntry>> {
+        // ---------- FAST PATH: real compose scope ----------
         if let Some(rc_scope) = (&scope as &dyn Any).downcast_ref::<RecomposeScope>() {
-            let id = rc_scope.id();
+            let id: usize = rc_scope.id() as usize; // or `.0` or similar
+
             let mut fast = self.fast_scopes.borrow_mut();
 
             if id >= fast.len() {
@@ -228,14 +230,18 @@ impl SnapshotStateObserverInner {
             return entry;
         }
 
+        // ---------- SLOW / GENERIC PATH ----------
         let mut scopes = self.scopes.borrow_mut();
 
-        if let Some(index) = scopes
+        if let Some(existing) = scopes
             .iter()
-            .enumerate()
-            .find_map(|(idx, entry)| entry.borrow().matches_scope(&scope).then_some(idx))
+            .find(|entry| entry.borrow().matches_scope(&scope))
         {
-            scopes.remove(index);
+            // IMPORTANT: do NOT remove + push; that changes Rc and breaks other refs
+            existing
+                .borrow_mut()
+                .reset(scope.clone(), on_changed.clone());
+            return existing.clone();
         }
 
         let entry = Rc::new(RefCell::new(ScopeEntry::new(scope, on_changed)));
