@@ -829,6 +829,8 @@ impl Default for Slot {
 }
 
 impl SlotTable {
+    const INITIAL_CAP: usize = 32;
+
     pub fn new() -> Self {
         Self {
             slots: Vec::new(),
@@ -839,6 +841,40 @@ impl SlotTable {
             next_anchor_id: Cell::new(1), // Start at 1 (0 is INVALID)
             last_start_was_gap: false,
         }
+    }
+
+    fn ensure_capacity(&mut self) {
+        if self.slots.is_empty() {
+            self.slots.reserve(Self::INITIAL_CAP);
+            self.append_gap_slots(Self::INITIAL_CAP);
+        } else if self.cursor == self.slots.len() {
+            self.grow_slots();
+        }
+    }
+
+    fn append_gap_slots(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        for _ in 0..count {
+            self.slots.push(Slot::Gap {
+                anchor: AnchorId::INVALID,
+                group_key: None,
+                group_scope: None,
+                group_len: 0,
+            });
+        }
+    }
+
+    fn grow_slots(&mut self) {
+        let old_len = self.slots.len();
+        let target_len = (old_len.saturating_mul(2)).max(Self::INITIAL_CAP);
+        let additional = target_len.saturating_sub(old_len);
+        if additional == 0 {
+            return;
+        }
+        self.slots.reserve(additional);
+        self.append_gap_slots(additional);
     }
 
     /// Allocate a new unique anchor ID.
@@ -1154,6 +1190,8 @@ impl SlotTable {
     }
 
     pub fn start(&mut self, key: Key) -> usize {
+        self.ensure_capacity();
+
         let cursor = self.cursor;
         let parent_force = self
             .group_stack
@@ -1259,8 +1297,14 @@ impl SlotTable {
         );
 
         if cursor == self.slots.len() {
-            return self.insert_new_group_at_cursor(key);
+            self.grow_slots();
         }
+
+        debug_assert!(
+            cursor < self.slots.len(),
+            "slot cursor {} failed to grow",
+            cursor
+        );
 
         if cursor > 0 && !matches!(self.slots.get(cursor), Some(Slot::Gap { .. })) {
             if let Some(Slot::Group { key: prev_key, .. }) = self.slots.get(cursor - 1) {
@@ -1390,6 +1434,11 @@ impl SlotTable {
             return cursor;
         }
 
+        let allow_rescue = !parent_force && cursor < self.slots.len().saturating_sub(1);
+        if !allow_rescue {
+            return self.insert_new_group_at_cursor(key);
+        }
+
         // When a group is restored from a gap, its preserved length may not accurately
         // reflect where child groups/gaps are now located. To prevent duplicate group
         // creation, we need to search beyond the preserved extent.
@@ -1409,7 +1458,7 @@ impl SlotTable {
 
         let mut search_index = cursor;
         let mut found_group: Option<(usize, AnchorId, usize, Option<ScopeId>)> = None;
-        const SEARCH_BUDGET: usize = 64;
+        const SEARCH_BUDGET: usize = 16;
         let mut scanned = 0usize;
         while search_index < parent_end && scanned < SEARCH_BUDGET {
             scanned += 1;
@@ -1543,7 +1592,7 @@ impl SlotTable {
         // matching group/gap, regardless of structure complexity.
         if found_group.is_none() && needs_extended_search {
             search_index = parent_end;
-            const EXTENDED_SEARCH_BUDGET: usize = 32;
+            const EXTENDED_SEARCH_BUDGET: usize = 16;
             let mut extended_scanned = 0usize;
             while search_index < self.slots.len() && extended_scanned < EXTENDED_SEARCH_BUDGET {
                 extended_scanned += 1;
@@ -1639,21 +1688,41 @@ impl SlotTable {
             .map(|frame| frame.force_children_recompose)
             .unwrap_or(false);
 
-        self.shift_group_frames(cursor, 1);
         let group_anchor = self.allocate_anchor();
-        self.slots.insert(
-            cursor,
-            Slot::Group {
+        if cursor < self.slots.len() {
+            if matches!(self.slots.get(cursor), Some(Slot::Gap { .. })) {
+                self.slots[cursor] = Slot::Group {
+                    key,
+                    anchor: group_anchor,
+                    len: 0,
+                    scope: None,
+                    has_gap_children: false,
+                };
+            } else {
+                self.shift_group_frames(cursor, 1);
+                self.slots.insert(
+                    cursor,
+                    Slot::Group {
+                        key,
+                        anchor: group_anchor,
+                        len: 0,
+                        scope: None,
+                        has_gap_children: false,
+                    },
+                );
+                self.shift_anchor_positions_from(cursor, 1);
+            }
+        } else {
+            self.slots.push(Slot::Group {
                 key,
                 anchor: group_anchor,
                 len: 0,
                 scope: None,
                 has_gap_children: false,
-            },
-        );
+            });
+        }
+        self.register_anchor(group_anchor, cursor);
         self.last_start_was_gap = parent_force;
-        self.shift_anchor_positions_from(cursor, 1);
-        self.update_anchor_for_slot(cursor);
         self.cursor = cursor + 1;
         self.group_stack.push(GroupFrame {
             key,
@@ -1778,6 +1847,8 @@ impl SlotTable {
     }
 
     pub fn use_value_slot<T: 'static>(&mut self, init: impl FnOnce() -> T) -> usize {
+        self.ensure_capacity();
+
         let cursor = self.cursor;
         debug_assert!(
             cursor <= self.slots.len(),
@@ -1920,6 +1991,8 @@ impl SlotTable {
     }
 
     pub fn record_node(&mut self, id: NodeId) {
+        self.ensure_capacity();
+
         let cursor = self.cursor;
         debug_assert!(
             cursor <= self.slots.len(),
