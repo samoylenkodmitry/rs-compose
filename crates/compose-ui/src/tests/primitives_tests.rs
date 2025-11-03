@@ -1377,7 +1377,7 @@ fn test_fill_max_width_should_not_propagate_to_wrapping_parent() {
     // - Inner Column queries Row's minimum intrinsic width = 200px
     // - Inner Column constrains itself to 200px
     // - Row with fill_max_width() fills that 200px container
-    // - Outer Column wraps around Inner Column -> 200px
+    // - Outer Column (also intrinsic) wraps around Inner Column -> 200px
 
     const EPSILON: f32 = 0.001;
 
@@ -1396,5 +1396,329 @@ fn test_fill_max_width_should_not_propagate_to_wrapping_parent() {
         (row_layout.rect.width - 200.0).abs() < EPSILON,
         "Row should fill its 200px parent, got {}",
         row_layout.rect.width
+    );
+}
+
+#[test]
+fn wrap_column_with_fill_child_uses_content_width() {
+    const EPSILON: f32 = 1e-3;
+
+    let mut composition = Composition::new(MemoryApplier::new());
+    let key = location_key(file!(), line!(), column!());
+
+    let column_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+    let row_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+    let first_chip_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+    let second_chip_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+
+    let column_capture = Rc::clone(&column_id);
+    let row_capture = Rc::clone(&row_id);
+    let first_chip_capture = Rc::clone(&first_chip_id);
+    let second_chip_capture = Rc::clone(&second_chip_id);
+
+    composition
+        .render(key, move || {
+            let row_capture = Rc::clone(&row_capture);
+            let first_chip_capture = Rc::clone(&first_chip_capture);
+            let second_chip_capture = Rc::clone(&second_chip_capture);
+            *column_capture.borrow_mut() = Some(Column(
+                Modifier::padding(10.0),
+                ColumnSpec::default(),
+                move || {
+                    let row_inner = Rc::clone(&row_capture);
+                    let first_inner = Rc::clone(&first_chip_capture);
+                    let second_inner = Rc::clone(&second_chip_capture);
+
+                    *row_inner.borrow_mut() = Some(Row(
+                        Modifier::fill_max_width(),
+                        RowSpec::default(),
+                        move || {
+                            *first_inner.borrow_mut() = Some(Spacer(Size {
+                                width: 80.0,
+                                height: 24.0,
+                            }));
+                            *second_inner.borrow_mut() = Some(Spacer(Size {
+                                width: 40.0,
+                                height: 24.0,
+                            }));
+                        },
+                    ));
+                },
+            ));
+        })
+        .expect("initial render");
+
+    let root = composition.root().expect("root node");
+    let layout_tree = composition
+        .applier_mut()
+        .compute_layout(
+            root,
+            Size {
+                width: 640.0,
+                height: 480.0,
+            },
+        )
+        .expect("compute layout");
+
+    fn find_layout<'a>(node: &'a LayoutBox, target: NodeId) -> Option<&'a LayoutBox> {
+        if node.node_id == target {
+            return Some(node);
+        }
+        node.children
+            .iter()
+            .find_map(|child| find_layout(child, target))
+    }
+
+    let root_layout = layout_tree.root();
+    let column_layout = find_layout(
+        root_layout,
+        column_id
+            .borrow()
+            .as_ref()
+            .copied()
+            .expect("column node id"),
+    )
+    .expect("column layout");
+    let row_layout = find_layout(
+        root_layout,
+        row_id.borrow().as_ref().copied().expect("row node id"),
+    )
+    .expect("row layout");
+    let first_chip_layout = find_layout(
+        root_layout,
+        first_chip_id
+            .borrow()
+            .as_ref()
+            .copied()
+            .expect("first chip id"),
+    )
+    .expect("first chip layout");
+    let second_chip_layout = find_layout(
+        root_layout,
+        second_chip_id
+            .borrow()
+            .as_ref()
+            .copied()
+            .expect("second chip id"),
+    )
+    .expect("second chip layout");
+
+    assert!(
+        (column_layout.rect.width - 140.0).abs() < EPSILON,
+        "Column width should wrap content (140px), got {:.3}",
+        column_layout.rect.width
+    );
+    assert!(
+        (row_layout.rect.width - 120.0).abs() < EPSILON,
+        "Row width should match chip content (120px), got {:.3}",
+        row_layout.rect.width
+    );
+    assert!(
+        (row_layout.rect.x - 10.0).abs() < EPSILON,
+        "Row x expected 10px from column padding, got {:.3}",
+        row_layout.rect.x
+    );
+    assert!(
+        (first_chip_layout.rect.width - 80.0).abs() < EPSILON,
+        "First chip width expected 80px, got {:.3}",
+        first_chip_layout.rect.width
+    );
+    assert!(
+        (second_chip_layout.rect.width - 40.0).abs() < EPSILON,
+        "Second chip width expected 40px, got {:.3}",
+        second_chip_layout.rect.width
+    );
+}
+
+#[test]
+fn fill_child_respects_explicit_parent_width() {
+    const EPSILON: f32 = 1e-3;
+
+    let mut composition = Composition::new(MemoryApplier::new());
+    let key = location_key(file!(), line!(), column!());
+
+    let column_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+    let row_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+
+    let column_capture = Rc::clone(&column_id);
+    let row_capture = Rc::clone(&row_id);
+
+    composition
+        .render(key, move || {
+            let row_capture = Rc::clone(&row_capture);
+            *column_capture.borrow_mut() = Some(Column(
+                Modifier::width(200.0),
+                ColumnSpec::default(),
+                move || {
+                    let row_inner = Rc::clone(&row_capture);
+                    *row_inner.borrow_mut() = Some(Row(
+                        Modifier::fill_max_width(),
+                        RowSpec::default(),
+                        move || {
+                            Spacer(Size {
+                                width: 60.0,
+                                height: 32.0,
+                            });
+                            Spacer(Size {
+                                width: 40.0,
+                                height: 32.0,
+                            });
+                        },
+                    ));
+                },
+            ));
+        })
+        .expect("initial render");
+
+    let root = composition.root().expect("root node");
+    let layout_tree = composition
+        .applier_mut()
+        .compute_layout(
+            root,
+            Size {
+                width: 480.0,
+                height: 320.0,
+            },
+        )
+        .expect("compute layout");
+
+    fn find_layout<'a>(node: &'a LayoutBox, target: NodeId) -> Option<&'a LayoutBox> {
+        if node.node_id == target {
+            return Some(node);
+        }
+        node.children
+            .iter()
+            .find_map(|child| find_layout(child, target))
+    }
+
+    let root_layout = layout_tree.root();
+    let column_layout = find_layout(
+        root_layout,
+        column_id
+            .borrow()
+            .as_ref()
+            .copied()
+            .expect("column node id"),
+    )
+    .expect("column layout");
+    let row_layout = find_layout(
+        root_layout,
+        row_id.borrow().as_ref().copied().expect("row node id"),
+    )
+    .expect("row layout");
+
+    assert!(
+        (column_layout.rect.width - 200.0).abs() < EPSILON,
+        "Column width expected 200px, got {:.3}",
+        column_layout.rect.width
+    );
+    assert!(
+        (row_layout.rect.width - 200.0).abs() < EPSILON,
+        "Row width expected to expand to parent width (200px), got {:.3}",
+        row_layout.rect.width
+    );
+    assert!(
+        (row_layout.rect.height - 32.0).abs() < EPSILON,
+        "Row height expected to match spacer height (32px), got {:.3}",
+        row_layout.rect.height
+    );
+}
+
+#[test]
+fn fill_max_height_child_clamps_to_parent() {
+    const EPSILON: f32 = 1e-3;
+
+    let mut composition = Composition::new(MemoryApplier::new());
+    let key = location_key(file!(), line!(), column!());
+
+    let row_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+    let fill_column_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+    let leaf_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));
+
+    let row_capture = Rc::clone(&row_id);
+    let fill_column_capture = Rc::clone(&fill_column_id);
+    let leaf_capture = Rc::clone(&leaf_id);
+
+    composition
+        .render(key, move || {
+            let fill_column_capture = Rc::clone(&fill_column_capture);
+            let leaf_capture = Rc::clone(&leaf_capture);
+            *row_capture.borrow_mut() = Some(Row(
+                Modifier::height(180.0),
+                RowSpec::default(),
+                move || {
+                    let fill_column_inner = Rc::clone(&fill_column_capture);
+                    let leaf_inner = Rc::clone(&leaf_capture);
+                    *fill_column_inner.borrow_mut() = Some(Column(
+                        Modifier::fill_max_height(),
+                        ColumnSpec::default(),
+                        move || {
+                            *leaf_inner.borrow_mut() = Some(Spacer(Size {
+                                width: 60.0,
+                                height: 40.0,
+                            }));
+                        },
+                    ));
+                },
+            ));
+        })
+        .expect("initial render");
+
+    let root = composition.root().expect("root node");
+    let layout_tree = composition
+        .applier_mut()
+        .compute_layout(
+            root,
+            Size {
+                width: 400.0,
+                height: 240.0,
+            },
+        )
+        .expect("compute layout");
+
+    fn find_layout<'a>(node: &'a LayoutBox, target: NodeId) -> Option<&'a LayoutBox> {
+        if node.node_id == target {
+            return Some(node);
+        }
+        node.children
+            .iter()
+            .find_map(|child| find_layout(child, target))
+    }
+
+    let root_layout = layout_tree.root();
+    let row_layout = find_layout(
+        root_layout,
+        row_id.borrow().as_ref().copied().expect("row id"),
+    )
+    .expect("row layout");
+    let fill_column_layout = find_layout(
+        root_layout,
+        fill_column_id
+            .borrow()
+            .as_ref()
+            .copied()
+            .expect("fill column id"),
+    )
+    .expect("fill column layout");
+    let leaf_layout = find_layout(
+        root_layout,
+        leaf_id.borrow().as_ref().copied().expect("leaf id"),
+    )
+    .expect("leaf layout");
+
+    assert!(
+        (row_layout.rect.height - 180.0).abs() < EPSILON,
+        "Row height expected 180px, got {:.3}",
+        row_layout.rect.height
+    );
+    assert!(
+        (fill_column_layout.rect.height - 180.0).abs() < EPSILON,
+        "Fill column height expected to clamp to parent (180px), got {:.3}",
+        fill_column_layout.rect.height
+    );
+    assert!(
+        (leaf_layout.rect.height - 40.0).abs() < EPSILON,
+        "Leaf spacer height expected 40px, got {:.3}",
+        leaf_layout.rect.height
     );
 }

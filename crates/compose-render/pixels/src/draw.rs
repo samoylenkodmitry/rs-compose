@@ -1,6 +1,10 @@
+use lru::LruCache;
 use once_cell::sync::Lazy;
 use rusttype::{point, Font, Scale};
-use std::sync::Mutex;
+use std::borrow::Borrow;
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
 
 use compose_ui::{Brush, TextMeasurer, TextMetrics};
 use compose_ui_graphics::{Color, Rect};
@@ -23,9 +27,58 @@ pub struct CachedRusttypeTextMeasurer {
     cache: Mutex<TextMetricsCache>,
 }
 
+#[derive(Clone)]
+struct TextKey {
+    text: Arc<str>,
+}
+
+impl PartialEq for TextKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.text, &other.text) || *self.text == *other.text
+    }
+}
+
+impl Eq for TextKey {}
+
+impl Hash for TextKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.text.hash(state);
+    }
+}
+
+impl Borrow<str> for TextKey {
+    fn borrow(&self) -> &str {
+        &self.text
+    }
+}
+
 struct TextMetricsCache {
-    entries: Vec<(String, TextMetrics)>,
-    capacity: usize,
+    map: LruCache<TextKey, TextMetrics>,
+}
+
+impl TextMetricsCache {
+    fn new(capacity: usize) -> Self {
+        let capped = capacity.max(1);
+        let size = NonZeroUsize::new(capped).unwrap();
+        Self {
+            map: LruCache::new(size),
+        }
+    }
+
+    fn get_or_measure<F>(&mut self, text: &str, measure: F) -> TextMetrics
+    where
+        F: FnOnce(&str) -> TextMetrics,
+    {
+        if let Some(metrics) = self.map.get(text).copied() {
+            return metrics;
+        }
+        let key = TextKey {
+            text: Arc::from(text),
+        };
+        let metrics = measure(text);
+        self.map.put(key, metrics);
+        metrics
+    }
 }
 
 impl CachedRusttypeTextMeasurer {
@@ -105,27 +158,10 @@ impl TextMeasurer for RusttypeTextMeasurer {
 
 impl TextMeasurer for CachedRusttypeTextMeasurer {
     fn measure(&self, text: &str) -> TextMetrics {
-        if let Some(metrics) = self
-            .cache
-            .lock()
-            .expect("text metrics cache poisoned")
-            .get(text)
-        {
-            return metrics;
-        }
-
-        let metrics = measure_text_impl(text);
         self.cache
             .lock()
             .expect("text metrics cache poisoned")
-            .insert(
-                text,
-                TextMetrics {
-                    width: metrics.width,
-                    height: metrics.height,
-                },
-            );
-        metrics
+            .get_or_measure(text, measure_text_impl)
     }
 }
 
@@ -153,37 +189,6 @@ fn measure_text_impl(text: &str) -> TextMetrics {
     };
     let height = (v_metrics.ascent - v_metrics.descent).ceil();
     TextMetrics { width, height }
-}
-
-impl TextMetricsCache {
-    fn new(capacity: usize) -> Self {
-        let capped = capacity.max(1);
-        Self {
-            entries: Vec::with_capacity(capped),
-            capacity: capped,
-        }
-    }
-
-    fn get(&mut self, text: &str) -> Option<TextMetrics> {
-        if let Some(index) = self.entries.iter().position(|(cached, _)| cached == text) {
-            let (cached_text, metrics) = self.entries.remove(index);
-            let metrics_copy = TextMetrics {
-                width: metrics.width,
-                height: metrics.height,
-            };
-            self.entries.insert(0, (cached_text, metrics));
-            Some(metrics_copy)
-        } else {
-            None
-        }
-    }
-
-    fn insert(&mut self, text: &str, metrics: TextMetrics) {
-        if self.entries.len() == self.capacity {
-            self.entries.pop();
-        }
-        self.entries.insert(0, (text.to_owned(), metrics));
-    }
 }
 
 pub fn draw_scene(frame: &mut [u8], width: u32, height: u32, scene: &Scene) {

@@ -560,10 +560,6 @@ impl LayoutBuilderState {
         let mut pools = VecPools::acquire(Rc::clone(&state_rc));
         let (measurables, records) = pools.parts();
 
-        let single_child = children.len() == 1;
-        let mut single_child_width_needs_intrinsic = false;
-        let mut single_child_height_needs_intrinsic = false;
-
         for &child_id in children.iter() {
             let measured = Rc::new(RefCell::new(None));
             let position = Rc::new(RefCell::new(None));
@@ -583,20 +579,12 @@ impl LayoutBuilderState {
                     Err(err) => return Err(err),
                 }
             };
-            let Some((cache_handles, child_width_constraint, child_height_constraint)) = child_info
+            let Some((cache_handles, _child_width_constraint, _child_height_constraint)) =
+                child_info
             else {
                 continue;
             };
             cache_handles.activate(cache_epoch);
-
-            if single_child {
-                if !matches!(child_width_constraint, DimensionConstraint::Points(_)) {
-                    single_child_width_needs_intrinsic = true;
-                }
-                if !matches!(child_height_constraint, DimensionConstraint::Points(_)) {
-                    single_child_height_needs_intrinsic = true;
-                }
-            }
 
             records.push((
                 child_id,
@@ -618,11 +606,8 @@ impl LayoutBuilderState {
             )));
         }
 
-        let allow_width_intrinsic = props.width() == DimensionConstraint::Unspecified
-            && inner_constraints.min_width < inner_constraints.max_width
-            && constraints.min_width < constraints.max_width
-            && (!single_child || single_child_width_needs_intrinsic);
-        if allow_width_intrinsic {
+        let needs_intrinsic_width = matches!(props.width(), DimensionConstraint::Intrinsic(_));
+        if needs_intrinsic_width {
             let intrinsic_width = measure_policy
                 .min_intrinsic_width(measurables.as_slice(), inner_constraints.max_height);
             let constrained_width = intrinsic_width.max(inner_constraints.min_width);
@@ -631,11 +616,8 @@ impl LayoutBuilderState {
             }
         }
 
-        let allow_height_intrinsic = props.height() == DimensionConstraint::Unspecified
-            && inner_constraints.min_height < inner_constraints.max_height
-            && constraints.min_height < constraints.max_height
-            && (!single_child || single_child_height_needs_intrinsic);
-        if allow_height_intrinsic {
+        let needs_intrinsic_height = matches!(props.height(), DimensionConstraint::Intrinsic(_));
+        if needs_intrinsic_height {
             let intrinsic_height = measure_policy
                 .min_intrinsic_height(measurables.as_slice(), inner_constraints.max_width);
             let constrained_height = intrinsic_height.max(inner_constraints.min_height);
@@ -644,7 +626,49 @@ impl LayoutBuilderState {
             }
         }
 
-        let policy_result = measure_policy.measure(measurables.as_slice(), inner_constraints);
+        let mut measure_constraints = inner_constraints;
+        let mut relaxed_width = None;
+        if matches!(props.width(), DimensionConstraint::Unspecified)
+            && inner_constraints.min_width < inner_constraints.max_width
+            && constraints.min_width < constraints.max_width
+            && inner_constraints.max_width.is_finite()
+        {
+            relaxed_width = Some(inner_constraints.max_width);
+            measure_constraints.max_width = f32::INFINITY;
+        }
+
+        let mut relaxed_height = None;
+        if matches!(props.height(), DimensionConstraint::Unspecified)
+            && inner_constraints.min_height < inner_constraints.max_height
+            && constraints.min_height < constraints.max_height
+            && inner_constraints.max_height.is_finite()
+        {
+            relaxed_height = Some(inner_constraints.max_height);
+            measure_constraints.max_height = f32::INFINITY;
+        }
+
+        let mut policy_result = measure_policy.measure(measurables.as_slice(), measure_constraints);
+
+        if relaxed_width.is_some() || relaxed_height.is_some() {
+            let width_exceeds = relaxed_width
+                .map(|limit| policy_result.size.width > limit && limit.is_finite())
+                .unwrap_or(false);
+            let height_exceeds = relaxed_height
+                .map(|limit| policy_result.size.height > limit && limit.is_finite())
+                .unwrap_or(false);
+
+            if width_exceeds || height_exceeds {
+                let mut tightened_constraints = measure_constraints;
+                if let Some(limit) = relaxed_width {
+                    tightened_constraints.max_width = limit;
+                }
+                if let Some(limit) = relaxed_height {
+                    tightened_constraints.max_height = limit;
+                }
+                policy_result =
+                    measure_policy.measure(measurables.as_slice(), tightened_constraints);
+            }
+        }
 
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);

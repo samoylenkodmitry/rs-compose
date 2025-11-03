@@ -1,7 +1,10 @@
 use crate::layout::core::{
     Alignment, Arrangement, HorizontalAlignment, LinearArrangement, Measurable, VerticalAlignment,
 };
-use compose_ui_layout::{Axis, Constraints, MeasurePolicy, MeasureResult, Placement};
+use compose_ui_layout::{
+    Axis, Constraints, FlexParentData, MeasurePolicy, MeasureResult, Placement,
+};
+use smallvec::SmallVec;
 
 /// MeasurePolicy for Box layout - overlays children according to alignment.
 #[derive(Clone, Debug, PartialEq)]
@@ -315,15 +318,15 @@ impl MeasurePolicy for FlexMeasurePolicy {
         let spacing = self.get_spacing();
 
         // Separate children into fixed and weighted
-        let mut fixed_children = Vec::new();
-        let mut weighted_children = Vec::new();
+        let mut fixed_children: SmallVec<[usize; 8]> = SmallVec::new();
+        let mut weighted_children: SmallVec<[(usize, FlexParentData); 8]> = SmallVec::new();
 
         for (idx, measurable) in measurables.iter().enumerate() {
             let parent_data = measurable.flex_parent_data().unwrap_or_default();
             if parent_data.has_weight() {
-                weighted_children.push((idx, measurable, parent_data));
+                weighted_children.push((idx, parent_data));
             } else {
-                fixed_children.push((idx, measurable));
+                fixed_children.push(idx);
             }
         }
 
@@ -331,19 +334,21 @@ impl MeasurePolicy for FlexMeasurePolicy {
         // Children get loose constraints on both axes (min = 0)
         let child_constraints = self.make_constraints(0.0, max_main, 0.0, max_cross);
 
-        let mut placeables: Vec<Option<Box<dyn compose_ui_layout::Placeable>>> =
-            (0..measurables.len()).map(|_| None).collect();
+        let mut placeables: SmallVec<[Option<Box<dyn compose_ui_layout::Placeable>>; 8]> =
+            SmallVec::new();
+        placeables.resize_with(measurables.len(), || None);
         let mut fixed_main_size = 0.0_f32;
         let mut max_cross_size = 0.0_f32;
 
-        for (idx, measurable) in &fixed_children {
+        for &idx in &fixed_children {
+            let measurable = &measurables[idx];
             let placeable = measurable.measure(child_constraints);
             let main_size = self.get_main_axis_size(placeable.width(), placeable.height());
             let cross_size = self.get_cross_axis_size(placeable.width(), placeable.height());
 
             fixed_main_size += main_size;
             max_cross_size = max_cross_size.max(cross_size);
-            placeables[*idx] = Some(placeable);
+            placeables[idx] = Some(placeable);
         }
 
         // Calculate spacing
@@ -362,13 +367,11 @@ impl MeasurePolicy for FlexMeasurePolicy {
                 let remaining_main = (max_main - used_main).max(0.0);
 
                 // Calculate total weight
-                let total_weight: f32 = weighted_children
-                    .iter()
-                    .map(|(_, _, data)| data.weight)
-                    .sum();
+                let total_weight: f32 = weighted_children.iter().map(|(_, data)| data.weight).sum();
 
                 // Measure each weighted child with its allocated space
-                for (idx, measurable, parent_data) in &weighted_children {
+                for &(idx, parent_data) in &weighted_children {
+                    let measurable = &measurables[idx];
                     let allocated = if total_weight > 0.0 {
                         remaining_main * (parent_data.weight / total_weight)
                     } else {
@@ -387,22 +390,26 @@ impl MeasurePolicy for FlexMeasurePolicy {
                     let cross_size =
                         self.get_cross_axis_size(placeable.width(), placeable.height());
                     max_cross_size = max_cross_size.max(cross_size);
-                    placeables[*idx] = Some(placeable);
+                    placeables[idx] = Some(placeable);
                 }
             } else {
                 // Main axis unbounded: ignore weights, measure like fixed children
-                for (idx, measurable, _) in &weighted_children {
+                for &(idx, _) in &weighted_children {
+                    let measurable = &measurables[idx];
                     let placeable = measurable.measure(child_constraints);
                     let cross_size =
                         self.get_cross_axis_size(placeable.width(), placeable.height());
                     max_cross_size = max_cross_size.max(cross_size);
-                    placeables[*idx] = Some(placeable);
+                    placeables[idx] = Some(placeable);
                 }
             }
         }
 
         // Unwrap all placeables
-        let placeables: Vec<_> = placeables.into_iter().map(|p| p.unwrap()).collect();
+        let placeables: SmallVec<[Box<dyn compose_ui_layout::Placeable>; 8]> = placeables
+            .into_iter()
+            .map(|p| p.expect("placeable missing"))
+            .collect();
 
         // Calculate total main size
         let total_main: f32 = placeables
@@ -416,12 +423,14 @@ impl MeasurePolicy for FlexMeasurePolicy {
         let container_cross = max_cross_size.clamp(min_cross, max_cross);
 
         // Arrange children along main axis
-        let child_main_sizes: Vec<f32> = placeables
+        let child_main_sizes: SmallVec<[f32; 8]> = placeables
             .iter()
             .map(|p| self.get_main_axis_size(p.width(), p.height()))
             .collect();
 
-        let mut main_positions = vec![0.0; child_main_sizes.len()];
+        let mut main_positions: SmallVec<[f32; 8]> =
+            SmallVec::with_capacity(child_main_sizes.len());
+        main_positions.resize(child_main_sizes.len(), 0.0);
 
         // If we overflow, use Start arrangement to avoid negative spacing
         let arrangement = if total_main > container_main {
@@ -432,7 +441,7 @@ impl MeasurePolicy for FlexMeasurePolicy {
         arrangement.arrange(container_main, &child_main_sizes, &mut main_positions);
 
         // Place children
-        let mut placements = Vec::with_capacity(placeables.len());
+        let mut placements: SmallVec<[Placement; 8]> = SmallVec::with_capacity(placeables.len());
         for (placeable, main_pos) in placeables.into_iter().zip(main_positions.into_iter()) {
             let child_cross = self.get_cross_axis_size(placeable.width(), placeable.height());
             let cross_pos = self
@@ -454,7 +463,10 @@ impl MeasurePolicy for FlexMeasurePolicy {
             Axis::Vertical => (container_cross, container_main),
         };
 
-        MeasureResult::new(crate::modifier::Size { width, height }, placements)
+        MeasureResult::new(
+            crate::modifier::Size { width, height },
+            placements.into_vec(),
+        )
     }
 
     fn min_intrinsic_width(&self, measurables: &[Box<dyn Measurable>], height: f32) -> f32 {
