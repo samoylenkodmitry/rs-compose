@@ -11,8 +11,9 @@ use std::{
 };
 
 use compose_core::{
-    Applier, ApplierHost, Composer, ConcreteApplierHost, MemoryApplier, Node, NodeError, NodeId,
-    Phase, RuntimeHandle, SlotTable, SlotsHost, SnapshotStateObserver,
+    Applier, ApplierHost, Composer, ConcreteApplierHost,
+    MemoryApplier, Node, NodeError, NodeId, Phase, RuntimeHandle, SlotTable, SlotsHost,
+    SnapshotStateObserver,
 };
 
 #[cfg(test)]

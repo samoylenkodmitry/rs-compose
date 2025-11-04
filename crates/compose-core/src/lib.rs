@@ -1,6 +1,6 @@
 #![doc = r"Core runtime pieces for the Compose-RS experiment."]
 
-extern crate self as compose_core;
+pub extern crate self as compose_core;
 
 pub mod composer_context;
 pub mod frame_clock;
@@ -55,7 +55,6 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak}; // FUTURE(no_std): replace Rc/Weak with arena-managed handles.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
 use crate::state::{NeverEqual, SnapshotMutableState, UpdateScope};
 
 pub type Key = u64;
@@ -831,6 +830,7 @@ impl Default for Slot {
 impl SlotTable {
     const INITIAL_CAP: usize = 32;
     const GAP_BLOCK: usize = 32; // tune 16/32/64
+    const LOCAL_GAP_SCAN: usize = 256; // tune
 
     pub fn new() -> Self {
         Self {
@@ -916,6 +916,46 @@ impl SlotTable {
             // done: cursor is guaranteed to be a gap now
             break;
         }
+    }
+
+    fn find_right_gap_run(&self, from: usize, scan_limit: usize) -> Option<(usize, usize)> {
+        let end = (from + scan_limit).min(self.slots.len());
+        let mut i = from;
+        while i < end {
+            if let Some(Slot::Gap { anchor, .. }) = self.slots.get(i) {
+                if *anchor == AnchorId::INVALID {
+                    let start = i;
+                    let mut len = 1;
+                    while i + len < end {
+                        match self.slots.get(i + len) {
+                            Some(Slot::Gap { anchor, .. }) if *anchor == AnchorId::INVALID => {
+                                len += 1;
+                            }
+                            _ => break,
+                        }
+                    }
+                    return Some((start, len));
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn ensure_gap_at_local(&mut self, cursor: usize) {
+        if matches!(self.slots.get(cursor), Some(Slot::Gap { .. })) {
+            return;
+        }
+        self.ensure_capacity();
+
+        if let Some((run_start, run_len)) = self.find_right_gap_run(cursor, Self::LOCAL_GAP_SCAN) {
+            self.shift_group_frames(cursor, run_len as isize);
+            self.shift_anchor_positions_from(cursor, run_len as isize);
+            self.slots[cursor..run_start + run_len].rotate_right(run_len);
+            return;
+        }
+
+        self.ensure_gap_at(cursor);
     }
 
     fn append_gap_slots(&mut self, count: usize) {
@@ -1758,7 +1798,7 @@ impl SlotTable {
             .unwrap_or(false);
 
         if cursor < self.slots.len() {
-            self.ensure_gap_at(cursor);
+            self.ensure_gap_at_local(cursor);
             debug_assert!(matches!(self.slots[cursor], Slot::Gap { .. }));
             let group_anchor = self.allocate_anchor();
             self.slots[cursor] = Slot::Group {
@@ -1838,10 +1878,16 @@ impl SlotTable {
                     if new_len < old_len {
                         *has_gap_children = true;
                     }
-                    // Keep the maximum of old and new length to preserve gap slots.
-                    // Gap slots beyond cursor are still part of this group's physical extent
-                    // and need to be included in traversal so they can be reused.
-                    *len = old_len.max(new_len);
+                    const SHRINK_MIN_DROP: usize = 64;
+                    const SHRINK_RATIO: usize = 4;
+                    if old_len > new_len
+                        && old_len >= new_len.saturating_mul(SHRINK_RATIO)
+                        && (old_len - new_len) >= SHRINK_MIN_DROP
+                    {
+                        *len = new_len;
+                    } else {
+                        *len = old_len.max(new_len);
+                    }
                 }
             }
             if let Some(parent) = self.group_stack.last_mut() {
