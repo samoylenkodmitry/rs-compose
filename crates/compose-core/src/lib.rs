@@ -726,6 +726,112 @@ struct GroupFrame {
 
 const INVALID_ANCHOR_POS: usize = usize::MAX;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Public SlotStorage trait and newtypes
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Opaque handle to a group in the slot storage.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct GroupId(pub(crate) usize);
+
+/// Opaque handle to a value slot in the slot storage.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ValueSlotId(pub(crate) usize);
+
+/// Result of starting a group.
+pub struct StartGroup<G> {
+    pub group: G,
+    /// True if this group was restored from a gap (unstable children).
+    pub restored_from_gap: bool,
+}
+
+/// Abstract slot API that the composer / composition engine talks to.
+/// Concrete backends (SlotTable with gap buffer, chunked storage, arena, etc.)
+/// implement this and can keep whatever internal layout they want.
+pub trait SlotStorage {
+    /// Opaque handle to a started group.
+    type Group: Copy + Eq;
+    /// Opaque handle to a value slot.
+    type ValueSlot: Copy + Eq;
+
+    // ── groups ──────────────────────────────────────────────────────────────
+
+    /// Begin a group with the given key.
+    ///
+    /// Returns a handle to the group and whether it was restored from a gap
+    /// (which means the composer needs to force-recompose the scope).
+    fn begin_group(&mut self, key: Key) -> StartGroup<Self::Group>;
+
+    /// Associate the runtime recomposition scope with this group.
+    fn set_group_scope(&mut self, group: Self::Group, scope: ScopeId);
+
+    /// End the current group.
+    fn end_group(&mut self);
+
+    /// Skip over the current group (used by the "skip optimization" in the macro).
+    fn skip_current_group(&mut self);
+
+    /// Return node ids that live in the current group (needed so the composer
+    /// can reattach them to the parent when skipping).
+    fn nodes_in_current_group(&self) -> Vec<NodeId>;
+
+    // ── recomposition ───────────────────────────────────────────────────────
+
+    /// Start recomposing the group that owns `scope`. Returns the group we
+    /// started, or `None` if that scope is gone.
+    fn begin_recompose_at_scope(&mut self, scope: ScopeId) -> Option<Self::Group>;
+
+    /// Finish the recomposition started with `begin_recompose_at_scope`.
+    fn end_recompose(&mut self);
+
+    // ── values / remember ───────────────────────────────────────────────────
+
+    /// Allocate or reuse a value slot at the current cursor.
+    fn alloc_value_slot<T: 'static>(&mut self, init: impl FnOnce() -> T) -> Self::ValueSlot;
+
+    /// Immutable read of a value slot.
+    fn read_value<T: 'static>(&self, slot: Self::ValueSlot) -> &T;
+
+    /// Mutable read of a value slot.
+    fn read_value_mut<T: 'static>(&mut self, slot: Self::ValueSlot) -> &mut T;
+
+    /// Overwrite an existing value slot.
+    fn write_value<T: 'static>(&mut self, slot: Self::ValueSlot, value: T);
+
+    /// Convenience "remember" built on top of value slots.
+    fn remember<T: 'static>(&mut self, init: impl FnOnce() -> T) -> Owned<T>;
+
+    // ── nodes ──────────────────────────────────────────────────────────────
+
+    /// Peek a node at the current cursor (don't advance).
+    fn peek_node(&self) -> Option<NodeId>;
+
+    /// Record a node at the current cursor (and advance).
+    fn record_node(&mut self, id: NodeId);
+
+    /// Advance after we've read a node via the applier path.
+    fn advance_after_node_read(&mut self);
+
+    /// Step the cursor back by one (used when we probed and need to overwrite).
+    fn step_back(&mut self);
+
+    // ── lifecycle / cleanup ─────────────────────────────────────────────────
+
+    /// "Finalize" the current group: mark unreachable tail as gaps.
+    /// Returns `true` if we marked gaps (which means children are unstable).
+    fn finalize_current_group(&mut self) -> bool;
+
+    /// Reset to the beginning (used by subcompose + top-level render).
+    fn reset(&mut self);
+
+    /// Flush any deferred anchor rebuilds.
+    fn flush(&mut self);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SlotTable: gap-buffer-based implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
 #[derive(Default)]
 pub struct SlotTable {
     slots: Vec<Slot>, // FUTURE(no_std): replace Vec with arena-backed slot storage.
@@ -2260,6 +2366,97 @@ impl SlotTable {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SlotStorage implementation for SlotTable
+// ═══════════════════════════════════════════════════════════════════════════
+
+impl SlotStorage for SlotTable {
+    type Group = GroupId;
+    type ValueSlot = ValueSlotId;
+
+    fn begin_group(&mut self, key: Key) -> StartGroup<Self::Group> {
+        let idx = SlotTable::start(self, key);
+        let restored = SlotTable::take_last_start_was_gap(self);
+        StartGroup {
+            group: GroupId(idx),
+            restored_from_gap: restored,
+        }
+    }
+
+    fn set_group_scope(&mut self, group: Self::Group, scope: ScopeId) {
+        SlotTable::set_group_scope(self, group.0, scope);
+    }
+
+    fn end_group(&mut self) {
+        SlotTable::end(self);
+    }
+
+    fn skip_current_group(&mut self) {
+        SlotTable::skip_current(self);
+    }
+
+    fn nodes_in_current_group(&self) -> Vec<NodeId> {
+        SlotTable::node_ids_in_current_group(self)
+    }
+
+    fn begin_recompose_at_scope(&mut self, scope: ScopeId) -> Option<Self::Group> {
+        SlotTable::start_recompose_at_scope(self, scope).map(GroupId)
+    }
+
+    fn end_recompose(&mut self) {
+        SlotTable::end_recompose(self);
+    }
+
+    fn alloc_value_slot<T: 'static>(&mut self, init: impl FnOnce() -> T) -> Self::ValueSlot {
+        let idx = SlotTable::use_value_slot(self, init);
+        ValueSlotId(idx)
+    }
+
+    fn read_value<T: 'static>(&self, slot: Self::ValueSlot) -> &T {
+        SlotTable::read_value(self, slot.0)
+    }
+
+    fn read_value_mut<T: 'static>(&mut self, slot: Self::ValueSlot) -> &mut T {
+        SlotTable::read_value_mut(self, slot.0)
+    }
+
+    fn write_value<T: 'static>(&mut self, slot: Self::ValueSlot, value: T) {
+        SlotTable::write_value(self, slot.0, value);
+    }
+
+    fn remember<T: 'static>(&mut self, init: impl FnOnce() -> T) -> Owned<T> {
+        SlotTable::remember(self, init)
+    }
+
+    fn peek_node(&self) -> Option<NodeId> {
+        SlotTable::peek_node(self)
+    }
+
+    fn record_node(&mut self, id: NodeId) {
+        SlotTable::record_node(self, id);
+    }
+
+    fn advance_after_node_read(&mut self) {
+        SlotTable::advance_after_node_read(self);
+    }
+
+    fn step_back(&mut self) {
+        SlotTable::step_back(self);
+    }
+
+    fn finalize_current_group(&mut self) -> bool {
+        SlotTable::trim_to_cursor(self)
+    }
+
+    fn reset(&mut self) {
+        SlotTable::reset(self);
+    }
+
+    fn flush(&mut self) {
+        SlotTable::flush_anchors_if_dirty(self);
+    }
+}
+
 pub trait Node: Any {
     fn mount(&mut self) {}
     fn update(&mut self) {}
@@ -2644,14 +2841,13 @@ impl Composer {
     }
 
     pub fn with_group<R>(&self, key: Key, f: impl FnOnce(&Composer) -> R) -> R {
-        let (index, scope_ref, restored_from_gap) = {
+        let (group, scope_ref, restored_from_gap) = {
             let mut slots = self.slots_mut();
-            let index = slots.start(key);
-            let restored_from_gap = slots.take_last_start_was_gap();
+            let StartGroup { group, restored_from_gap } = slots.begin_group(key);
             let scope_ref = slots
                 .remember(|| RecomposeScope::new(self.runtime_handle()))
                 .with(|scope| scope.clone());
-            (index, scope_ref, restored_from_gap)
+            (group, scope_ref, restored_from_gap)
         };
 
         if restored_from_gap {
@@ -2668,7 +2864,7 @@ impl Composer {
 
         {
             let mut slots = self.slots_mut();
-            slots.set_group_scope(index, scope_ref.id());
+            SlotStorage::set_group_scope(&mut *slots, group, scope_ref.id());
         }
 
         {
@@ -2692,7 +2888,7 @@ impl Composer {
 
         let trimmed = {
             let mut slots = self.slots_mut();
-            slots.trim_to_cursor()
+            slots.finalize_current_group()
         };
         if trimmed {
             scope_ref.force_recompose();
@@ -2703,7 +2899,7 @@ impl Composer {
             stack.pop();
         }
         scope_ref.mark_recomposed();
-        self.slots_mut().end();
+        self.slots_mut().end_group();
         result
     }
 
@@ -2906,8 +3102,8 @@ impl Composer {
         runtime_handle.drain_ui();
         {
             let mut slots_mut = slots.borrow_mut();
-            slots_mut.trim_to_cursor();
-            slots_mut.flush_anchors_if_dirty();
+            slots_mut.finalize_current_group();
+            slots_mut.flush();
         }
         Ok(result)
     }
@@ -2915,9 +3111,9 @@ impl Composer {
     pub fn skip_current_group(&self) {
         let nodes = {
             let slots = self.slots();
-            slots.node_ids_in_current_group()
+            slots.nodes_in_current_group()
         };
-        self.slots_mut().skip_current();
+        self.slots_mut().skip_current_group();
         for id in nodes {
             self.attach_to_parent(id);
         }
@@ -2976,8 +3172,11 @@ impl Composer {
     }
 
     fn recompose_group(&self, scope: &RecomposeScope) {
-        let index_opt = self.slots_mut().start_recompose_at_scope(scope.id());
-        if index_opt.is_some() {
+        let started = {
+            let mut slots = self.slots_mut();
+            slots.begin_recompose_at_scope(scope.id())
+        };
+        if started.is_some() {
             {
                 let mut stack = self.scope_stack();
                 stack.push(scope.clone());
@@ -3001,7 +3200,10 @@ impl Composer {
                 let mut stack = self.scope_stack();
                 stack.pop();
             }
-            self.slots_mut().end_recompose();
+            {
+                let mut slots = self.slots_mut();
+                SlotStorage::end_recompose(&mut *slots);
+            }
             scope.mark_recomposed();
         } else {
             scope.mark_recomposed();
@@ -3958,8 +4160,8 @@ impl<A: Applier + 'static> Composition<A> {
         self.root = root;
         {
             let mut slots = self.slots.borrow_mut();
-            let _ = slots.trim_to_cursor();
-            slots.flush_anchors_if_dirty();
+            let _ = slots.finalize_current_group();
+            slots.flush();
         }
         let _ = self.process_invalid_scopes()?;
         if !self.runtime.has_updates()
