@@ -70,7 +70,12 @@ pub struct AnchorId(usize);
 
 impl AnchorId {
     /// Invalid anchor that represents no anchor.
-    const INVALID: AnchorId = AnchorId(0);
+    pub(crate) const INVALID: AnchorId = AnchorId(0);
+
+    /// Create a new anchor ID from a raw value.
+    pub(crate) fn new(id: usize) -> Self {
+        Self(id)
+    }
 
     /// Check if this anchor is valid (non-zero).
     pub fn is_valid(&self) -> bool {
@@ -730,103 +735,14 @@ const INVALID_ANCHOR_POS: usize = usize::MAX;
 // Public SlotStorage trait and newtypes
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Opaque handle to a group in the slot storage.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct GroupId(pub(crate) usize);
+mod slot_storage;
+pub use slot_storage::{GroupId, SlotStorage, StartGroup, ValueSlotId};
 
-/// Opaque handle to a value slot in the slot storage.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ValueSlotId(pub(crate) usize);
-
-/// Result of starting a group.
-pub struct StartGroup<G> {
-    pub group: G,
-    /// True if this group was restored from a gap (unstable children).
-    pub restored_from_gap: bool,
-}
-
-/// Abstract slot API that the composer / composition engine talks to.
-/// Concrete backends (SlotTable with gap buffer, chunked storage, arena, etc.)
-/// implement this and can keep whatever internal layout they want.
-pub trait SlotStorage {
-    /// Opaque handle to a started group.
-    type Group: Copy + Eq;
-    /// Opaque handle to a value slot.
-    type ValueSlot: Copy + Eq;
-
-    // ── groups ──────────────────────────────────────────────────────────────
-
-    /// Begin a group with the given key.
-    ///
-    /// Returns a handle to the group and whether it was restored from a gap
-    /// (which means the composer needs to force-recompose the scope).
-    fn begin_group(&mut self, key: Key) -> StartGroup<Self::Group>;
-
-    /// Associate the runtime recomposition scope with this group.
-    fn set_group_scope(&mut self, group: Self::Group, scope: ScopeId);
-
-    /// End the current group.
-    fn end_group(&mut self);
-
-    /// Skip over the current group (used by the "skip optimization" in the macro).
-    fn skip_current_group(&mut self);
-
-    /// Return node ids that live in the current group (needed so the composer
-    /// can reattach them to the parent when skipping).
-    fn nodes_in_current_group(&self) -> Vec<NodeId>;
-
-    // ── recomposition ───────────────────────────────────────────────────────
-
-    /// Start recomposing the group that owns `scope`. Returns the group we
-    /// started, or `None` if that scope is gone.
-    fn begin_recompose_at_scope(&mut self, scope: ScopeId) -> Option<Self::Group>;
-
-    /// Finish the recomposition started with `begin_recompose_at_scope`.
-    fn end_recompose(&mut self);
-
-    // ── values / remember ───────────────────────────────────────────────────
-
-    /// Allocate or reuse a value slot at the current cursor.
-    fn alloc_value_slot<T: 'static>(&mut self, init: impl FnOnce() -> T) -> Self::ValueSlot;
-
-    /// Immutable read of a value slot.
-    fn read_value<T: 'static>(&self, slot: Self::ValueSlot) -> &T;
-
-    /// Mutable read of a value slot.
-    fn read_value_mut<T: 'static>(&mut self, slot: Self::ValueSlot) -> &mut T;
-
-    /// Overwrite an existing value slot.
-    fn write_value<T: 'static>(&mut self, slot: Self::ValueSlot, value: T);
-
-    /// Convenience "remember" built on top of value slots.
-    fn remember<T: 'static>(&mut self, init: impl FnOnce() -> T) -> Owned<T>;
-
-    // ── nodes ──────────────────────────────────────────────────────────────
-
-    /// Peek a node at the current cursor (don't advance).
-    fn peek_node(&self) -> Option<NodeId>;
-
-    /// Record a node at the current cursor (and advance).
-    fn record_node(&mut self, id: NodeId);
-
-    /// Advance after we've read a node via the applier path.
-    fn advance_after_node_read(&mut self);
-
-    /// Step the cursor back by one (used when we probed and need to overwrite).
-    fn step_back(&mut self);
-
-    // ── lifecycle / cleanup ─────────────────────────────────────────────────
-
-    /// "Finalize" the current group: mark unreachable tail as gaps.
-    /// Returns `true` if we marked gaps (which means children are unstable).
-    fn finalize_current_group(&mut self) -> bool;
-
-    /// Reset to the beginning (used by subcompose + top-level render).
-    fn reset(&mut self);
-
-    /// Flush any deferred anchor rebuilds.
-    fn flush(&mut self);
-}
+pub mod chunked_slot_storage;
+pub mod hierarchical_slot_storage;
+pub mod split_slot_storage;
+pub mod slot_backend;
+pub use slot_backend::{SlotBackend, SlotBackendKind};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SlotTable: gap-buffer-based implementation
@@ -2370,6 +2286,18 @@ impl SlotTable {
 // SlotStorage implementation for SlotTable
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Baseline SlotStorage implementation using a gap-buffer strategy.
+///
+/// This is the reference / most-feature-complete backend, supporting:
+/// - Gap-based slot reuse (preserving sibling state during conditional rendering)
+/// - Anchor-based positional stability during group moves and insertions
+/// - Efficient group skipping and recomposition via scope-based entry
+/// - Batch anchor rebuilding for large structural changes
+///
+/// **Implementation Strategy:**
+/// Uses UFCS (Uniform Function Call Syntax) to delegate to SlotTable's
+/// inherent methods, avoiding infinite recursion while keeping the trait
+/// implementation clean.
 impl SlotStorage for SlotTable {
     type Group = GroupId;
     type ValueSlot = ValueSlotId;
@@ -4298,6 +4226,10 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/recursive_decrease_increase_test.rs"]
 mod recursive_decrease_increase_test;
+
+#[cfg(test)]
+#[path = "tests/slot_backend_tests.rs"]
+mod slot_backend_tests;
 
 pub mod collections;
 pub mod hash;
