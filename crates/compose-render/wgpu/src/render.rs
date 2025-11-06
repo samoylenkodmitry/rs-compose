@@ -298,7 +298,7 @@ impl GpuRenderer {
             buffer.set_text(
                 &mut font_system,
                 &text_draw.text,
-                Attrs::new().family(Family::SansSerif),
+                Attrs::new().family(Family::Name("Roboto")),
                 Shaping::Advanced,
             );
             buffer.shape_until_scroll(&mut font_system);
