@@ -42,7 +42,15 @@ impl WgpuRenderer {
     /// Create a new WGPU renderer without GPU resources.
     /// Call `init_gpu` before rendering.
     pub fn new() -> Self {
-        let font_system = Arc::new(Mutex::new(FontSystem::new()));
+        let mut font_system = FontSystem::new();
+
+        // Load Roboto font into the system
+        let font_data = include_bytes!("../../../../apps/desktop-demo/assets/Roboto-Light.ttf");
+        println!("Loading Roboto font ({} bytes)", font_data.len());
+        font_system.db_mut().load_font_data(font_data.to_vec());
+        println!("Font loaded into system");
+
+        let font_system = Arc::new(Mutex::new(font_system));
         let text_measurer = WgpuTextMeasurer::new(font_system.clone());
         set_text_measurer(text_measurer.clone());
 
