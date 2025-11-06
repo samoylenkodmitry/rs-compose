@@ -271,14 +271,48 @@ impl GpuRenderer {
             let mut font_system = self.font_system.lock().unwrap();
             let mut text_buffers = Vec::with_capacity(sorted_texts.len());
             let mut text_layout = Vec::with_capacity(sorted_texts.len());
+            let total_texts = sorted_texts.len();
+            let mut skipped_zero_scale = 0usize;
+            let mut skipped_invalid_clip = 0usize;
+            let mut skipped_invalid_size = 0usize;
 
             for text_draw in &sorted_texts {
-                let text_scale = text_draw.scale.max(0.0);
+                let original_scale = text_draw.scale;
+                let text_scale = original_scale.max(0.0);
                 if text_scale == 0.0 {
+                    skipped_zero_scale += 1;
+                    if log::log_enabled!(log::Level::Debug) {
+                        log::debug!(
+                            "Skipping text draw with non-positive scale (scale={:.3}): \"{}\"",
+                            original_scale,
+                            text_preview(&text_draw.text)
+                        );
+                    }
+                    continue;
+                }
+
+                if text_draw.rect.width <= 0.0 || text_draw.rect.height <= 0.0 {
+                    skipped_invalid_size += 1;
+                    if log::log_enabled!(log::Level::Debug) {
+                        log::debug!(
+                            "Skipping text draw with non-positive size ({:.1}x{:.1}): \"{}\"",
+                            text_draw.rect.width,
+                            text_draw.rect.height,
+                            text_preview(&text_draw.text)
+                        );
+                    }
                     continue;
                 }
 
                 let Some(bounds) = text_bounds_from_clip(text_draw.clip, width, height) else {
+                    skipped_invalid_clip += 1;
+                    if log::log_enabled!(log::Level::Debug) {
+                        log::debug!(
+                            "Skipping text draw clipped outside viewport (clip={:?}): \"{}\"",
+                            text_draw.clip,
+                            text_preview(&text_draw.text)
+                        );
+                    }
                     continue;
                 };
 
@@ -310,6 +344,30 @@ impl GpuRenderer {
 
                 text_buffers.push(buffer);
                 text_layout.push((text_draw.rect.x, text_draw.rect.y, bounds, color));
+            }
+
+            let prepared_texts = text_buffers.len();
+            if total_texts > 0 {
+                log::info!(
+                    "GPU text prepare: prepared {} of {} draw(s) (skipped {} zero scale, {} invalid size, {} clipped)",
+                    prepared_texts,
+                    total_texts,
+                    skipped_zero_scale,
+                    skipped_invalid_size,
+                    skipped_invalid_clip
+                );
+                if prepared_texts == 0 {
+                    log::warn!(
+                        "GPU text renderer prepared zero draws; text will not appear this frame"
+                    );
+                } else if log::log_enabled!(log::Level::Debug) {
+                    log::debug!(
+                        "Preparing {} text area(s) for resolution {}x{}",
+                        prepared_texts,
+                        width,
+                        height
+                    );
+                }
             }
 
             let text_areas: Vec<TextArea> = text_buffers
@@ -357,6 +415,10 @@ impl GpuRenderer {
             self.text_renderer
                 .render(&self.text_atlas, &mut text_pass)
                 .map_err(|e| format!("Text render error: {:?}", e))?;
+
+            if log::log_enabled!(log::Level::Debug) {
+                log::debug!("Submitted GPU text render pass");
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -537,4 +599,18 @@ fn text_bounds_from_clip(clip: Option<Rect>, width: u32, height: u32) -> Option<
             bottom: height as i32,
         }),
     }
+}
+
+fn text_preview(text: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 32;
+    if !log::log_enabled!(log::Level::Debug) {
+        return String::new();
+    }
+
+    let mut chars = text.chars();
+    let mut preview: String = chars.by_ref().take(MAX_PREVIEW_CHARS).collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
 }
