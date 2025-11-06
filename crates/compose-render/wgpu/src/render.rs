@@ -1,32 +1,17 @@
 //! GPU rendering implementation using WGPU
 
+use crate::font::{PreferredFont, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT};
 use crate::scene::{DrawShape, TextDraw};
 use crate::shaders;
 use bytemuck::{Pod, Zeroable};
 use compose_ui_graphics::{Brush, Color, Rect};
 use glyphon::{
     fontdb, Attrs, Buffer, Color as GlyphonColor, Family, FontSystem, Metrics, Resolution, Shaping,
-    SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Weight,
+    SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
-
-#[derive(Clone, Copy)]
-struct StaticFontData(&'static [u8]);
-
-impl AsRef<[u8]> for StaticFontData {
-    fn as_ref(&self) -> &[u8] {
-        self.0
-    }
-}
-
-const ROBOTO_LIGHT_FONT: StaticFontData = StaticFontData(include_bytes!(
-    "../../../../apps/desktop-demo/assets/Roboto-Light.ttf"
-));
-
-const BASE_FONT_SIZE: f32 = 24.0;
-const BASE_LINE_HEIGHT: f32 = BASE_FONT_SIZE * 1.4;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -86,17 +71,13 @@ pub struct GpuRenderer {
     preferred_font: Option<PreferredFont>,
 }
 
-#[derive(Clone, Debug)]
-struct PreferredFont {
-    family: String,
-    weight: Weight,
-}
-
 impl GpuRenderer {
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
         surface_format: wgpu::TextureFormat,
+        font_system: Arc<Mutex<FontSystem>>,
+        preferred_font: Option<PreferredFont>,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shape Shader"),
@@ -184,19 +165,6 @@ impl GpuRenderer {
             multiview: None,
         });
 
-        let font_sources = [fontdb::Source::Binary(Arc::new(ROBOTO_LIGHT_FONT))];
-        let base_font_system = FontSystem::new_with_fonts(font_sources);
-        let preferred_font = detect_preferred_font(&base_font_system);
-        if let Some(font) = &preferred_font {
-            log::info!(
-                "GPU text font: using '{}' (weight {})",
-                font.family,
-                font.weight.0
-            );
-        } else {
-            log::warn!("GPU text font: falling back to system sans-serif family");
-        }
-        let font_system = Arc::new(Mutex::new(base_font_system));
         let swash_cache = SwashCache::new();
         let mut text_atlas = TextAtlas::new(&device, &queue, surface_format);
         let text_renderer = TextRenderer::new(
@@ -355,15 +323,13 @@ impl GpuRenderer {
                     continue;
                 };
 
-                let metrics =
-                    Metrics::new(BASE_FONT_SIZE * text_scale, BASE_LINE_HEIGHT * text_scale);
+                let metrics = Metrics::new(
+                    DEFAULT_FONT_SIZE * text_scale,
+                    DEFAULT_LINE_HEIGHT * text_scale,
+                );
                 let mut buffer = Buffer::new(&mut font_system, metrics);
                 let buffer_height = text_draw.rect.height.max(metrics.line_height);
-                buffer.set_size(
-                    &mut font_system,
-                    text_draw.rect.width.max(0.0),
-                    buffer_height,
-                );
+                buffer.set_size(&mut font_system, f32::MAX, buffer_height);
                 let attrs = match preferred_font {
                     Some(font) => Attrs::new()
                         .family(Family::Name(&font.family))
@@ -608,39 +574,6 @@ impl GpuRenderer {
 
         Ok((vertex_buffer, index_buffer, shape_bind_group))
     }
-}
-
-fn detect_preferred_font(font_system: &FontSystem) -> Option<PreferredFont> {
-    let mut fallback = None;
-
-    for face in font_system.db().faces() {
-        let Some((primary_family, _)) = face.families.first() else {
-            continue;
-        };
-        let matches_family = primary_family.eq_ignore_ascii_case("Roboto")
-            || face
-                .post_script_name
-                .to_ascii_lowercase()
-                .contains("roboto");
-        if !matches_family {
-            continue;
-        }
-
-        let candidate = PreferredFont {
-            family: primary_family.clone(),
-            weight: face.weight,
-        };
-
-        if face.weight == Weight::LIGHT {
-            return Some(candidate);
-        }
-
-        if fallback.is_none() {
-            fallback = Some(candidate);
-        }
-    }
-
-    fallback
 }
 
 fn text_bounds_from_clip(clip: Option<Rect>, width: u32, height: u32) -> Option<TextBounds> {

@@ -3,6 +3,7 @@
 //! This renderer uses WGPU for cross-platform GPU support across
 //! desktop (Windows/Mac/Linux), web (WebGPU), and mobile (Android/iOS).
 
+mod font;
 mod pipeline;
 mod render;
 mod scene;
@@ -10,9 +11,13 @@ mod shaders;
 
 pub use scene::{ClickAction, DrawShape, HitRegion, Scene, TextDraw};
 
-use compose_render_common::{Renderer, RenderScene};
+use compose_render_common::{RenderScene, Renderer};
 use compose_ui::{set_text_measurer, LayoutTree, TextMeasurer};
 use compose_ui_graphics::Size;
+use font::{
+    create_font_system, detect_preferred_font, PreferredFont, DEFAULT_FONT_SIZE,
+    DEFAULT_LINE_HEIGHT,
+};
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 use lru::LruCache;
 use render::GpuRenderer;
@@ -36,20 +41,34 @@ pub struct WgpuRenderer {
     scene: Scene,
     gpu_renderer: Option<GpuRenderer>,
     font_system: Arc<Mutex<FontSystem>>,
+    preferred_font: Option<PreferredFont>,
 }
 
 impl WgpuRenderer {
     /// Create a new WGPU renderer without GPU resources.
     /// Call `init_gpu` before rendering.
     pub fn new() -> Self {
-        let font_system = Arc::new(Mutex::new(FontSystem::new()));
-        let text_measurer = WgpuTextMeasurer::new(font_system.clone());
+        let base_font_system = create_font_system();
+        let preferred_font = detect_preferred_font(&base_font_system);
+        if let Some(font) = &preferred_font {
+            log::info!(
+                "GPU text font: using '{}' (weight {})",
+                font.family,
+                font.weight.0
+            );
+        } else {
+            log::warn!("GPU text font: falling back to system sans-serif family");
+        }
+
+        let font_system = Arc::new(Mutex::new(base_font_system));
+        let text_measurer = WgpuTextMeasurer::new(font_system.clone(), preferred_font.clone());
         set_text_measurer(text_measurer.clone());
 
         Self {
             scene: Scene::new(),
             gpu_renderer: None,
             font_system,
+            preferred_font,
         }
     }
 
@@ -60,11 +79,22 @@ impl WgpuRenderer {
         queue: Arc<wgpu::Queue>,
         surface_format: wgpu::TextureFormat,
     ) {
-        self.gpu_renderer = Some(GpuRenderer::new(device, queue, surface_format));
+        self.gpu_renderer = Some(GpuRenderer::new(
+            device,
+            queue,
+            surface_format,
+            self.font_system.clone(),
+            self.preferred_font.clone(),
+        ));
     }
 
     /// Render the scene to a texture view.
-    pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32) -> Result<(), WgpuRendererError> {
+    pub fn render(
+        &mut self,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Result<(), WgpuRendererError> {
         if let Some(gpu_renderer) = &mut self.gpu_renderer {
             gpu_renderer
                 .render(view, &self.scene.shapes, &self.scene.texts, width, height)
@@ -103,7 +133,11 @@ impl Renderer for WgpuRenderer {
         &mut self.scene
     }
 
-    fn rebuild_scene(&mut self, layout_tree: &LayoutTree, _viewport: Size) -> Result<(), Self::Error> {
+    fn rebuild_scene(
+        &mut self,
+        layout_tree: &LayoutTree,
+        _viewport: Size,
+    ) -> Result<(), Self::Error> {
         self.scene.clear();
         pipeline::render_layout_tree(layout_tree.root(), &mut self.scene);
         Ok(())
@@ -115,20 +149,22 @@ impl Renderer for WgpuRenderer {
 struct WgpuTextMeasurer {
     font_system: Arc<Mutex<FontSystem>>,
     cache: Arc<Mutex<LruCache<(String, i32), Size>>>,
+    preferred_font: Option<PreferredFont>,
 }
 
 impl WgpuTextMeasurer {
-    fn new(font_system: Arc<Mutex<FontSystem>>) -> Self {
+    fn new(font_system: Arc<Mutex<FontSystem>>, preferred_font: Option<PreferredFont>) -> Self {
         Self {
             font_system,
             cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(64).unwrap()))),
+            preferred_font,
         }
     }
 }
 
 impl TextMeasurer for WgpuTextMeasurer {
     fn measure(&self, text: &str) -> compose_ui::TextMetrics {
-        let font_size = 14.0; // Default font size
+        let font_size = DEFAULT_FONT_SIZE;
         let key = (text.to_string(), (font_size * 100.0) as i32);
 
         {
@@ -142,27 +178,37 @@ impl TextMeasurer for WgpuTextMeasurer {
         }
 
         let mut font_system = self.font_system.lock().unwrap();
-        let mut buffer = Buffer::new(&mut font_system, Metrics::new(font_size, font_size * 1.4));
-        buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
-        buffer.set_text(
+        let mut buffer = Buffer::new(
             &mut font_system,
-            text,
-            Attrs::new().family(Family::SansSerif),
-            Shaping::Advanced,
+            Metrics::new(font_size, DEFAULT_LINE_HEIGHT),
         );
+        buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
+        let attrs = match &self.preferred_font {
+            Some(font) => Attrs::new()
+                .family(Family::Name(&font.family))
+                .weight(font.weight),
+            None => Attrs::new().family(Family::SansSerif),
+        };
+        buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
         buffer.shape_until_scroll(&mut font_system);
 
         let mut max_width = 0.0f32;
-        let mut total_height = 0.0f32;
+        let mut total_lines = 0usize;
+        let mut last_line = None;
 
-        for _line in buffer.lines.iter() {
-            let layout_runs = buffer.layout_runs();
-            for run in layout_runs {
-                max_width = max_width.max(run.line_w);
-                break; // Just get the first run's width
+        for run in buffer.layout_runs() {
+            if last_line != Some(run.line_i) {
+                total_lines += 1;
+                last_line = Some(run.line_i);
             }
-            total_height += font_size * 1.4;
+            max_width = max_width.max(run.line_w);
         }
+
+        let total_height = if total_lines == 0 {
+            0.0
+        } else {
+            total_lines as f32 * DEFAULT_LINE_HEIGHT
+        };
 
         let size = Size {
             width: max_width,
