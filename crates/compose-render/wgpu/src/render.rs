@@ -8,6 +8,8 @@ use glyphon::{
     Attrs, Buffer, Color as GlyphonColor, Family, FontSystem, Metrics, Resolution, Shaping,
     SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer,
 };
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
@@ -56,6 +58,38 @@ struct GradientStop {
     color: [f32; 4],
 }
 
+/// Cached GPU resources for a shape
+struct CachedShapeBuffers {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    shape_bind_group: wgpu::BindGroup,
+}
+
+/// Cached text buffer for text shaping
+struct CachedTextBuffer {
+    buffer: Buffer,
+    text: String,
+    scale: f32,
+}
+
+/// Hash key for shape caching
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct ShapeKey {
+    rect_bits: [u32; 4],  // f32 as bits for hashing
+    radii_bits: [u32; 4],
+    brush_hash: u64,
+    z_index: usize,
+}
+
+/// Hash key for text caching
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct TextKey {
+    text: String,
+    rect_bits: [u32; 4],
+    scale_bits: u32,
+    z_index: usize,
+}
+
 pub struct GpuRenderer {
     pub(crate) device: Arc<wgpu::Device>,
     pub(crate) queue: Arc<wgpu::Queue>,
@@ -66,6 +100,9 @@ pub struct GpuRenderer {
     text_renderer: TextRenderer,
     text_atlas: TextAtlas,
     swash_cache: SwashCache,
+    // Caches for GPU resources
+    shape_cache: HashMap<ShapeKey, CachedShapeBuffers>,
+    text_cache: HashMap<TextKey, CachedTextBuffer>,
 }
 
 impl GpuRenderer {
@@ -178,6 +215,86 @@ impl GpuRenderer {
             text_renderer,
             text_atlas,
             swash_cache,
+            shape_cache: HashMap::new(),
+            text_cache: HashMap::new(),
+        }
+    }
+
+    fn hash_brush(brush: &Brush) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+
+        match brush {
+            Brush::Solid(c) => {
+                0u8.hash(&mut hasher);
+                c.r().to_bits().hash(&mut hasher);
+                c.g().to_bits().hash(&mut hasher);
+                c.b().to_bits().hash(&mut hasher);
+                c.a().to_bits().hash(&mut hasher);
+            }
+            Brush::LinearGradient(colors) => {
+                1u8.hash(&mut hasher);
+                for c in colors {
+                    c.r().to_bits().hash(&mut hasher);
+                    c.g().to_bits().hash(&mut hasher);
+                    c.b().to_bits().hash(&mut hasher);
+                    c.a().to_bits().hash(&mut hasher);
+                }
+            }
+            Brush::RadialGradient { colors, center, radius } => {
+                2u8.hash(&mut hasher);
+                center.x.to_bits().hash(&mut hasher);
+                center.y.to_bits().hash(&mut hasher);
+                radius.to_bits().hash(&mut hasher);
+                for c in colors {
+                    c.r().to_bits().hash(&mut hasher);
+                    c.g().to_bits().hash(&mut hasher);
+                    c.b().to_bits().hash(&mut hasher);
+                    c.a().to_bits().hash(&mut hasher);
+                }
+            }
+        }
+
+        hasher.finish()
+    }
+
+    fn create_shape_key(shape: &DrawShape) -> ShapeKey {
+        let radii_bits = if let Some(rounded) = shape.shape {
+            let resolved = rounded.resolve(shape.rect.width, shape.rect.height);
+            [
+                resolved.top_left.to_bits(),
+                resolved.top_right.to_bits(),
+                resolved.bottom_left.to_bits(),
+                resolved.bottom_right.to_bits(),
+            ]
+        } else {
+            [0, 0, 0, 0]
+        };
+
+        ShapeKey {
+            rect_bits: [
+                shape.rect.x.to_bits(),
+                shape.rect.y.to_bits(),
+                shape.rect.width.to_bits(),
+                shape.rect.height.to_bits(),
+            ],
+            radii_bits,
+            brush_hash: Self::hash_brush(&shape.brush),
+            z_index: shape.z_index,
+        }
+    }
+
+    fn create_text_key(text: &TextDraw) -> TextKey {
+        TextKey {
+            text: text.text.clone(),
+            rect_bits: [
+                text.rect.x.to_bits(),
+                text.rect.y.to_bits(),
+                text.rect.width.to_bits(),
+                text.rect.height.to_bits(),
+            ],
+            scale_bits: text.scale.to_bits(),
+            z_index: text.z_index,
         }
     }
 
@@ -224,11 +341,49 @@ impl GpuRenderer {
             }],
         });
 
-        // Prepare all shape buffers
+        // Prepare all shape buffers (with caching)
+        // First, collect keys for current frame shapes
+        let current_keys: Vec<ShapeKey> = sorted_shapes
+            .iter()
+            .map(|shape| Self::create_shape_key(shape))
+            .collect();
+
+        // Remove cache entries for shapes no longer present
+        self.shape_cache.retain(|key, _| current_keys.contains(key));
+
+        // First pass: populate cache for missing shapes
+        for shape in &sorted_shapes {
+            let key = Self::create_shape_key(shape);
+
+            if !self.shape_cache.contains_key(&key) {
+                // Not in cache, create new buffers
+                let (vertex_buffer, index_buffer, shape_bind_group) =
+                    self.prepare_shape_buffers(shape)?;
+
+                self.shape_cache.insert(
+                    key,
+                    CachedShapeBuffers {
+                        vertex_buffer,
+                        index_buffer,
+                        shape_bind_group,
+                    },
+                );
+            }
+        }
+
+        // Second pass: collect references from cache
         let shape_data: Vec<_> = sorted_shapes
             .iter()
-            .map(|shape| self.prepare_shape_buffers(shape))
-            .collect::<Result<_, _>>()?;
+            .map(|shape| {
+                let key = Self::create_shape_key(shape);
+                let cached = self.shape_cache.get(&key).unwrap();
+                (
+                    &cached.vertex_buffer,
+                    &cached.index_buffer,
+                    &cached.shape_bind_group,
+                )
+            })
+            .collect();
 
         // Render shapes
         {
@@ -264,36 +419,66 @@ impl GpuRenderer {
             }
         }
 
-        // Prepare text rendering - create buffers and text areas
+        // Prepare text rendering - create buffers and text areas (with caching)
         let mut font_system = self.font_system.lock().unwrap();
-        let mut text_data: Vec<(Buffer, &TextDraw)> = Vec::new();
 
+        // Collect keys for current frame text
+        let current_text_keys: Vec<TextKey> = sorted_texts
+            .iter()
+            .filter(|t| !t.text.is_empty() && t.rect.width > 0.0 && t.rect.height > 0.0)
+            .map(|text| Self::create_text_key(text))
+            .collect();
+
+        // Remove cache entries for text no longer present
+        self.text_cache.retain(|key, _| current_text_keys.contains(key));
+
+        // Create or get cached text buffers
         for text_draw in &sorted_texts {
             // Skip empty text or zero-sized rects
             if text_draw.text.is_empty() || text_draw.rect.width <= 0.0 || text_draw.rect.height <= 0.0 {
                 continue;
             }
 
-            let mut buffer = Buffer::new(
-                &mut font_system,
-                Metrics::new(14.0 * text_draw.scale, 20.0 * text_draw.scale),
-            );
-            // Don't constrain buffer size - let it shape freely
-            buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
-            buffer.set_text(
-                &mut font_system,
-                &text_draw.text,
-                Attrs::new(),
-                Shaping::Advanced,
-            );
-            buffer.shape_until_scroll(&mut font_system);
+            let key = Self::create_text_key(text_draw);
 
-            text_data.push((buffer, text_draw));
+            if !self.text_cache.contains_key(&key) {
+                // Not in cache, create new buffer
+                let mut buffer = Buffer::new(
+                    &mut font_system,
+                    Metrics::new(14.0 * text_draw.scale, 20.0 * text_draw.scale),
+                );
+                // Don't constrain buffer size - let it shape freely
+                buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
+                buffer.set_text(
+                    &mut font_system,
+                    &text_draw.text,
+                    Attrs::new(),
+                    Shaping::Advanced,
+                );
+                buffer.shape_until_scroll(&mut font_system);
+
+                self.text_cache.insert(
+                    key,
+                    CachedTextBuffer {
+                        buffer,
+                        text: text_draw.text.clone(),
+                        scale: text_draw.scale,
+                    },
+                );
+            }
         }
 
-        // Create text areas after all buffers are created (to avoid lifetime issues)
+        // Collect text data from cache
+        let text_data: Vec<(&TextDraw, TextKey)> = sorted_texts
+            .iter()
+            .filter(|t| !t.text.is_empty() && t.rect.width > 0.0 && t.rect.height > 0.0)
+            .map(|text| (text, Self::create_text_key(text)))
+            .collect();
+
+        // Create text areas using cached buffers
         let mut text_areas = Vec::new();
-        for (buffer, text_draw) in &text_data {
+        for (text_draw, key) in &text_data {
+            let cached = self.text_cache.get(key).expect("Text should be in cache");
             let color = GlyphonColor::rgba(
                 (text_draw.color.r() * 255.0) as u8,
                 (text_draw.color.g() * 255.0) as u8,
@@ -302,7 +487,7 @@ impl GpuRenderer {
             );
 
             text_areas.push(TextArea {
-                buffer,
+                buffer: &cached.buffer,
                 left: text_draw.rect.x,
                 top: text_draw.rect.y,
                 scale: 1.0,
