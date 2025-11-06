@@ -90,7 +90,7 @@ impl ShapeBatchBuffers {
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Shape Index Buffer"),
-            size: (std::mem::size_of::<u16>() * initial_index_cap) as u64,
+            size: (std::mem::size_of::<u32>() * initial_index_cap) as u64,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -164,7 +164,7 @@ impl ShapeBatchBuffers {
             let new_cap = indices_needed.next_power_of_two();
             self.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Shape Index Buffer"),
-                size: (std::mem::size_of::<u16>() * new_cap) as u64,
+                size: (std::mem::size_of::<u32>() * new_cap) as u64,
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -417,6 +417,12 @@ impl GpuRenderer {
 
         // Build batched shape data
         let shape_count = sorted_shapes.len();
+
+        // Debug: warn if approaching u16 index limit (65536 / 4 = 16384 shapes max)
+        if shape_count > 16000 {
+            eprintln!("WARNING: Rendering {} shapes, approaching u16 index limit (max 16384)", shape_count);
+        }
+
         let mut vertices = Vec::with_capacity(shape_count * 4);
         let mut indices = Vec::with_capacity(shape_count * 6);
         let mut shape_data = Vec::with_capacity(shape_count);
@@ -424,7 +430,7 @@ impl GpuRenderer {
 
         for (shape_idx, shape) in sorted_shapes.iter().enumerate() {
             let rect = shape.rect;
-            let base_vertex = (shape_idx * 4) as u16;
+            let base_vertex = (shape_idx * 4) as u32;
 
             // Determine gradient parameters and collect stops
             let (color, brush_type, gradient_start, gradient_count) = match &shape.brush {
@@ -535,7 +541,7 @@ impl GpuRenderer {
                 render_pass.set_vertex_buffer(0, self.shape_buffers.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(
                     self.shape_buffers.index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint16,
+                    wgpu::IndexFormat::Uint32,
                 );
                 // Draw all shapes in one call
                 render_pass.draw_indexed(0..(shape_count as u32 * 6), 0, 0..1);
