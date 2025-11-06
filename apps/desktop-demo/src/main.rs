@@ -2,7 +2,9 @@ use compose_app::ComposeAppOptions;
 use desktop_app::app::combined_app;
 
 fn main() {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
 
     println!("=== Compose-RS Desktop Example ===");
     println!("Click the Increment/Decrement buttons to see:");
