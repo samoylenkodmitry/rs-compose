@@ -464,6 +464,79 @@ impl ChunkedSlotStorage {
             }
         }
 
+        // Search forward for a matching gap that we can restore
+        if !parent_force && self.cursor < self.total_slots().saturating_sub(1) {
+            let parent_end = self
+                .group_stack
+                .last()
+                .map(|frame| frame.end.min(self.total_slots()))
+                .unwrap_or(self.total_slots());
+
+            const SEARCH_BUDGET: usize = 16;
+            let mut search_pos = self.cursor + 1; // Start from next slot
+            let mut scanned = 0;
+
+            while search_pos < self.total_slots() && scanned < SEARCH_BUDGET {
+                scanned += 1;
+
+                if let Some(ChunkedSlot::Gap {
+                    group_key: Some(gap_key),
+                    anchor: gap_anchor,
+                    group_scope,
+                    group_len,
+                    ..
+                }) = self.get_slot(search_pos)
+                {
+                    if *gap_key == key {
+                        // Found matching gap! Move it to cursor position
+                        let anchor = if gap_anchor.is_valid() {
+                            *gap_anchor
+                        } else {
+                            self.alloc_anchor()
+                        };
+                        let scope = *group_scope;
+                        let len = *group_len;
+
+                        // Shift slots to make room
+                        self.shift_across_chunks(self.cursor, search_pos);
+
+                        // Convert gap to group at cursor
+                        *self.get_slot_mut(self.cursor).unwrap() = ChunkedSlot::Group {
+                            key,
+                            anchor,
+                            len,
+                            scope,
+                            has_gap_children: true,
+                        };
+
+                        let start = self.cursor;
+                        self.cursor += 1;
+                        self.group_stack.push(GroupFrame {
+                            key,
+                            start,
+                            end: start + len,
+                            force_children_recompose: true,
+                        });
+                        self.update_group_bounds();
+                        self.last_start_was_gap = true;
+                        self.anchors_dirty = true;
+                        return (start, true);
+                    }
+                }
+
+                // Stop searching if we've gone beyond parent_end, unless we need extended search
+                if search_pos >= parent_end && parent_end < self.total_slots() {
+                    // Do limited extended search
+                    let extended_limit = (parent_end + SEARCH_BUDGET).min(self.total_slots());
+                    if search_pos >= extended_limit {
+                        break;
+                    }
+                }
+
+                search_pos += 1;
+            }
+        }
+
         // Create new group
         let anchor = self.alloc_anchor();
         let slot = ChunkedSlot::Group {
