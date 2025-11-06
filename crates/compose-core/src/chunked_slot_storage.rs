@@ -479,6 +479,34 @@ impl ChunkedSlotStorage {
             while search_pos < self.total_slots() && scanned < SEARCH_BUDGET {
                 scanned += 1;
 
+                // Check for matching Group slot - convert to Gap and continue searching
+                if let Some(ChunkedSlot::Group {
+                    key: group_key,
+                    anchor: group_anchor,
+                    len: group_len,
+                    scope: group_scope,
+                    has_gap_children,
+                }) = self.get_slot(search_pos)
+                {
+                    if *group_key == key {
+                        // Convert the Group to a Gap so it can be restored at cursor
+                        let gap_anchor = *group_anchor;
+                        let gap_scope = *group_scope;
+                        let gap_len = *group_len;
+
+                        *self.get_slot_mut(search_pos).unwrap() = ChunkedSlot::Gap {
+                            group_key: Some(key),
+                            anchor: gap_anchor,
+                            group_scope: gap_scope,
+                            group_len: gap_len,
+                        };
+
+                        // Now fall through to the Gap restoration logic below
+                        // (it will find this Gap and restore it properly)
+                    }
+                }
+
+                // Check for matching Gap slot
                 if let Some(ChunkedSlot::Gap {
                     group_key: Some(gap_key),
                     anchor: gap_anchor,
@@ -497,10 +525,24 @@ impl ChunkedSlotStorage {
                         let scope = *group_scope;
                         let len = *group_len;
 
-                        // Shift slots to make room
+                        // Need to move the Gap AND its children (total of 1 + len slots)
+                        // From positions [search_pos, search_pos+len] to [cursor, cursor+len]
+
+                        // Extract the children first
+                        let mut children = Vec::new();
+                        for i in 1..=len {
+                            if search_pos + i < self.total_slots() {
+                                children.push(std::mem::replace(
+                                    self.get_slot_mut(search_pos + i).unwrap(),
+                                    ChunkedSlot::default()
+                                ));
+                            }
+                        }
+
+                        // Shift slots to make room for group + children
                         self.shift_across_chunks(self.cursor, search_pos);
 
-                        // Convert gap to group at cursor
+                        // Place the restored Group at cursor
                         *self.get_slot_mut(self.cursor).unwrap() = ChunkedSlot::Group {
                             key,
                             anchor,
@@ -508,6 +550,13 @@ impl ChunkedSlotStorage {
                             scope,
                             has_gap_children: true,
                         };
+
+                        // Place the children right after the group
+                        for (i, child) in children.into_iter().enumerate() {
+                            if self.cursor + 1 + i < self.total_slots() {
+                                *self.get_slot_mut(self.cursor + 1 + i).unwrap() = child;
+                            }
+                        }
 
                         let start = self.cursor;
                         self.cursor += 1;
