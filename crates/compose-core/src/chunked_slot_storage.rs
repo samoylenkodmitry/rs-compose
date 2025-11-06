@@ -348,7 +348,39 @@ impl ChunkedSlotStorage {
     fn start_group(&mut self, key: Key) -> (usize, bool) {
         self.ensure_capacity();
 
-        // Check if current slot is already a group with matching key - reuse it
+        let parent_force = self
+            .group_stack
+            .last()
+            .map(|frame| frame.force_children_recompose)
+            .unwrap_or(false);
+
+        // Fast path: group with matching key, no gaps, no parent force
+        if let Some(slot) = self.get_slot(self.cursor) {
+            if let ChunkedSlot::Group {
+                key: existing_key,
+                len,
+                has_gap_children,
+                ..
+            } = slot
+            {
+                if *existing_key == key && !*has_gap_children && !parent_force {
+                    let group_len = *len;
+                    let start = self.cursor;
+                    self.cursor += 1;
+                    self.group_stack.push(GroupFrame {
+                        key,
+                        start,
+                        end: start + group_len,
+                        force_children_recompose: false,
+                    });
+                    self.update_group_bounds();
+                    self.last_start_was_gap = false;
+                    return (start, false);
+                }
+            }
+        }
+
+        // Check if current slot is already a group with matching key - reuse it (with force flag)
         if let Some(slot) = self.get_slot(self.cursor) {
             if let ChunkedSlot::Group {
                 key: existing_key,
@@ -375,11 +407,12 @@ impl ChunkedSlotStorage {
 
                     let start = self.cursor;
                     self.cursor += 1;
+                    let force_children = had_gap_children || parent_force;
                     self.group_stack.push(GroupFrame {
                         key,
                         start,
-                        end: start + group_len + 1,
-                        force_children_recompose: had_gap_children,
+                        end: start + group_len,
+                        force_children_recompose: force_children,
                     });
                     self.update_group_bounds();
                     self.last_start_was_gap = false;
@@ -416,12 +449,11 @@ impl ChunkedSlotStorage {
 
                     let start = self.cursor;
                     self.cursor += 1;
-                    // Set frame.end to start + len + 1 to account for the group slot itself
-                    // The group slot at `start` contains children from start+1 to start+len
+                    // Group len is the number of children, so end = start + len
                     self.group_stack.push(GroupFrame {
                         key,
                         start,
-                        end: start + len + 1,
+                        end: start + len,
                         force_children_recompose: true,
                     });
                     self.update_group_bounds();
