@@ -7,7 +7,7 @@ edition = "2021"
 default = ["desktop", "renderer-pixels"]
 desktop = ["compose-platform-desktop-winit", "dep:winit"]
 renderer-pixels = ["compose-render-pixels", "dep:pixels"]
-renderer-wgpu = ["compose-render-wgpu"]
+renderer-wgpu = ["compose-render-wgpu", "dep:wgpu", "dep:pollster"]
 
 [dependencies]
 compose-app-shell = { path = "../compose-app-shell" }
@@ -15,5 +15,7 @@ compose-platform-desktop-winit = { path = "../compose-platform/desktop-winit", o
 compose-render-pixels = { path = "../compose-render/pixels", optional = true }
 compose-render-wgpu = { path = "../compose-render/wgpu", optional = true }
 pixels = { version = "0.13", optional = true }
-winit = { version = "0.28", optional = true }
+wgpu = { version = "0.19", optional = true }
+pollster = { version = "0.3", optional = true }
+winit = { version = "0.29", optional = true }
 log = "0.4"

@@ -75,6 +75,14 @@ impl WgpuRenderer {
             ))
         }
     }
+
+    /// Get access to the WGPU device (for surface configuration).
+    pub fn device(&self) -> &wgpu::Device {
+        self.gpu_renderer
+            .as_ref()
+            .map(|r| &*r.device)
+            .expect("GPU renderer not initialized")
+    }
 }
 
 impl Default for WgpuRenderer {

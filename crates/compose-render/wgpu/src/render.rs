@@ -57,8 +57,8 @@ struct GradientStop {
 }
 
 pub struct GpuRenderer {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
+    pub(crate) device: Arc<wgpu::Device>,
+    pub(crate) queue: Arc<wgpu::Queue>,
     pipeline: wgpu::RenderPipeline,
     uniform_bind_group_layout: wgpu::BindGroupLayout,
     shape_bind_group_layout: wgpu::BindGroupLayout,
