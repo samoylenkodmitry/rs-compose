@@ -294,7 +294,8 @@ impl GpuRenderer {
                 &mut font_system,
                 Metrics::new(14.0 * text_draw.scale, 20.0 * text_draw.scale),
             );
-            buffer.set_size(&mut font_system, text_draw.rect.width, text_draw.rect.height);
+            // Don't constrain buffer size - let it shape freely
+            buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
             // Try using default family (first available) instead of specifying
             buffer.set_text(
                 &mut font_system,
