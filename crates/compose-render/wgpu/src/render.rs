@@ -9,8 +9,11 @@ use glyphon::{
     fontdb, Attrs, Buffer, Color as GlyphonColor, Family, FontSystem, Metrics, Resolution, Shaping,
     SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer,
 };
+use lru::LruCache;
 use std::collections::BTreeMap;
 use std::mem;
+use std::num::NonZeroUsize;
+use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
 fn align_to(value: u64, alignment: u64) -> u64 {
@@ -56,11 +59,12 @@ struct Uniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct ShapeData {
-    rect: [f32; 4],      // x, y, width, height
-    radii: [f32; 4],     // top_left, top_right, bottom_left, bottom_right
-    brush_type: u32,     // 0=solid, 1=linear_gradient, 2=radial_gradient
-    gradient_start: u32, // Starting index in gradient buffer
-    gradient_count: u32, // Number of gradient stops
+    rect: [f32; 4],            // x, y, width, height
+    radii: [f32; 4],           // top_left, top_right, bottom_left, bottom_right
+    gradient_params: [f32; 4], // center.x, center.y, radius, unused
+    brush_type: u32,           // 0=solid, 1=linear_gradient, 2=radial_gradient
+    gradient_start: u32,       // Starting index in gradient buffer
+    gradient_count: u32,       // Number of gradient stops
     _padding: u32,
 }
 
@@ -68,6 +72,99 @@ struct ShapeData {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct GradientStop {
     color: [f32; 4],
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct TextCacheKey {
+    text: String,
+    scale_key: u32,
+}
+
+impl TextCacheKey {
+    fn new(text: &str, scale: f32) -> Self {
+        let scaled = (scale * 1000.0).round().max(0.0);
+        let scale_key = scaled.min(u32::MAX as f32) as u32;
+        Self {
+            text: text.to_string(),
+            scale_key,
+        }
+    }
+}
+
+struct CachedTextBuffer {
+    buffer: Buffer,
+    metrics: Metrics,
+    width: f32,
+    height: f32,
+    text: String,
+}
+
+impl CachedTextBuffer {
+    fn new(
+        font_system: &mut FontSystem,
+        metrics: Metrics,
+        width: f32,
+        height: f32,
+        text: &str,
+        attrs: Attrs,
+    ) -> Self {
+        let mut buffer = Buffer::new(font_system, metrics);
+        buffer.set_size(font_system, width, height);
+        buffer.set_text(font_system, text, attrs, Shaping::Advanced);
+        Self {
+            buffer,
+            metrics,
+            width,
+            height,
+            text: text.to_string(),
+        }
+    }
+
+    fn ensure(
+        &mut self,
+        font_system: &mut FontSystem,
+        metrics: Metrics,
+        width: f32,
+        height: f32,
+        text: &str,
+        attrs: Attrs,
+    ) -> bool {
+        let mut reshaped = false;
+
+        if metrics != self.metrics {
+            self.buffer.set_metrics(font_system, metrics);
+            self.metrics = metrics;
+            reshaped = true;
+        }
+
+        if width != self.width || height != self.height {
+            self.buffer.set_size(font_system, width, height);
+            self.width = width;
+            self.height = height;
+            reshaped = true;
+        }
+
+        if self.text != text {
+            self.buffer
+                .set_text(font_system, text, attrs, Shaping::Advanced);
+            self.text.clear();
+            self.text.push_str(text);
+            reshaped = true;
+        }
+
+        reshaped
+    }
+}
+
+struct PreparedTextArea {
+    key: TextCacheKey,
+    buffer: NonNull<Buffer>,
+    left: f32,
+    top: f32,
+    bounds: TextBounds,
+    color: GlyphonColor,
+    scale: f32,
+    buffer_height: f32,
 }
 
 struct ShapeBatchBuffers {
@@ -246,6 +343,7 @@ pub struct GpuRenderer {
     text_renderer: TextRenderer,
     text_atlas: TextAtlas,
     swash_cache: SwashCache,
+    text_cache: LruCache<TextCacheKey, Box<CachedTextBuffer>>,
     preferred_font: Option<PreferredFont>,
 }
 
@@ -384,6 +482,8 @@ impl GpuRenderer {
             uniform_binding_size,
         );
 
+        let text_cache = LruCache::new(NonZeroUsize::new(128).unwrap());
+
         Self {
             device,
             queue,
@@ -397,6 +497,7 @@ impl GpuRenderer {
             text_renderer,
             text_atlas,
             swash_cache,
+            text_cache,
             preferred_font,
         }
     }
@@ -438,6 +539,7 @@ impl GpuRenderer {
         for (i, shape) in sorted_shapes.iter().enumerate() {
             let rect = shape.rect;
 
+            let mut gradient_params = [0.0f32; 4];
             let (color, brush_type, gradient_start, gradient_count) = match &shape.brush {
                 Brush::Solid(c) => ([c.r(), c.g(), c.b(), c.a()], 0u32, 0u32, 0u32),
                 Brush::LinearGradient(colors) => {
@@ -459,7 +561,11 @@ impl GpuRenderer {
                         )
                     }
                 }
-                Brush::RadialGradient { colors, .. } => {
+                Brush::RadialGradient {
+                    colors,
+                    center,
+                    radius,
+                } => {
                     if colors.is_empty() {
                         ([1.0, 1.0, 1.0, 1.0], 0u32, 0u32, 0u32)
                     } else {
@@ -470,6 +576,12 @@ impl GpuRenderer {
                             });
                         }
                         let first = colors.first().unwrap();
+                        gradient_params = [
+                            rect.x + center.x,
+                            rect.y + center.y,
+                            radius.max(f32::EPSILON),
+                            0.0,
+                        ];
                         (
                             [first.r(), first.g(), first.b(), first.a()],
                             2u32,
@@ -528,6 +640,7 @@ impl GpuRenderer {
             shape_data_entries.push(ShapeData {
                 rect: [rect.x, rect.y, rect.width, rect.height],
                 radii,
+                gradient_params,
                 brush_type,
                 gradient_start,
                 gradient_count,
@@ -627,12 +740,11 @@ impl GpuRenderer {
         // Render text
         {
             let mut font_system = self.font_system.lock().unwrap();
-            let mut text_buffers = Vec::with_capacity(sorted_texts.len());
-            let mut text_layout = Vec::with_capacity(sorted_texts.len());
             let total_texts = sorted_texts.len();
             let mut skipped_zero_scale = 0usize;
             let mut skipped_invalid_clip = 0usize;
             let mut skipped_invalid_size = 0usize;
+            let mut prepared_areas = Vec::with_capacity(sorted_texts.len());
 
             let preferred_font = self.preferred_font.as_ref();
 
@@ -680,19 +792,43 @@ impl GpuRenderer {
                     DEFAULT_FONT_SIZE * text_scale,
                     DEFAULT_LINE_HEIGHT * text_scale,
                 );
-                let mut buffer = Buffer::new(&mut font_system, metrics);
                 let buffer_height = text_draw.rect.height.max(metrics.line_height);
-                buffer.set_size(&mut font_system, f32::MAX, buffer_height);
                 let attrs = match preferred_font {
                     Some(font) => Attrs::new()
                         .family(Family::Name(&font.family))
                         .weight(font.weight),
                     None => Attrs::new().family(Family::SansSerif),
                 };
-                buffer.set_text(&mut font_system, &text_draw.text, attrs, Shaping::Advanced);
-                buffer.shape_until_scroll(&mut font_system);
 
-                log_text_glyphs(&font_system, &buffer, text_draw, text_scale);
+                let key = TextCacheKey::new(&text_draw.text, text_scale);
+                if !self.text_cache.contains(&key) {
+                    let cached = CachedTextBuffer::new(
+                        &mut font_system,
+                        metrics,
+                        f32::MAX,
+                        buffer_height,
+                        &text_draw.text,
+                        attrs.clone(),
+                    );
+                    self.text_cache.put(key.clone(), Box::new(cached));
+                }
+
+                let (buffer_ptr, reshaped) = {
+                    let entry = self
+                        .text_cache
+                        .get_mut(&key)
+                        .expect("text cache entry missing after insertion");
+                    let reshaped = entry.ensure(
+                        &mut font_system,
+                        metrics,
+                        f32::MAX,
+                        buffer_height,
+                        &text_draw.text,
+                        attrs.clone(),
+                    );
+                    log_text_glyphs(&font_system, &entry.buffer, text_draw, text_scale);
+                    (NonNull::from(&entry.buffer), reshaped)
+                };
 
                 let to_u8 = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
 
@@ -703,11 +839,27 @@ impl GpuRenderer {
                     to_u8(text_draw.color.a()),
                 );
 
-                text_buffers.push(buffer);
-                text_layout.push((text_draw.rect.x, text_draw.rect.y, bounds, color));
+                prepared_areas.push(PreparedTextArea {
+                    key: key.clone(),
+                    buffer: buffer_ptr,
+                    left: text_draw.rect.x,
+                    top: text_draw.rect.y,
+                    bounds,
+                    color,
+                    scale: text_scale,
+                    buffer_height,
+                });
+
+                if reshaped && log::log_enabled!(log::Level::Debug) {
+                    log::debug!(
+                        "Reshaped GPU text cache entry for \"{}\" at scale {:.2}",
+                        text_preview(&text_draw.text),
+                        text_scale
+                    );
+                }
             }
 
-            let prepared_texts = text_buffers.len();
+            let prepared_texts = prepared_areas.len();
             if total_texts > 0 {
                 log::info!(
                     "GPU text prepare: prepared {} of {} draw(s) (skipped {} zero scale, {} invalid size, {} clipped)",
@@ -731,30 +883,73 @@ impl GpuRenderer {
                 }
             }
 
-            let text_areas: Vec<TextArea> = text_buffers
-                .iter()
-                .zip(text_layout.iter())
-                .map(|(buffer, &(left, top, bounds, color))| TextArea {
-                    buffer,
-                    left,
-                    top,
-                    scale: 1.0,
-                    bounds,
-                    default_color: color,
-                })
-                .collect();
+            if prepared_texts > 0 {
+                let mut text_areas = Vec::with_capacity(prepared_texts);
+                let mut fallback_buffers: Vec<Box<Buffer>> = Vec::new();
+                for area in &prepared_areas {
+                    if self.text_cache.contains(&area.key) {
+                        let buffer_ref: &Buffer = unsafe { area.buffer.as_ref() };
+                        text_areas.push(TextArea {
+                            buffer: buffer_ref,
+                            left: area.left,
+                            top: area.top,
+                            scale: 1.0,
+                            bounds: area.bounds,
+                            default_color: area.color,
+                        });
+                    } else {
+                        log::warn!(
+                            "GPU text cache entry for \"{}\" was evicted before rendering; reshaping on the fly",
+                            text_preview(&area.key.text)
+                        );
 
-            self.text_renderer
-                .prepare(
-                    &self.device,
-                    &self.queue,
-                    &mut font_system,
-                    &mut self.text_atlas,
-                    Resolution { width, height },
-                    text_areas.iter().cloned(),
-                    &mut self.swash_cache,
-                )
-                .map_err(|e| format!("Text prepare error: {:?}", e))?;
+                        let metrics = Metrics::new(
+                            DEFAULT_FONT_SIZE * area.scale,
+                            DEFAULT_LINE_HEIGHT * area.scale,
+                        );
+                        let mut buffer = Box::new(Buffer::new(&mut font_system, metrics));
+                        buffer.set_size(&mut font_system, f32::MAX, area.buffer_height);
+                        let attrs = match preferred_font {
+                            Some(font) => Attrs::new()
+                                .family(Family::Name(&font.family))
+                                .weight(font.weight),
+                            None => Attrs::new().family(Family::SansSerif),
+                        };
+                        buffer.set_text(&mut font_system, &area.key.text, attrs, Shaping::Advanced);
+                        buffer.shape_until_scroll(&mut font_system);
+                        fallback_buffers.push(buffer);
+                        let buffer_ptr = {
+                            let last = fallback_buffers
+                                .last()
+                                .expect("fallback buffer missing after push");
+                            last.as_ref() as *const Buffer
+                        };
+                        let buffer_ref: &Buffer = unsafe { &*buffer_ptr };
+                        text_areas.push(TextArea {
+                            buffer: buffer_ref,
+                            left: area.left,
+                            top: area.top,
+                            scale: 1.0,
+                            bounds: area.bounds,
+                            default_color: area.color,
+                        });
+                    }
+                }
+
+                self.text_renderer
+                    .prepare(
+                        &self.device,
+                        &self.queue,
+                        &mut font_system,
+                        &mut self.text_atlas,
+                        Resolution { width, height },
+                        text_areas.iter().cloned(),
+                        &mut self.swash_cache,
+                    )
+                    .map_err(|e| format!("Text prepare error: {:?}", e))?;
+
+                self.text_atlas.trim();
+            }
         }
 
         {

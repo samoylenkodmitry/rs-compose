@@ -50,6 +50,7 @@ struct FragmentInput {
 struct ShapeData {
     rect: vec4<f32>,  // x, y, width, height
     radii: vec4<f32>, // top_left, top_right, bottom_left, bottom_right
+    gradient_params: vec4<f32>, // x=center.x, y=center.y, z=radius, w=unused
     brush_type: u32,  // 0=solid, 1=linear_gradient, 2=radial_gradient
     gradient_start: u32,
     gradient_count: u32,
@@ -104,7 +105,8 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     // Apply gradient if needed
     if (shape_data.brush_type == 1u) {
         // Linear gradient (top to bottom)
-        let t = clamp((rect_pos.y - shape_data.rect.y) / shape_data.rect.w, 0.0, 1.0);
+        let height = max(shape_data.rect.w, 0.00001);
+        let t = clamp((rect_pos.y - shape_data.rect.y) / height, 0.0, 1.0);
         let count = shape_data.gradient_count;
         let idx = u32(t * f32(count - 1u));
         let next_idx = min(idx + 1u, count - 1u);
@@ -115,10 +117,10 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
         color = mix(c1, c2, local_t);
     } else if (shape_data.brush_type == 2u) {
         // Radial gradient
-        let center = shape_data.rect.xy + shape_data.rect.zw * 0.5;
-        let max_dist = length(shape_data.rect.zw * 0.5);
+        let center = shape_data.gradient_params.xy;
+        let radius = max(shape_data.gradient_params.z, 0.00001);
         let dist_from_center = length(rect_pos - center);
-        let t = clamp(dist_from_center / max_dist, 0.0, 1.0);
+        let t = clamp(dist_from_center / radius, 0.0, 1.0);
 
         let count = shape_data.gradient_count;
         let idx = u32(t * f32(count - 1u));
