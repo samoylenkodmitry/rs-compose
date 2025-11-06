@@ -4,7 +4,7 @@ use crate::font::{PreferredFont, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT};
 use crate::scene::{DrawShape, TextDraw};
 use crate::shaders;
 use bytemuck::{Pod, Zeroable};
-use compose_ui_graphics::{Brush, Color, Rect};
+use compose_ui_graphics::{Brush, Rect};
 use glyphon::{
     fontdb, Attrs, Buffer, Color as GlyphonColor, Family, FontSystem, Metrics, Resolution, Shaping,
     SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer,
@@ -12,6 +12,18 @@ use glyphon::{
 use std::collections::BTreeMap;
 use std::mem;
 use std::sync::{Arc, Mutex};
+
+fn align_to(value: u64, alignment: u64) -> u64 {
+    if alignment <= 1 {
+        return value;
+    }
+    let remainder = value % alignment;
+    if remainder == 0 {
+        value
+    } else {
+        value + (alignment - remainder)
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -58,17 +70,27 @@ struct GradientStop {
     color: [f32; 4],
 }
 
-struct ShapeGpuResources {
+struct ShapeBatchBuffers {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     shape_buffer: wgpu::Buffer,
     gradient_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    vertex_capacity: usize,
+    index_capacity: usize,
+    shape_capacity: usize,
     gradient_capacity: usize,
+    uniform_stride: u64,
+    uniform_binding_size: std::num::NonZeroU64,
 }
 
-impl ShapeGpuResources {
-    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
+impl ShapeBatchBuffers {
+    fn new(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        uniform_stride: u64,
+        uniform_binding_size: std::num::NonZeroU64,
+    ) -> Self {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
             size: (mem::size_of::<Vertex>() * 4) as u64,
@@ -85,15 +107,14 @@ impl ShapeGpuResources {
 
         let shape_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Shape Buffer"),
-            size: mem::size_of::<ShapeData>() as u64,
+            size: uniform_stride.max(mem::size_of::<ShapeData>() as u64),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let gradient_capacity = 1usize;
         let gradient_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Gradient Buffer"),
-            size: (mem::size_of::<GradientStop>() * gradient_capacity) as u64,
+            size: mem::size_of::<GradientStop>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -104,7 +125,11 @@ impl ShapeGpuResources {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: shape_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &shape_buffer,
+                        offset: 0,
+                        size: Some(uniform_binding_size),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -119,143 +144,91 @@ impl ShapeGpuResources {
             shape_buffer,
             gradient_buffer,
             bind_group,
-            gradient_capacity,
+            vertex_capacity: 4,
+            index_capacity: 6,
+            shape_capacity: 1,
+            gradient_capacity: 1,
+            uniform_stride,
+            uniform_binding_size,
         }
     }
 
-    fn ensure_gradient_capacity(
+    fn ensure_capacities(
         &mut self,
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        required: usize,
+        vertices: usize,
+        indices: usize,
+        shapes: usize,
+        gradients: usize,
     ) {
-        let required_capacity = required.max(1);
-        if required_capacity <= self.gradient_capacity {
-            return;
+        let mut rebuild_bind_group = false;
+
+        if vertices > self.vertex_capacity {
+            let new_capacity = vertices.next_power_of_two();
+            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Vertex Buffer"),
+                size: (mem::size_of::<Vertex>() * new_capacity) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.vertex_capacity = new_capacity;
         }
 
-        let new_capacity = required_capacity.next_power_of_two();
-        self.gradient_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Gradient Buffer"),
-            size: (mem::size_of::<GradientStop>() * new_capacity) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.gradient_capacity = new_capacity;
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Shape Bind Group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.shape_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.gradient_buffer.as_entire_binding(),
-                },
-            ],
-        });
-    }
+        if indices > self.index_capacity {
+            let new_capacity = indices.next_power_of_two();
+            self.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Index Buffer"),
+                size: (mem::size_of::<u16>() * new_capacity) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.index_capacity = new_capacity;
+        }
 
-    fn update(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        layout: &wgpu::BindGroupLayout,
-        shape: &DrawShape,
-    ) {
-        let rect = shape.rect;
+        if shapes > self.shape_capacity {
+            let new_capacity = shapes.max(1).next_power_of_two();
+            self.shape_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Shape Buffer"),
+                size: self.uniform_stride * new_capacity as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.shape_capacity = new_capacity;
+            rebuild_bind_group = true;
+        }
 
-        let (color, gradient_colors) = match &shape.brush {
-            Brush::Solid(c) => ([c.r(), c.g(), c.b(), c.a()], Vec::new()),
-            Brush::LinearGradient(colors) => {
-                let first = colors.first().unwrap_or(&Color(1.0, 1.0, 1.0, 1.0));
-                ([first.r(), first.g(), first.b(), first.a()], colors.clone())
-            }
-            Brush::RadialGradient { colors, .. } => {
-                let first = colors.first().unwrap_or(&Color(1.0, 1.0, 1.0, 1.0));
-                ([first.r(), first.g(), first.b(), first.a()], colors.clone())
-            }
-        };
+        if gradients > self.gradient_capacity {
+            let new_capacity = gradients.max(1).next_power_of_two();
+            self.gradient_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Gradient Buffer"),
+                size: (mem::size_of::<GradientStop>() * new_capacity) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.gradient_capacity = new_capacity;
+            rebuild_bind_group = true;
+        }
 
-        let vertices = [
-            Vertex {
-                position: [rect.x, rect.y],
-                color,
-                uv: [0.0, 0.0],
-            },
-            Vertex {
-                position: [rect.x + rect.width, rect.y],
-                color,
-                uv: [1.0, 0.0],
-            },
-            Vertex {
-                position: [rect.x, rect.y + rect.height],
-                color,
-                uv: [0.0, 1.0],
-            },
-            Vertex {
-                position: [rect.x + rect.width, rect.y + rect.height],
-                color,
-                uv: [1.0, 1.0],
-            },
-        ];
-
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
-
-        let indices: [u16; 6] = [0, 1, 2, 2, 1, 3];
-        queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
-
-        let radii = if let Some(rounded) = shape.shape {
-            let resolved = rounded.resolve(rect.width, rect.height);
-            [
-                resolved.top_left,
-                resolved.top_right,
-                resolved.bottom_left,
-                resolved.bottom_right,
-            ]
-        } else {
-            [0.0, 0.0, 0.0, 0.0]
-        };
-
-        let (brush_type, gradient_count) = match &shape.brush {
-            Brush::Solid(_) => (0, 0),
-            Brush::LinearGradient(colors) => (1, colors.len() as u32),
-            Brush::RadialGradient { colors, .. } => (2, colors.len() as u32),
-        };
-
-        let shape_data = ShapeData {
-            rect: [rect.x, rect.y, rect.width, rect.height],
-            radii,
-            brush_type,
-            gradient_start: 0,
-            gradient_count,
-            _padding: 0,
-        };
-
-        queue.write_buffer(&self.shape_buffer, 0, bytemuck::cast_slice(&[shape_data]));
-
-        let gradient_stops: Vec<GradientStop> = gradient_colors
-            .iter()
-            .map(|c| GradientStop {
-                color: [c.r(), c.g(), c.b(), c.a()],
-            })
-            .collect();
-
-        self.ensure_gradient_capacity(device, layout, gradient_stops.len());
-
-        if gradient_stops.is_empty() {
-            let zero_stop = GradientStop {
-                color: [0.0, 0.0, 0.0, 0.0],
-            };
-            queue.write_buffer(&self.gradient_buffer, 0, bytemuck::cast_slice(&[zero_stop]));
-        } else {
-            queue.write_buffer(
-                &self.gradient_buffer,
-                0,
-                bytemuck::cast_slice(&gradient_stops),
-            );
+        if rebuild_bind_group {
+            self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Shape Bind Group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.shape_buffer,
+                            offset: 0,
+                            size: Some(self.uniform_binding_size),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.gradient_buffer.as_entire_binding(),
+                    },
+                ],
+            });
         }
     }
 }
@@ -267,7 +240,8 @@ pub struct GpuRenderer {
     shape_bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    shape_resources: Vec<ShapeGpuResources>,
+    shape_buffers: ShapeBatchBuffers,
+    shape_uniform_stride: u64,
     font_system: Arc<Mutex<FontSystem>>,
     text_renderer: TextRenderer,
     text_atlas: TextAtlas,
@@ -314,8 +288,11 @@ impl GpuRenderer {
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                            has_dynamic_offset: true,
+                            min_binding_size: Some(
+                                std::num::NonZeroU64::new(mem::size_of::<ShapeData>() as u64)
+                                    .unwrap(),
+                            ),
                         },
                         count: None,
                     },
@@ -385,6 +362,12 @@ impl GpuRenderer {
             }],
         });
 
+        let limits = device.limits();
+        let uniform_alignment = u64::from(limits.min_uniform_buffer_offset_alignment.max(1));
+        let shape_uniform_size = mem::size_of::<ShapeData>() as u64;
+        let shape_uniform_stride = align_to(shape_uniform_size, uniform_alignment);
+        let uniform_binding_size = std::num::NonZeroU64::new(shape_uniform_size).unwrap();
+
         let swash_cache = SwashCache::new();
         let mut text_atlas = TextAtlas::new(&device, &queue, surface_format);
         let text_renderer = TextRenderer::new(
@@ -394,6 +377,13 @@ impl GpuRenderer {
             None,
         );
 
+        let shape_buffers = ShapeBatchBuffers::new(
+            &device,
+            &shape_bind_group_layout,
+            shape_uniform_stride,
+            uniform_binding_size,
+        );
+
         Self {
             device,
             queue,
@@ -401,7 +391,8 @@ impl GpuRenderer {
             shape_bind_group_layout,
             uniform_buffer,
             uniform_bind_group,
-            shape_resources: Vec::new(),
+            shape_buffers,
+            shape_uniform_stride,
             font_system,
             text_renderer,
             text_atlas,
@@ -439,24 +430,154 @@ impl GpuRenderer {
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let shape_count = sorted_shapes.len();
-        if self.shape_resources.len() < shape_count {
-            let device = &*self.device;
-            let layout = &self.shape_bind_group_layout;
-            self.shape_resources.extend(
-                (self.shape_resources.len()..shape_count)
-                    .map(|_| ShapeGpuResources::new(device, layout)),
-            );
+        let mut vertex_data = Vec::with_capacity(shape_count * 4);
+        let mut index_data = Vec::with_capacity(shape_count * 6);
+        let mut shape_data_entries = Vec::with_capacity(shape_count);
+        let mut gradient_data = Vec::new();
+
+        for (i, shape) in sorted_shapes.iter().enumerate() {
+            let rect = shape.rect;
+
+            let (color, brush_type, gradient_start, gradient_count) = match &shape.brush {
+                Brush::Solid(c) => ([c.r(), c.g(), c.b(), c.a()], 0u32, 0u32, 0u32),
+                Brush::LinearGradient(colors) => {
+                    let start = gradient_data.len() as u32;
+                    if colors.is_empty() {
+                        ([1.0, 1.0, 1.0, 1.0], 0u32, 0u32, 0u32)
+                    } else {
+                        for color in colors {
+                            gradient_data.push(GradientStop {
+                                color: [color.r(), color.g(), color.b(), color.a()],
+                            });
+                        }
+                        let first = colors.first().unwrap();
+                        (
+                            [first.r(), first.g(), first.b(), first.a()],
+                            1u32,
+                            start,
+                            colors.len() as u32,
+                        )
+                    }
+                }
+                Brush::RadialGradient { colors, .. } => {
+                    if colors.is_empty() {
+                        ([1.0, 1.0, 1.0, 1.0], 0u32, 0u32, 0u32)
+                    } else {
+                        let start = gradient_data.len() as u32;
+                        for color in colors {
+                            gradient_data.push(GradientStop {
+                                color: [color.r(), color.g(), color.b(), color.a()],
+                            });
+                        }
+                        let first = colors.first().unwrap();
+                        (
+                            [first.r(), first.g(), first.b(), first.a()],
+                            2u32,
+                            start,
+                            colors.len() as u32,
+                        )
+                    }
+                }
+            };
+
+            vertex_data.extend_from_slice(&[
+                Vertex {
+                    position: [rect.x, rect.y],
+                    color,
+                    uv: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [rect.x + rect.width, rect.y],
+                    color,
+                    uv: [1.0, 0.0],
+                },
+                Vertex {
+                    position: [rect.x, rect.y + rect.height],
+                    color,
+                    uv: [0.0, 1.0],
+                },
+                Vertex {
+                    position: [rect.x + rect.width, rect.y + rect.height],
+                    color,
+                    uv: [1.0, 1.0],
+                },
+            ]);
+
+            let base_index = (i * 4) as u16;
+            index_data.extend_from_slice(&[
+                base_index,
+                base_index + 1,
+                base_index + 2,
+                base_index + 2,
+                base_index + 1,
+                base_index + 3,
+            ]);
+
+            let radii = if let Some(rounded) = shape.shape {
+                let resolved = rounded.resolve(rect.width, rect.height);
+                [
+                    resolved.top_left,
+                    resolved.top_right,
+                    resolved.bottom_left,
+                    resolved.bottom_right,
+                ]
+            } else {
+                [0.0, 0.0, 0.0, 0.0]
+            };
+
+            shape_data_entries.push(ShapeData {
+                rect: [rect.x, rect.y, rect.width, rect.height],
+                radii,
+                brush_type,
+                gradient_start,
+                gradient_count,
+                _padding: 0,
+            });
         }
 
-        let device = &*self.device;
-        let queue = &*self.queue;
-        let layout = &self.shape_bind_group_layout;
-        for (shape, resources) in sorted_shapes
-            .iter()
-            .zip(self.shape_resources.iter_mut())
-            .take(shape_count)
-        {
-            resources.update(device, queue, layout, shape);
+        if shape_count > 0 {
+            let total_vertices = vertex_data.len();
+            let total_indices = index_data.len();
+            let total_shapes = shape_data_entries.len();
+            let total_gradients = gradient_data.len().max(1);
+
+            self.shape_buffers.ensure_capacities(
+                &self.device,
+                &self.shape_bind_group_layout,
+                total_vertices,
+                total_indices,
+                total_shapes,
+                total_gradients,
+            );
+
+            self.queue.write_buffer(
+                &self.shape_buffers.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&vertex_data),
+            );
+            self.queue.write_buffer(
+                &self.shape_buffers.index_buffer,
+                0,
+                bytemuck::cast_slice(&index_data),
+            );
+
+            let stride = self.shape_uniform_stride as usize;
+            let shape_size = mem::size_of::<ShapeData>();
+            let mut shape_bytes = vec![0u8; stride * total_shapes];
+            for (i, data) in shape_data_entries.iter().enumerate() {
+                let offset = i * stride;
+                shape_bytes[offset..offset + shape_size].copy_from_slice(bytemuck::bytes_of(data));
+            }
+            self.queue
+                .write_buffer(&self.shape_buffers.shape_buffer, 0, &shape_bytes);
+
+            if !gradient_data.is_empty() {
+                self.queue.write_buffer(
+                    &self.shape_buffers.gradient_buffer,
+                    0,
+                    bytemuck::cast_slice(&gradient_data),
+                );
+            }
         }
 
         // Render shapes
@@ -485,12 +606,21 @@ impl GpuRenderer {
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
 
             // Render each shape
-            for resources in self.shape_resources.iter().take(shape_count) {
-                render_pass.set_bind_group(1, &resources.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, resources.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(resources.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..6, 0, 0..1);
+            if shape_count > 0 {
+                render_pass.set_vertex_buffer(0, self.shape_buffers.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    self.shape_buffers.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint16,
+                );
+
+                for i in 0..shape_count {
+                    let offset = (i as u64 * self.shape_uniform_stride) as u32;
+                    render_pass.set_bind_group(1, &self.shape_buffers.bind_group, &[offset]);
+                    let index_start = (i * 6) as u32;
+                    let index_end = index_start + 6;
+                    let base_vertex = (i * 4) as i32;
+                    render_pass.draw_indexed(index_start..index_end, base_vertex, 0..1);
+                }
             }
         }
 
