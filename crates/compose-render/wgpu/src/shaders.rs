@@ -45,9 +45,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertex_idx: u32) -> Vertex
 
 // Fragment shader structs and data
 struct ShapeData {
-    rect: vec4<f32>,  // x, y, width, height
-    radii: vec4<f32>, // top_left, top_right, bottom_left, bottom_right
-    brush_type: u32,  // 0=solid, 1=linear_gradient, 2=radial_gradient
+    rect: vec4<f32>,            // x, y, width, height
+    radii: vec4<f32>,           // top_left, top_right, bottom_left, bottom_right
+    gradient_params: vec4<f32>, // center.x, center.y, radius, unused
+    brush_type: u32,            // 0=solid, 1=linear_gradient, 2=radial_gradient
     gradient_start: u32,
     gradient_count: u32,
     _padding: u32,
@@ -102,30 +103,45 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Apply gradient if needed
     if (shape.brush_type == 1u) {
         // Linear gradient (top to bottom)
-        let t = clamp((rect_pos.y - shape.rect.y) / shape.rect.w, 0.0, 1.0);
+        let height = max(shape.rect.w, 0.00001);
+        let t = clamp((rect_pos.y - shape.rect.y) / height, 0.0, 1.0);
         let count = shape.gradient_count;
-        let idx = u32(t * f32(count - 1u));
-        let next_idx = min(idx + 1u, count - 1u);
-        let local_t = fract(t * f32(count - 1u));
 
-        let c1 = gradient_stops[shape.gradient_start + idx].color;
-        let c2 = gradient_stops[shape.gradient_start + next_idx].color;
-        color = mix(c1, c2, local_t);
+        if (count <= 1u) {
+            color = gradient_stops[shape.gradient_start].color;
+        } else {
+            let segments = count - 1u;
+            let scaled = t * f32(segments);
+            let idx = min(u32(scaled), segments);
+            let next_idx = min(idx + 1u, segments);
+            let local_t = fract(scaled);
+
+            let c1 = gradient_stops[shape.gradient_start + idx].color;
+            let c2 = gradient_stops[shape.gradient_start + next_idx].color;
+            color = mix(c1, c2, local_t);
+        }
     } else if (shape.brush_type == 2u) {
-        // Radial gradient
-        let center = shape.rect.xy + shape.rect.zw * 0.5;
-        let max_dist = length(shape.rect.zw * 0.5);
+        // Radial gradient - use explicit center and radius from gradient_params
+        let center = shape.gradient_params.xy;
+        let radius = max(shape.gradient_params.z, 0.00001);
         let dist_from_center = length(rect_pos - center);
-        let t = clamp(dist_from_center / max_dist, 0.0, 1.0);
+        let t = clamp(dist_from_center / radius, 0.0, 1.0);
 
         let count = shape.gradient_count;
-        let idx = u32(t * f32(count - 1u));
-        let next_idx = min(idx + 1u, count - 1u);
-        let local_t = fract(t * f32(count - 1u));
 
-        let c1 = gradient_stops[shape.gradient_start + idx].color;
-        let c2 = gradient_stops[shape.gradient_start + next_idx].color;
-        color = mix(c1, c2, local_t);
+        if (count <= 1u) {
+            color = gradient_stops[shape.gradient_start].color;
+        } else {
+            let segments = count - 1u;
+            let scaled = t * f32(segments);
+            let idx = min(u32(scaled), segments);
+            let next_idx = min(idx + 1u, segments);
+            let local_t = fract(scaled);
+
+            let c1 = gradient_stops[shape.gradient_start + idx].color;
+            let c2 = gradient_stops[shape.gradient_start + next_idx].color;
+            color = mix(c1, c2, local_t);
+        }
     }
 
     return vec4<f32>(color.rgb, color.a * alpha);

@@ -42,11 +42,12 @@ struct Uniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct ShapeData {
-    rect: [f32; 4],        // x, y, width, height
-    radii: [f32; 4],       // top_left, top_right, bottom_left, bottom_right
-    brush_type: u32,       // 0=solid, 1=linear_gradient, 2=radial_gradient
-    gradient_start: u32,   // Starting index in gradient buffer
-    gradient_count: u32,   // Number of gradient stops
+    rect: [f32; 4],            // x, y, width, height
+    radii: [f32; 4],           // top_left, top_right, bottom_left, bottom_right
+    gradient_params: [f32; 4], // center.x, center.y, radius, unused
+    brush_type: u32,           // 0=solid, 1=linear_gradient, 2=radial_gradient
+    gradient_start: u32,       // Starting index in gradient buffer
+    gradient_count: u32,       // Number of gradient stops
     _padding: u32,
 }
 
@@ -433,6 +434,7 @@ impl GpuRenderer {
             let base_vertex = (shape_idx * 4) as u32;
 
             // Determine gradient parameters and collect stops
+            let mut gradient_params = [0.0f32; 4];
             let (color, brush_type, gradient_start, gradient_count) = match &shape.brush {
                 Brush::Solid(c) => {
                     ([c.r(), c.g(), c.b(), c.a()], 0u32, 0u32, 0u32)
@@ -447,7 +449,7 @@ impl GpuRenderer {
                     }
                     ([first.r(), first.g(), first.b(), first.a()], 1u32, start, colors.len() as u32)
                 }
-                Brush::RadialGradient { colors, .. } => {
+                Brush::RadialGradient { colors, center, radius } => {
                     let start = gradients.len() as u32;
                     let first = colors.first().unwrap_or(&Color(1.0, 1.0, 1.0, 1.0));
                     for c in colors {
@@ -455,6 +457,13 @@ impl GpuRenderer {
                             color: [c.r(), c.g(), c.b(), c.a()],
                         });
                     }
+                    // Store radial gradient parameters (center is relative to rect)
+                    gradient_params = [
+                        rect.x + center.x,
+                        rect.y + center.y,
+                        radius.max(f32::EPSILON),
+                        0.0,
+                    ];
                     ([first.r(), first.g(), first.b(), first.a()], 2u32, start, colors.len() as u32)
                 }
             };
@@ -484,6 +493,7 @@ impl GpuRenderer {
             shape_data.push(ShapeData {
                 rect: [rect.x, rect.y, rect.width, rect.height],
                 radii,
+                gradient_params,
                 brush_type,
                 gradient_start,
                 gradient_count,
