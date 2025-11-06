@@ -189,6 +189,16 @@ impl GpuRenderer {
         width: u32,
         height: u32,
     ) -> Result<(), String> {
+        // Debug logging
+        log::info!("=== WGPU Render ===");
+        log::info!("Shapes: {}", shapes.len());
+        log::info!("Texts: {}", texts.len());
+        for (i, text) in texts.iter().enumerate() {
+            log::info!("  Text[{}]: '{}' at ({}, {}) size {}x{} z={} color=({}, {}, {}, {})",
+                i, text.text, text.rect.x, text.rect.y, text.rect.width, text.rect.height,
+                text.z_index, text.color.r(), text.color.g(), text.color.b(), text.color.a());
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -265,11 +275,21 @@ impl GpuRenderer {
         }
 
         // Prepare text rendering - create buffers and text areas
+        log::info!("Preparing {} text items", sorted_texts.len());
         let mut font_system = self.font_system.lock().unwrap();
-        let mut text_buffers = Vec::new();
-        let mut text_areas = Vec::new();
+        let mut text_data: Vec<(Buffer, &TextDraw)> = Vec::new();
 
         for text_draw in &sorted_texts {
+            // Skip empty text or zero-sized rects
+            if text_draw.text.is_empty() || text_draw.rect.width <= 0.0 || text_draw.rect.height <= 0.0 {
+                log::warn!("Skipping text '{}' - empty or zero size rect", text_draw.text);
+                continue;
+            }
+
+            log::info!("Creating buffer for text: '{}' at ({},{}) size {}x{}",
+                text_draw.text, text_draw.rect.x, text_draw.rect.y,
+                text_draw.rect.width, text_draw.rect.height);
+
             let mut buffer = Buffer::new(
                 &mut font_system,
                 Metrics::new(14.0 * text_draw.scale, 20.0 * text_draw.scale),
@@ -283,18 +303,12 @@ impl GpuRenderer {
             );
             buffer.shape_until_scroll(&mut font_system);
 
-            let color = GlyphonColor::rgba(
-                (text_draw.color.r() * 255.0) as u8,
-                (text_draw.color.g() * 255.0) as u8,
-                (text_draw.color.b() * 255.0) as u8,
-                (text_draw.color.a() * 255.0) as u8,
-            );
-
-            text_buffers.push(buffer);
+            text_data.push((buffer, text_draw));
         }
 
         // Create text areas after all buffers are created (to avoid lifetime issues)
-        for (i, text_draw) in sorted_texts.iter().enumerate() {
+        let mut text_areas = Vec::new();
+        for (buffer, text_draw) in &text_data {
             let color = GlyphonColor::rgba(
                 (text_draw.color.r() * 255.0) as u8,
                 (text_draw.color.g() * 255.0) as u8,
@@ -303,7 +317,7 @@ impl GpuRenderer {
             );
 
             text_areas.push(TextArea {
-                buffer: &text_buffers[i],
+                buffer,
                 left: text_draw.rect.x,
                 top: text_draw.rect.y,
                 scale: 1.0,
@@ -324,6 +338,7 @@ impl GpuRenderer {
         }
 
         // Prepare all text at once
+        log::info!("Calling text_renderer.prepare with {} text areas", text_areas.len());
         self.text_renderer
             .prepare(
                 &self.device,
@@ -335,6 +350,7 @@ impl GpuRenderer {
                 &mut self.swash_cache,
             )
             .map_err(|e| format!("Text prepare error: {:?}", e))?;
+        log::info!("Text prepare succeeded");
 
         drop(font_system);
 
@@ -354,9 +370,11 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
+            log::info!("Calling text_renderer.render");
             self.text_renderer
                 .render(&self.text_atlas, &mut text_pass)
                 .map_err(|e| format!("Text render error: {:?}", e))?;
+            log::info!("Text render succeeded");
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
