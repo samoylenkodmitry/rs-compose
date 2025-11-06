@@ -30,7 +30,7 @@ pub enum SlotBackendKind {
 
 impl Default for SlotBackendKind {
     fn default() -> Self {
-        Self::Split
+        Self::Baseline
     }
 }
 
@@ -52,25 +52,9 @@ impl SlotBackend {
     pub fn new(kind: SlotBackendKind) -> Self {
         match kind {
             SlotBackendKind::Baseline => Self::Baseline(SlotTable::new()),
-            // TEMPORARY: Map experimental backends to Baseline until fully tested
-            SlotBackendKind::Chunked => {
-                #[cfg(feature = "experimental-backends")]
-                return Self::Chunked(ChunkedSlotStorage::new());
-                #[cfg(not(feature = "experimental-backends"))]
-                Self::Baseline(SlotTable::new())
-            }
-            SlotBackendKind::Hierarchical => {
-                #[cfg(feature = "experimental-backends")]
-                return Self::Hierarchical(HierarchicalSlotStorage::new());
-                #[cfg(not(feature = "experimental-backends"))]
-                Self::Baseline(SlotTable::new())
-            }
-            SlotBackendKind::Split => {
-                #[cfg(feature = "experimental-backends")]
-                return Self::Split(SplitSlotStorage::new());
-                #[cfg(not(feature = "experimental-backends"))]
-                Self::Baseline(SlotTable::new())
-            }
+            SlotBackendKind::Chunked => Self::Chunked(ChunkedSlotStorage::new()),
+            SlotBackendKind::Hierarchical => Self::Hierarchical(HierarchicalSlotStorage::new()),
+            SlotBackendKind::Split => Self::Split(SplitSlotStorage::new()),
         }
     }
 }
