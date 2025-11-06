@@ -303,6 +303,13 @@ impl GpuRenderer {
             );
             buffer.shape_until_scroll(&mut font_system);
 
+            // Debug: Check if glyphs were shaped
+            let mut glyph_count = 0;
+            for run in buffer.layout_runs() {
+                glyph_count += run.glyphs.len();
+            }
+            println!("  -> Shaped {} glyphs for '{}'", glyph_count, text_draw.text);
+
             text_data.push((buffer, text_draw));
         }
 
@@ -339,7 +346,9 @@ impl GpuRenderer {
 
         // Prepare all text at once
         println!("Calling text_renderer.prepare with {} text areas", text_areas.len());
-        self.text_renderer
+        println!("  Resolution: {}x{}", width, height);
+
+        let result = self.text_renderer
             .prepare(
                 &self.device,
                 &self.queue,
@@ -348,9 +357,19 @@ impl GpuRenderer {
                 Resolution { width, height },
                 text_areas.iter().cloned(),
                 &mut self.swash_cache,
-            )
-            .map_err(|e| format!("Text prepare error: {:?}", e))?;
-        println!("Text prepare succeeded");
+            );
+
+        match result {
+            Ok(_) => println!("Text prepare succeeded"),
+            Err(e) => {
+                println!("Text prepare FAILED: {:?}", e);
+                return Err(format!("Text prepare error: {:?}", e));
+            }
+        }
+
+        // Trim the atlas after preparing
+        self.text_atlas.trim();
+        println!("Text atlas trimmed");
 
         drop(font_system);
 
