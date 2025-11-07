@@ -473,16 +473,16 @@ impl GpuRenderer {
                      MAX_SHAPES_PER_DRAW);
         }
 
-        // Ensure buffers can hold at least one chunk
-        let chunk_vertices = MAX_SHAPES_PER_DRAW * 4;
-        let chunk_indices = MAX_SHAPES_PER_DRAW * 6;
+        // Ensure buffers can hold at least one chunk (with generous gradient budget)
+        // Assume worst case: every shape has a 10-stop gradient = MAX_SHAPES_PER_DRAW * 10
+        let max_gradients_per_chunk = MAX_SHAPES_PER_DRAW * 10;
         self.shape_buffers.ensure_capacity(
             &self.device,
             &self.shape_bind_group_layout,
-            chunk_vertices,
-            chunk_indices,
-            MAX_SHAPES_PER_DRAW,
-            1024, // Reasonable gradient buffer size
+            MAX_SHAPES_PER_DRAW * 4,  // vertices
+            MAX_SHAPES_PER_DRAW * 6,  // indices
+            MAX_SHAPES_PER_DRAW,       // shapes
+            max_gradients_per_chunk,   // gradients
         );
 
         // Render shapes in chunks
@@ -592,7 +592,7 @@ impl GpuRenderer {
                     });
                 }
 
-                // Write chunk data to buffers
+                // Write chunk data to buffers and draw
                 if !vertices.is_empty() {
                     self.queue.write_buffer(&self.shape_buffers.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
                     self.queue.write_buffer(&self.shape_buffers.index_buffer, 0, bytemuck::cast_slice(&indices));
