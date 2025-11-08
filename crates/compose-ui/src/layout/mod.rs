@@ -242,8 +242,9 @@ pub fn tree_needs_layout(applier: &mut MemoryApplier, root: NodeId) -> bool {
 }
 
 /// Internal recursive check for dirty nodes.
+/// Handles heterogeneous node trees - tries LayoutNode first, falls back to generic Node trait.
 fn needs_measure_recursive(applier: &mut MemoryApplier, node_id: NodeId) -> bool {
-    // Check if this node needs measure
+    // Try to access as LayoutNode first (most common case)
     if let Ok(needs) = applier.with_node::<LayoutNode, _>(node_id, |node| node.needs_measure()) {
         if needs {
             return true;
@@ -262,7 +263,21 @@ fn needs_measure_recursive(applier: &mut MemoryApplier, node_id: NodeId) -> bool
                 }
             }
         }
+        return false;
     }
+
+    // Not a LayoutNode - could be SubcomposeLayoutNode, ButtonNode, etc.
+    // These nodes don't have dirty flags, but they may have children that need layout.
+    // Use the generic Node trait to get children and recurse.
+    if let Ok(node) = applier.get_mut(node_id) {
+        let children = node.children();
+        for child_id in children {
+            if needs_measure_recursive(applier, child_id) {
+                return true;
+            }
+        }
+    }
+
     false
 }
 
@@ -288,6 +303,41 @@ pub fn bubble_layout_dirty(applier: &mut MemoryApplier, mut node_id: NodeId) {
             }
         }).unwrap_or(false) {
             node_id = parent_id; // Continue bubbling up
+        } else {
+            break; // Parent already dirty or error - stop
+        }
+    }
+}
+
+/// Helper to bubble dirty flags from the widget layer.
+/// Call this after updating a node's modifier or measure policy.
+/// Uses the current composer's with_node_mut to bubble dirty flags up the parent chain.
+pub fn bubble_dirty_from_widget(node_id: NodeId) {
+    use crate::widgets::nodes::LayoutNode;
+
+    let mut current_id = node_id;
+    loop {
+        // Get parent of current node
+        let parent_id = match compose_core::with_node_mut(current_id, |node: &mut LayoutNode| {
+            node.parent()
+        }) {
+            Ok(Some(pid)) => pid,
+            _ => break, // No parent or error - stop bubbling
+        };
+
+        // Mark parent as needing layout (not necessarily measure)
+        let should_continue = compose_core::with_node_mut(parent_id, |node: &mut LayoutNode| {
+            // Only mark if not already marked (avoid infinite loops)
+            if !node.needs_layout() {
+                node.mark_needs_layout();
+                true
+            } else {
+                false // Already marked, no need to continue bubbling
+            }
+        }).unwrap_or(false);
+
+        if should_continue {
+            current_id = parent_id; // Continue bubbling up
         } else {
             break; // Parent already dirty or error - stop
         }
@@ -849,11 +899,18 @@ impl LayoutBuilderState {
     }
 }
 
+/// Snapshot of a LayoutNode's data for measuring.
+/// This is a temporary copy used during the measure phase, not a live node.
+///
+/// Note: We capture `needs_measure` here because it's checked during measure to enable
+/// selective measure optimization at the individual node level. Even if the tree is partially
+/// dirty (some nodes changed), clean nodes can skip measure and use cached results.
 struct LayoutNodeSnapshot {
     modifier: Modifier,
     measure_policy: Rc<dyn MeasurePolicy>,
     children: Vec<NodeId>,
     cache: LayoutNodeCacheHandles,
+    /// Whether this specific node needs to be measured (vs using cached measurement)
     needs_measure: bool,
 }
 

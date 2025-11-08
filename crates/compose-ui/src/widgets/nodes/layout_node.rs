@@ -305,4 +305,8 @@ impl Node for LayoutNode {
     fn children(&self) -> Vec<NodeId> {
         self.children.iter().copied().collect()
     }
+
+    fn on_removed_from_parent(&mut self) {
+        self.clear_parent();
+    }
 }

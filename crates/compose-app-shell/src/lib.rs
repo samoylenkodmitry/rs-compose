@@ -167,10 +167,11 @@ where
     }
 
     fn run_layout_phase(&mut self) {
+        // Early exit if layout is not needed (viewport didn't change, etc.)
         if !self.layout_dirty {
             return;
         }
-        self.layout_dirty = false;
+
         let viewport_size = Size {
             width: self.viewport.0,
             height: self.viewport.1,
@@ -179,6 +180,18 @@ where
             let handle = self.composition.runtime_handle();
             let mut applier = self.composition.applier_mut();
             applier.set_runtime_handle(handle);
+
+            // Check if the tree actually needs layout (selective measure optimization)
+            if !compose_ui::tree_needs_layout(&mut *applier, root) {
+                // Tree is clean - skip layout computation and keep cached layout
+                log::trace!("Skipping layout: tree is clean");
+                self.layout_dirty = false;
+                applier.clear_runtime_handle();
+                return;
+            }
+
+            // Tree needs layout - compute it
+            self.layout_dirty = false;
             match applier.compute_layout(root, viewport_size) {
                 Ok(layout_tree) => {
                     self.layout_tree = Some(layout_tree);
@@ -194,6 +207,7 @@ where
         } else {
             self.layout_tree = None;
             self.scene_dirty = true;
+            self.layout_dirty = false;
         }
     }
 

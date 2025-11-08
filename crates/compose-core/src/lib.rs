@@ -764,6 +764,9 @@ pub trait Node: Any {
     fn children(&self) -> Vec<NodeId> {
         Vec::new()
     }
+    /// Called when this node is removed from its parent.
+    /// Nodes with parent tracking should clear their parent reference here.
+    fn on_removed_from_parent(&mut self) {}
 }
 
 impl dyn Node {
@@ -1731,7 +1734,9 @@ impl Composer {
                             }));
                         self.commands_mut()
                             .push(Box::new(move |applier: &mut dyn Applier| {
+                                // Clear parent link and unmount
                                 if let Ok(node) = applier.get_mut(child) {
+                                    node.on_removed_from_parent();
                                     node.unmount();
                                 }
                                 let _ = applier.remove(child);
