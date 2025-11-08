@@ -237,30 +237,31 @@ impl LayoutMeasurements {
 
 /// Check if a node or any of its descendants needs measure (selective measure optimization).
 /// This can be used by the app shell to skip layout when the tree is clean.
+///
+/// Since dirty flags bubble up to the root, we only need to check the root node's dirty flag.
+/// This is O(1) instead of O(tree size).
 pub fn tree_needs_layout(applier: &mut MemoryApplier, root: NodeId) -> bool {
-    needs_measure_recursive(applier, root)
+    // Just check root's dirty flag - bubbling ensures it's set if any descendant is dirty
+    applier.with_node::<LayoutNode, _>(root, |node| {
+        node.needs_layout()
+    }).unwrap_or(true) // If root isn't a LayoutNode or doesn't exist, assume dirty
 }
 
 /// Internal recursive check for dirty nodes.
 /// Handles heterogeneous node trees - tries LayoutNode first, falls back to generic Node trait.
 fn needs_measure_recursive(applier: &mut MemoryApplier, node_id: NodeId) -> bool {
     // Try to access as LayoutNode first (most common case)
-    if let Ok(needs) = applier.with_node::<LayoutNode, _>(node_id, |node| node.needs_measure()) {
+    // Grab everything in one closure to minimize applier calls
+    if let Ok((needs, children)) = applier.with_node::<LayoutNode, _>(node_id, |node| {
+        (node.needs_measure(), node.children.iter().copied().collect::<Vec<_>>())
+    }) {
         if needs {
             return true;
         }
-        // Check children without allocating - get count first, then iterate by index
-        if let Ok(child_count) = applier.with_node::<LayoutNode, _>(node_id, |node| node.children.len()) {
-            for i in 0..child_count {
-                if let Ok(child_id) = applier.with_node::<LayoutNode, _>(node_id, |node| {
-                    node.children.get_index(i).copied()
-                }) {
-                    if let Some(child_id) = child_id {
-                        if needs_measure_recursive(applier, child_id) {
-                            return true;
-                        }
-                    }
-                }
+        // Check children
+        for child_id in children {
+            if needs_measure_recursive(applier, child_id) {
+                return true;
             }
         }
         return false;

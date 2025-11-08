@@ -563,7 +563,7 @@ fn dirty_bubbling_to_root() -> Result<(), NodeError> {
 
 #[test]
 fn tree_needs_layout_api() -> Result<(), NodeError> {
-    use super::tree_needs_layout;
+    use super::{tree_needs_layout, bubble_layout_dirty};
 
     let mut applier = MemoryApplier::new();
 
@@ -576,6 +576,13 @@ fn tree_needs_layout_api() -> Result<(), NodeError> {
     let mut root = LayoutNode::new(Modifier::empty(), Rc::new(VerticalStackPolicy));
     root.children.insert(child);
     let root_id = applier.create(Box::new(root));
+
+    // Set up parent links
+    applier.with_node::<LayoutNode, _>(root_id, |node| node.set_node_id(root_id))?;
+    applier.with_node::<LayoutNode, _>(child, |node| {
+        node.set_node_id(child);
+        node.set_parent(root_id);
+    })?;
 
     // Initially dirty (new nodes)
     assert!(
@@ -599,12 +606,13 @@ fn tree_needs_layout_api() -> Result<(), NodeError> {
         "Clean tree should not need layout"
     );
 
-    // Mark child dirty
+    // Mark child dirty and bubble to root
     applier.with_node::<LayoutNode, _>(child, |node| {
         node.mark_needs_measure();
     })?;
+    bubble_layout_dirty(&mut applier, child);
 
-    // Should need layout again
+    // Should need layout again (root should be dirty now due to bubbling)
     assert!(
         tree_needs_layout(&mut applier, root_id),
         "Tree with dirty child should need layout"

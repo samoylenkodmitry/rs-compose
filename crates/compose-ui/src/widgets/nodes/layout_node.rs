@@ -168,17 +168,23 @@ impl LayoutNode {
     }
 
     pub fn set_modifier(&mut self, modifier: Modifier) {
-        self.modifier = modifier;
-        self.mods
-            .update_from_slice(self.modifier.elements(), &mut self.modifier_context);
-        self.cache.clear();
-        self.mark_needs_measure();
+        // Only mark dirty if modifier actually changed
+        if self.modifier != modifier {
+            self.modifier = modifier;
+            self.mods
+                .update_from_slice(self.modifier.elements(), &mut self.modifier_context);
+            self.cache.clear();
+            self.mark_needs_measure();
+        }
     }
 
     pub fn set_measure_policy(&mut self, policy: Rc<dyn MeasurePolicy>) {
-        self.measure_policy = policy;
-        self.cache.clear();
-        self.mark_needs_measure();
+        // Only mark dirty if policy actually changed (pointer comparison)
+        if !Rc::ptr_eq(&self.measure_policy, &policy) {
+            self.measure_policy = policy;
+            self.cache.clear();
+            self.mark_needs_measure();
+        }
     }
 
     /// Mark this node as needing measure. Also marks it as needing layout.
@@ -245,7 +251,19 @@ impl LayoutNode {
 /// Bubble dirty flags up the parent chain from a LayoutNode.
 /// This should be called after marking a node dirty during recomposition.
 /// Uses the current composer context to access nodes via with_node_mut.
+///
+/// If the starting node isn't dirty, this is a no-op (returns immediately).
+/// This allows calling it unconditionally after composition without overhead.
 pub fn bubble_dirty_flags(node_id: compose_core::NodeId) {
+    // Early exit if starting node isn't dirty - nothing to bubble
+    let is_dirty = compose_core::with_node_mut(node_id, |node: &mut LayoutNode| {
+        node.needs_layout()
+    }).unwrap_or(false);
+
+    if !is_dirty {
+        return; // Node is clean, no need to bubble
+    }
+
     let mut current_id = node_id;
     loop {
         // Get parent of current node
