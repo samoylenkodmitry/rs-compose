@@ -791,6 +791,13 @@ pub trait Node: Any {
 /// Call this after mutations (insert/remove/update) that dirty a node.
 /// This is used by the composer to ensure dirty flags propagate to root.
 pub fn bubble_layout_dirty_from_composer(applier: &mut dyn Applier, mut node_id: NodeId) {
+    // First, mark the starting node dirty (critical!)
+    // This ensures root gets marked even if it has no parent
+    if let Ok(node) = applier.get_mut(node_id) {
+        node.mark_needs_layout();
+    }
+
+    // Then bubble up to ancestors
     loop {
         // Get parent of current node
         let parent_id = match applier.get_mut(node_id) {
