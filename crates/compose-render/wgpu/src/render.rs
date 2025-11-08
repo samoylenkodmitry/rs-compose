@@ -40,18 +40,6 @@ impl Vertex {
     }
 }
 
-#[derive(Default)]
-struct ShapePushMetrics {
-    requested_stops: usize,
-    used_stops: usize,
-}
-
-impl ShapePushMetrics {
-    fn truncated(&self) -> bool {
-        self.used_stops < self.requested_stops
-    }
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct Uniforms {
@@ -89,14 +77,6 @@ struct PreparedTextArea {
     fallback: Option<Box<Buffer>>,
 }
 
-const MAX_SHAPES_PER_DRAW: usize = 16_384;
-const MAX_VERTEX_BUFFER_BYTES: usize = MAX_SHAPES_PER_DRAW * 4 * std::mem::size_of::<Vertex>();
-const MAX_INDEX_BUFFER_BYTES: usize = MAX_SHAPES_PER_DRAW * 6 * std::mem::size_of::<u32>();
-const MAX_SHAPE_BUFFER_BYTES: usize = MAX_SHAPES_PER_DRAW * std::mem::size_of::<ShapeData>();
-const MAX_GRADIENT_STOPS_PER_DRAW: usize = MAX_SHAPES_PER_DRAW * 64;
-const MAX_GRADIENT_BUFFER_BYTES: usize =
-    MAX_GRADIENT_STOPS_PER_DRAW * std::mem::size_of::<GradientStop>();
-
 struct ShapeBatchBuffers {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -110,31 +90,6 @@ struct ShapeBatchBuffers {
 }
 
 impl ShapeBatchBuffers {
-    fn capped_capacity(requested: usize, element_size: usize, hard_max_bytes: usize) -> usize {
-        if requested == 0 {
-            return 0;
-        }
-
-        let hard_cap = (hard_max_bytes / element_size).max(1);
-        let capped_request = if requested > hard_cap {
-            if log::log_enabled!(log::Level::Debug) {
-                log::debug!(
-                    "requested capacity {} exceeds hard limit {} ({} bytes); clamping",
-                    requested,
-                    hard_cap,
-                    hard_max_bytes
-                );
-            }
-            hard_cap
-        } else {
-            requested
-        };
-
-        let next_pow = capped_request.next_power_of_two();
-        let capped = next_pow.min(hard_cap);
-        capped.max(capped_request)
-    }
-
     fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
@@ -204,8 +159,10 @@ impl ShapeBatchBuffers {
         let mut rebuild_bind_group = false;
 
         if vertices > self.vertex_capacity {
-            let new_capacity =
-                Self::capped_capacity(vertices, mem::size_of::<Vertex>(), MAX_VERTEX_BUFFER_BYTES);
+            let mut new_capacity = self.vertex_capacity.max(1);
+            while new_capacity < vertices {
+                new_capacity *= 2;
+            }
             self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Vertex Buffer"),
                 size: (mem::size_of::<Vertex>() * new_capacity) as u64,
@@ -216,8 +173,10 @@ impl ShapeBatchBuffers {
         }
 
         if indices > self.index_capacity {
-            let new_capacity =
-                Self::capped_capacity(indices, mem::size_of::<u32>(), MAX_INDEX_BUFFER_BYTES);
+            let mut new_capacity = self.index_capacity.max(1);
+            while new_capacity < indices {
+                new_capacity *= 2;
+            }
             self.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Index Buffer"),
                 size: (mem::size_of::<u32>() * new_capacity) as u64,
@@ -228,11 +187,10 @@ impl ShapeBatchBuffers {
         }
 
         if shapes > self.shape_capacity {
-            let new_capacity = Self::capped_capacity(
-                shapes.max(1),
-                mem::size_of::<ShapeData>(),
-                MAX_SHAPE_BUFFER_BYTES,
-            );
+            let mut new_capacity = self.shape_capacity.max(1);
+            while new_capacity < shapes {
+                new_capacity *= 2;
+            }
             self.shape_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Shape Buffer"),
                 size: (mem::size_of::<ShapeData>() * new_capacity) as u64,
@@ -244,11 +202,10 @@ impl ShapeBatchBuffers {
         }
 
         if gradients > self.gradient_capacity {
-            let new_capacity = Self::capped_capacity(
-                gradients.max(1),
-                mem::size_of::<GradientStop>(),
-                MAX_GRADIENT_BUFFER_BYTES,
-            );
+            let mut new_capacity = self.gradient_capacity.max(1);
+            while new_capacity < gradients {
+                new_capacity *= 2;
+            }
             self.gradient_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Gradient Buffer"),
                 size: (mem::size_of::<GradientStop>() * new_capacity) as u64,
@@ -295,54 +252,14 @@ pub struct GpuRenderer {
 }
 
 impl GpuRenderer {
-    fn estimate_gradient_stops(shape: &DrawShape) -> usize {
-        match &shape.brush {
-            Brush::Solid(_) => 0,
-            Brush::LinearGradient(colors) => colors.len(),
-            Brush::RadialGradient { colors, .. } => colors.len(),
-        }
-    }
-
-    fn compute_chunk_end(shapes: &[DrawShape], start: usize) -> usize {
-        if start >= shapes.len() {
-            return start;
-        }
-
-        let mut gradient_used = 0usize;
-        let mut end = start;
-
-        while end < shapes.len() && (end - start) < MAX_SHAPES_PER_DRAW {
-            let stops = Self::estimate_gradient_stops(&shapes[end]);
-
-            if end > start && gradient_used.saturating_add(stops) > MAX_GRADIENT_STOPS_PER_DRAW {
-                break;
-            }
-
-            let remaining = MAX_GRADIENT_STOPS_PER_DRAW.saturating_sub(gradient_used);
-            gradient_used = gradient_used.saturating_add(stops.min(remaining));
-            end += 1;
-
-            if gradient_used >= MAX_GRADIENT_STOPS_PER_DRAW {
-                break;
-            }
-        }
-
-        if end == start {
-            (start + 1).min(shapes.len())
-        } else {
-            end
-        }
-    }
-
     fn push_shape_into_batch(
         shape: &DrawShape,
         local_index: usize,
-        available_gradient_slots: usize,
         vertex_data: &mut Vec<Vertex>,
         index_data: &mut Vec<u32>,
         shape_data_entries: &mut Vec<ShapeData>,
         gradient_data: &mut Vec<GradientStop>,
-    ) -> ShapePushMetrics {
+    ) {
         let rect = shape.rect;
         let shape_index = u32::try_from(local_index).expect("shape index overflow");
 
@@ -352,34 +269,25 @@ impl GpuRenderer {
         let mut gradient_start = 0u32;
         let mut gradient_count = 0u32;
 
-        let mut requested_stops = 0usize;
-        let mut used_stops = 0usize;
-
         match &shape.brush {
             Brush::Solid(c) => {
                 color = [c.r(), c.g(), c.b(), c.a()];
             }
             Brush::LinearGradient(colors) => {
-                requested_stops = colors.len();
                 if let Some(first) = colors.first() {
                     color = [first.r(), first.g(), first.b(), first.a()];
                 }
 
-                if available_gradient_slots > 0 && !colors.is_empty() {
-                    used_stops = colors.len().min(available_gradient_slots);
-
-                    if used_stops > 0 {
-                        let start = gradient_data.len();
-                        gradient_start = u32::try_from(start).expect("gradient start overflow");
-                        for stop in colors.iter().take(used_stops) {
-                            gradient_data.push(GradientStop {
-                                color: [stop.r(), stop.g(), stop.b(), stop.a()],
-                            });
-                        }
-                        gradient_count =
-                            u32::try_from(used_stops).expect("gradient count overflow");
-                        brush_type = 1;
+                if !colors.is_empty() {
+                    let start = gradient_data.len();
+                    gradient_start = u32::try_from(start).expect("gradient start overflow");
+                    for stop in colors {
+                        gradient_data.push(GradientStop {
+                            color: [stop.r(), stop.g(), stop.b(), stop.a()],
+                        });
                     }
+                    gradient_count = u32::try_from(colors.len()).expect("gradient count overflow");
+                    brush_type = 1;
                 }
             }
             Brush::RadialGradient {
@@ -387,32 +295,26 @@ impl GpuRenderer {
                 center,
                 radius,
             } => {
-                requested_stops = colors.len();
                 if let Some(first) = colors.first() {
                     color = [first.r(), first.g(), first.b(), first.a()];
                 }
 
-                if available_gradient_slots > 0 && !colors.is_empty() {
-                    used_stops = colors.len().min(available_gradient_slots);
-
-                    if used_stops > 0 {
-                        let start = gradient_data.len();
-                        gradient_start = u32::try_from(start).expect("gradient start overflow");
-                        for stop in colors.iter().take(used_stops) {
-                            gradient_data.push(GradientStop {
-                                color: [stop.r(), stop.g(), stop.b(), stop.a()],
-                            });
-                        }
-                        gradient_count =
-                            u32::try_from(used_stops).expect("gradient count overflow");
-                        brush_type = 2;
-                        gradient_params = [
-                            rect.x + center.x,
-                            rect.y + center.y,
-                            radius.max(f32::EPSILON),
-                            0.0,
-                        ];
+                if !colors.is_empty() {
+                    let start = gradient_data.len();
+                    gradient_start = u32::try_from(start).expect("gradient start overflow");
+                    for stop in colors {
+                        gradient_data.push(GradientStop {
+                            color: [stop.r(), stop.g(), stop.b(), stop.a()],
+                        });
                     }
+                    gradient_count = u32::try_from(colors.len()).expect("gradient count overflow");
+                    brush_type = 2;
+                    gradient_params = [
+                        rect.x + center.x,
+                        rect.y + center.y,
+                        radius.max(f32::EPSILON),
+                        0.0,
+                    ];
                 }
             }
         }
@@ -475,11 +377,6 @@ impl GpuRenderer {
             gradient_count,
             _padding: 0,
         });
-
-        ShapePushMetrics {
-            requested_stops,
-            used_stops,
-        }
     }
 
     pub fn new(
@@ -657,59 +554,20 @@ impl GpuRenderer {
         let mut gradient_data: Vec<GradientStop> = Vec::new();
         let mut drew_shapes = false;
 
-        vertex_data.reserve(MAX_SHAPES_PER_DRAW * 4);
-        index_data.reserve(MAX_SHAPES_PER_DRAW * 6);
-        shape_data_entries.reserve(MAX_SHAPES_PER_DRAW);
+        if !sorted_shapes.is_empty() {
+            vertex_data.reserve(sorted_shapes.len() * 4);
+            index_data.reserve(sorted_shapes.len() * 6);
+            shape_data_entries.reserve(sorted_shapes.len());
 
-        let mut shape_cursor = 0usize;
-
-        while shape_cursor < sorted_shapes.len() {
-            let chunk_end = Self::compute_chunk_end(&sorted_shapes, shape_cursor);
-
-            vertex_data.clear();
-            index_data.clear();
-            shape_data_entries.clear();
-            gradient_data.clear();
-
-            for (local_index, shape) in sorted_shapes[shape_cursor..chunk_end].iter().enumerate() {
-                let available_slots =
-                    MAX_GRADIENT_STOPS_PER_DRAW.saturating_sub(gradient_data.len());
-                let metrics = Self::push_shape_into_batch(
+            for (local_index, shape) in sorted_shapes.iter().enumerate() {
+                Self::push_shape_into_batch(
                     shape,
                     local_index,
-                    available_slots,
                     &mut vertex_data,
                     &mut index_data,
                     &mut shape_data_entries,
                     &mut gradient_data,
                 );
-
-                if metrics.truncated() {
-                    if local_index == 0
-                        && available_slots == MAX_GRADIENT_STOPS_PER_DRAW
-                        && log::log_enabled!(log::Level::Warn)
-                    {
-                        log::warn!(
-                            "Gradient for shape at z-index {} required {} stops but only {} were used due to batch limits",
-                            shape.z_index,
-                            metrics.requested_stops,
-                            metrics.used_stops
-                        );
-                    } else if log::log_enabled!(log::Level::Debug) {
-                        log::debug!(
-                            "Truncated gradient stops from {} to {} for shape at z-index {}",
-                            metrics.requested_stops,
-                            metrics.used_stops,
-                            shape.z_index
-                        );
-                    }
-                }
-            }
-
-            shape_cursor = chunk_end;
-
-            if vertex_data.is_empty() {
-                continue;
             }
 
             let vertex_count = vertex_data.len();
@@ -750,16 +608,8 @@ impl GpuRenderer {
                 );
             }
 
-            let load_op = if drew_shapes {
-                wgpu::LoadOp::Load
-            } else {
-                wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 18.0 / 255.0,
-                    g: 18.0 / 255.0,
-                    b: 24.0 / 255.0,
-                    a: 1.0,
-                })
-            };
+            let vertex_bytes = (vertex_count * mem::size_of::<Vertex>()) as u64;
+            let index_bytes = (index_count * mem::size_of::<u32>()) as u64;
 
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -768,7 +618,12 @@ impl GpuRenderer {
                         view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: load_op,
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 18.0 / 255.0,
+                                g: 18.0 / 255.0,
+                                b: 24.0 / 255.0,
+                                a: 1.0,
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -780,17 +635,12 @@ impl GpuRenderer {
                 render_pass.set_pipeline(&self.pipeline);
                 render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 render_pass.set_bind_group(1, &self.shape_buffers.bind_group, &[]);
-
-                let vertex_bytes = (vertex_count * mem::size_of::<Vertex>()) as u64;
-                let index_bytes = (index_count * mem::size_of::<u32>()) as u64;
-
                 render_pass
                     .set_vertex_buffer(0, self.shape_buffers.vertex_buffer.slice(0..vertex_bytes));
                 render_pass.set_index_buffer(
                     self.shape_buffers.index_buffer.slice(0..index_bytes),
                     wgpu::IndexFormat::Uint32,
                 );
-
                 render_pass.draw_indexed(0..(index_count as u32), 0, 0..1);
             }
 
