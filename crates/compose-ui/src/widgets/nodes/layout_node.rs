@@ -365,4 +365,16 @@ impl Node for LayoutNode {
     fn on_removed_from_parent(&mut self) {
         self.clear_parent();
     }
+
+    fn parent(&self) -> Option<NodeId> {
+        self.parent.get()
+    }
+
+    fn mark_needs_layout(&self) {
+        self.needs_layout.set(true);
+    }
+
+    fn needs_layout(&self) -> bool {
+        self.needs_layout.get()
+    }
 }

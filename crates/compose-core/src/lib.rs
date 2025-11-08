@@ -773,6 +773,48 @@ pub trait Node: Any {
     /// Called when this node is removed from its parent.
     /// Nodes with parent tracking should clear their parent reference here.
     fn on_removed_from_parent(&mut self) {}
+    /// Get this node's parent ID (for nodes that track parents).
+    /// Returns None if node has no parent or doesn't track parents.
+    fn parent(&self) -> Option<NodeId> {
+        None
+    }
+    /// Mark this node as needing layout (for nodes with dirty flags).
+    /// Called during bubbling to propagate dirtiness up the tree.
+    fn mark_needs_layout(&self) {}
+    /// Check if this node needs layout (for nodes with dirty flags).
+    fn needs_layout(&self) -> bool {
+        false
+    }
+}
+
+/// Helper to bubble dirty flags from a node to the root.
+/// Call this after mutations (insert/remove/update) that dirty a node.
+/// This is used by the composer to ensure dirty flags propagate to root.
+pub fn bubble_layout_dirty_from_composer(applier: &mut dyn Applier, mut node_id: NodeId) {
+    loop {
+        // Get parent of current node
+        let parent_id = match applier.get_mut(node_id) {
+            Ok(node) => node.parent(),
+            Err(_) => None,
+        };
+
+        match parent_id {
+            Some(pid) => {
+                // Mark parent as needing layout
+                if let Ok(parent) = applier.get_mut(pid) {
+                    if !parent.needs_layout() {
+                        parent.mark_needs_layout();
+                        node_id = pid; // Continue bubbling
+                    } else {
+                        break; // Already dirty, stop
+                    }
+                } else {
+                    break;
+                }
+            }
+            None => break, // No parent, stop
+        }
+    }
 }
 
 impl dyn Node {
@@ -1741,6 +1783,12 @@ impl Composer {
                             }));
                         self.commands_mut()
                             .push(Box::new(move |applier: &mut dyn Applier| {
+                                // Bubble dirty flags to root after removal
+                                bubble_layout_dirty_from_composer(applier, id);
+                                Ok(())
+                            }));
+                        self.commands_mut()
+                            .push(Box::new(move |applier: &mut dyn Applier| {
                                 // Clear parent link and unmount
                                 if let Ok(node) = applier.get_mut(child) {
                                     node.on_removed_from_parent();
@@ -1784,6 +1832,12 @@ impl Composer {
                                 if let Ok(child_node) = applier.get_mut(child) {
                                     child_node.on_attached_to_parent(id);
                                 }
+                                Ok(())
+                            }));
+                        self.commands_mut()
+                            .push(Box::new(move |applier: &mut dyn Applier| {
+                                // Bubble dirty flags to root after insertion
+                                bubble_layout_dirty_from_composer(applier, id);
                                 Ok(())
                             }));
                         if insert_index != appended_index {

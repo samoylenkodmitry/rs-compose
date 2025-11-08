@@ -238,10 +238,13 @@ impl LayoutMeasurements {
 /// Check if a node or any of its descendants needs measure (selective measure optimization).
 /// This can be used by the app shell to skip layout when the tree is clean.
 ///
-/// Currently uses recursive check (O(tree) worst case, but early-exits on first dirty node).
-/// TODO: Could optimize to O(1) once all mutation paths guarantee bubbling to root.
+/// O(1) check - just looks at root's dirty flag.
+/// Works because all mutation paths bubble dirty flags to root via composer commands.
 pub fn tree_needs_layout(applier: &mut MemoryApplier, root: NodeId) -> bool {
-    needs_measure_recursive(applier, root)
+    // Just check root - bubbling ensures it's dirty if any descendant is dirty
+    applier.with_node::<LayoutNode, _>(root, |node| {
+        node.needs_layout()
+    }).unwrap_or(true) // If not a LayoutNode or doesn't exist, assume dirty
 }
 
 /// Internal recursive check for dirty nodes.
@@ -325,7 +328,10 @@ pub fn measure_layout(
     };
 
     // Selective measure: only increment epoch if something needs measuring
-    let needs_measure = needs_measure_recursive(applier, root);
+    // O(1) check - just look at root's dirty flag (bubbling ensures correctness)
+    let needs_measure = applier.with_node::<LayoutNode, _>(root, |node| {
+        node.needs_layout()
+    }).unwrap_or(true);
     let epoch = if needs_measure {
         NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed)
     } else {
