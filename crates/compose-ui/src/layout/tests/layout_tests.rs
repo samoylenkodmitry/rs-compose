@@ -157,6 +157,14 @@ fn layout_node_uses_measure_policy() -> Result<(), NodeError> {
 
     let applier_host = Rc::new(ConcreteApplierHost::new(applier));
     let mut builder = LayoutBuilder::new(Rc::clone(&applier_host));
+
+    // Verify LayoutBuilder::new() gets a nonzero epoch (no epoch=0 accidents)
+    let epoch = builder.state.borrow().cache_epoch;
+    assert_ne!(
+        epoch, 0,
+        "LayoutBuilder::new() should get a proper epoch, not 0"
+    );
+
     let measured = builder.measure_node(
         layout_id,
         Constraints {
@@ -196,8 +204,14 @@ fn mark_needs_measure_sets_both_flags() {
     assert!(!node.needs_layout());
 
     node.mark_needs_measure();
-    assert!(node.needs_measure(), "mark_needs_measure should set needs_measure flag");
-    assert!(node.needs_layout(), "mark_needs_measure should set needs_layout flag");
+    assert!(
+        node.needs_measure(),
+        "mark_needs_measure should set needs_measure flag"
+    );
+    assert!(
+        node.needs_layout(),
+        "mark_needs_measure should set needs_layout flag"
+    );
 }
 
 #[test]
@@ -207,8 +221,14 @@ fn mark_needs_layout_only_sets_layout_flag() {
     node.clear_needs_layout();
 
     node.mark_needs_layout();
-    assert!(!node.needs_measure(), "mark_needs_layout should NOT set needs_measure flag");
-    assert!(node.needs_layout(), "mark_needs_layout should set needs_layout flag");
+    assert!(
+        !node.needs_measure(),
+        "mark_needs_layout should NOT set needs_measure flag"
+    );
+    assert!(
+        node.needs_layout(),
+        "mark_needs_layout should set needs_layout flag"
+    );
 }
 
 #[test]
@@ -218,8 +238,14 @@ fn set_modifier_marks_dirty() {
     node.clear_needs_layout();
 
     node.set_modifier(Modifier::empty());
-    assert!(node.needs_measure(), "set_modifier should mark node as needing measure");
-    assert!(node.needs_layout(), "set_modifier should mark node as needing layout");
+    assert!(
+        node.needs_measure(),
+        "set_modifier should mark node as needing measure"
+    );
+    assert!(
+        node.needs_layout(),
+        "set_modifier should mark node as needing layout"
+    );
 }
 
 #[test]
@@ -229,15 +255,24 @@ fn set_measure_policy_marks_dirty() {
     node.clear_needs_layout();
 
     node.set_measure_policy(Rc::new(VerticalStackPolicy));
-    assert!(node.needs_measure(), "set_measure_policy should mark node as needing measure");
-    assert!(node.needs_layout(), "set_measure_policy should mark node as needing layout");
+    assert!(
+        node.needs_measure(),
+        "set_measure_policy should mark node as needing measure"
+    );
+    assert!(
+        node.needs_layout(),
+        "set_measure_policy should mark node as needing layout"
+    );
 }
 
 #[test]
 fn insert_child_marks_dirty() -> Result<(), NodeError> {
     let mut applier = MemoryApplier::new();
     let child = applier.create(Box::new(SpacerNode {
-        size: Size { width: 10.0, height: 10.0 },
+        size: Size {
+            width: 10.0,
+            height: 10.0,
+        },
     }));
 
     let mut node = LayoutNode::new(Modifier::empty(), Rc::new(MaxSizePolicy));
@@ -245,8 +280,14 @@ fn insert_child_marks_dirty() -> Result<(), NodeError> {
     node.clear_needs_layout();
 
     node.insert_child(child);
-    assert!(node.needs_measure(), "insert_child should mark node as needing measure");
-    assert!(node.needs_layout(), "insert_child should mark node as needing layout");
+    assert!(
+        node.needs_measure(),
+        "insert_child should mark node as needing measure"
+    );
+    assert!(
+        node.needs_layout(),
+        "insert_child should mark node as needing layout"
+    );
     Ok(())
 }
 
@@ -254,7 +295,10 @@ fn insert_child_marks_dirty() -> Result<(), NodeError> {
 fn remove_child_marks_dirty() -> Result<(), NodeError> {
     let mut applier = MemoryApplier::new();
     let child = applier.create(Box::new(SpacerNode {
-        size: Size { width: 10.0, height: 10.0 },
+        size: Size {
+            width: 10.0,
+            height: 10.0,
+        },
     }));
 
     let mut node = LayoutNode::new(Modifier::empty(), Rc::new(MaxSizePolicy));
@@ -263,8 +307,14 @@ fn remove_child_marks_dirty() -> Result<(), NodeError> {
     node.clear_needs_layout();
 
     node.remove_child(child);
-    assert!(node.needs_measure(), "remove_child should mark node as needing measure");
-    assert!(node.needs_layout(), "remove_child should mark node as needing layout");
+    assert!(
+        node.needs_measure(),
+        "remove_child should mark node as needing measure"
+    );
+    assert!(
+        node.needs_layout(),
+        "remove_child should mark node as needing layout"
+    );
     Ok(())
 }
 
@@ -282,7 +332,14 @@ fn selective_measure_uses_cache_when_not_dirty() -> Result<(), NodeError> {
     };
 
     // First measure - should measure and cache
-    let result1 = measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    let result1 = measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
     let size1 = result1.root_size();
 
     // Clear dirty flag to simulate no changes
@@ -292,7 +349,14 @@ fn selective_measure_uses_cache_when_not_dirty() -> Result<(), NodeError> {
     })?;
 
     // Second measure - should use cache since not dirty
-    let result2 = measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    let result2 = measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
     let size2 = result2.root_size();
 
     assert_eq!(size1, size2, "Cached measure should return same size");
@@ -306,7 +370,14 @@ fn selective_measure_remeasures_when_dirty() -> Result<(), NodeError> {
     let node_id = applier.create(Box::new(node));
 
     // First measure
-    let result1 = measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    let result1 = measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
     let size1 = result1.root_size();
 
     // Mark as dirty by changing measure policy
@@ -315,12 +386,17 @@ fn selective_measure_remeasures_when_dirty() -> Result<(), NodeError> {
     })?;
 
     // Second measure - should remeasure because dirty
-    let result2 = measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    let result2 = measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     // Verify it was measured (by checking the dirty flag was cleared)
-    let still_dirty = applier.with_node::<LayoutNode, _>(node_id, |node| {
-        node.needs_measure()
-    })?;
+    let still_dirty = applier.with_node::<LayoutNode, _>(node_id, |node| node.needs_measure())?;
 
     assert!(!still_dirty, "Dirty flag should be cleared after measure");
     Ok(())
@@ -333,7 +409,14 @@ fn cache_epoch_not_incremented_when_no_dirty_nodes() -> Result<(), NodeError> {
     let node_id = applier.create(Box::new(node));
 
     // First measure
-    measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     // Clear dirty flags
     applier.with_node::<LayoutNode, _>(node_id, |node| {
@@ -344,7 +427,14 @@ fn cache_epoch_not_incremented_when_no_dirty_nodes() -> Result<(), NodeError> {
     let epoch_before = NEXT_CACHE_EPOCH.load(Ordering::Relaxed);
 
     // Second measure with no dirty nodes - epoch should not increment
-    measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     let epoch_after = NEXT_CACHE_EPOCH.load(Ordering::Relaxed);
 
@@ -362,7 +452,14 @@ fn cache_epoch_increments_when_nodes_dirty() -> Result<(), NodeError> {
     let node_id = applier.create(Box::new(node));
 
     // First measure
-    measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     let epoch_before = NEXT_CACHE_EPOCH.load(Ordering::Relaxed);
 
@@ -372,7 +469,14 @@ fn cache_epoch_increments_when_nodes_dirty() -> Result<(), NodeError> {
     })?;
 
     // Second measure with dirty node - epoch should increment
-    measure_layout(&mut applier, node_id, Size { width: 100.0, height: 100.0 })?;
+    measure_layout(
+        &mut applier,
+        node_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     let epoch_after = NEXT_CACHE_EPOCH.load(Ordering::Relaxed);
 
@@ -389,10 +493,16 @@ fn selective_measure_with_tree_hierarchy() -> Result<(), NodeError> {
 
     // Create a tree: root -> child_a, child_b
     let child_a = applier.create(Box::new(SpacerNode {
-        size: Size { width: 10.0, height: 20.0 },
+        size: Size {
+            width: 10.0,
+            height: 20.0,
+        },
     }));
     let child_b = applier.create(Box::new(SpacerNode {
-        size: Size { width: 10.0, height: 30.0 },
+        size: Size {
+            width: 10.0,
+            height: 30.0,
+        },
     }));
 
     let mut root = LayoutNode::new(Modifier::empty(), Rc::new(VerticalStackPolicy));
@@ -401,7 +511,14 @@ fn selective_measure_with_tree_hierarchy() -> Result<(), NodeError> {
     let root_id = applier.create(Box::new(root));
 
     // First measure
-    let result1 = measure_layout(&mut applier, root_id, Size { width: 100.0, height: 100.0 })?;
+    let result1 = measure_layout(
+        &mut applier,
+        root_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
     assert_eq!(result1.root_size().height, 50.0);
 
     // Clear all dirty flags
@@ -413,7 +530,14 @@ fn selective_measure_with_tree_hierarchy() -> Result<(), NodeError> {
     let epoch_before = NEXT_CACHE_EPOCH.load(Ordering::Relaxed);
 
     // Second measure - should use cache
-    measure_layout(&mut applier, root_id, Size { width: 100.0, height: 100.0 })?;
+    measure_layout(
+        &mut applier,
+        root_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     let epoch_after = NEXT_CACHE_EPOCH.load(Ordering::Relaxed);
 
@@ -447,7 +571,14 @@ fn dirty_child_triggers_parent_remeasure() -> Result<(), NodeError> {
     })?;
 
     // First measure
-    measure_layout(&mut applier, root_id, Size { width: 100.0, height: 100.0 })?;
+    measure_layout(
+        &mut applier,
+        root_id,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    )?;
 
     // Mark child as dirty and bubble to root
     applier.with_node::<LayoutNode, _>(child, |node| {
@@ -456,10 +587,12 @@ fn dirty_child_triggers_parent_remeasure() -> Result<(), NodeError> {
     bubble_layout_dirty(&mut applier, child);
 
     // Check that root is now dirty (O(1) check)
-    let root_needs_measure = applier.with_node::<LayoutNode, _>(root_id, |node| {
-        node.needs_layout()
-    })?;
-    assert!(root_needs_measure, "Root should be dirty when child is dirty (due to bubbling)");
+    let root_needs_measure =
+        applier.with_node::<LayoutNode, _>(root_id, |node| node.needs_layout())?;
+    assert!(
+        root_needs_measure,
+        "Root should be dirty when child is dirty (due to bubbling)"
+    );
 
     Ok(())
 }
@@ -496,11 +629,13 @@ fn parent_tracking_basic() -> Result<(), NodeError> {
     })?;
 
     // Verify parent is set correctly
-    let child_parent = applier.with_node::<LayoutNode, _>(child, |node| {
-        node.parent()
-    })?;
+    let child_parent = applier.with_node::<LayoutNode, _>(child, |node| node.parent())?;
 
-    assert_eq!(child_parent, Some(parent_id), "Child should know its parent");
+    assert_eq!(
+        child_parent,
+        Some(parent_id),
+        "Child should know its parent"
+    );
 
     Ok(())
 }
@@ -559,22 +694,26 @@ fn dirty_bubbling_to_root() -> Result<(), NodeError> {
     bubble_layout_dirty(&mut applier, leaf);
 
     // Check that middle and root are now marked as needing layout
-    let middle_needs_layout = applier.with_node::<LayoutNode, _>(middle_id, |node| {
-        node.needs_layout()
-    })?;
-    let root_needs_layout = applier.with_node::<LayoutNode, _>(root_id, |node| {
-        node.needs_layout()
-    })?;
+    let middle_needs_layout =
+        applier.with_node::<LayoutNode, _>(middle_id, |node| node.needs_layout())?;
+    let root_needs_layout =
+        applier.with_node::<LayoutNode, _>(root_id, |node| node.needs_layout())?;
 
-    assert!(middle_needs_layout, "Middle should need layout after child became dirty");
-    assert!(root_needs_layout, "Root should need layout after descendant became dirty");
+    assert!(
+        middle_needs_layout,
+        "Middle should need layout after child became dirty"
+    );
+    assert!(
+        root_needs_layout,
+        "Root should need layout after descendant became dirty"
+    );
 
     Ok(())
 }
 
 #[test]
 fn tree_needs_layout_api() -> Result<(), NodeError> {
-    use super::{tree_needs_layout, bubble_layout_dirty};
+    use super::{bubble_layout_dirty, tree_needs_layout};
 
     let mut applier = MemoryApplier::new();
 
@@ -681,13 +820,91 @@ fn bubbling_stops_at_already_dirty_ancestor() -> Result<(), NodeError> {
     bubble_layout_dirty(&mut applier, leaf);
 
     // Root should still be clean (bubbling should have stopped at middle)
-    let root_needs_layout = applier.with_node::<LayoutNode, _>(root_id, |node| {
-        node.needs_layout()
-    })?;
+    let root_needs_layout =
+        applier.with_node::<LayoutNode, _>(root_id, |node| node.needs_layout())?;
 
     // The unified bubbling API now implements the O(1) optimization:
     // bubbling stops when it encounters an already-dirty ancestor
-    assert!(!root_needs_layout, "Bubbling should stop at already dirty ancestor (O(1) optimization)");
+    assert!(
+        !root_needs_layout,
+        "Bubbling should stop at already dirty ancestor (O(1) optimization)"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn property_change_bubbles_without_manual_call() -> Result<(), NodeError> {
+    use super::bubble_layout_dirty;
+    use crate::modifier::Modifier;
+
+    // This test proves that property changes (set_modifier, set_measure_policy) bubble
+    // to root WITHOUT needing manual bubbling calls in Layout() composable.
+    // The key is that pop_parent() checks if node is dirty and bubbles automatically.
+
+    let mut applier = MemoryApplier::new();
+    let root_id = applier.create(Box::new(LayoutNode::new(
+        Modifier::empty(),
+        Rc::new(MaxSizePolicy),
+    )));
+    let child_id = applier.create(Box::new(LayoutNode::new(
+        Modifier::empty(),
+        Rc::new(MaxSizePolicy),
+    )));
+    let leaf_id = applier.create(Box::new(LayoutNode::new(
+        Modifier::empty(),
+        Rc::new(MaxSizePolicy),
+    )));
+
+    // Build tree structure
+    applier.with_node::<LayoutNode, _>(root_id, |node| {
+        node.set_node_id(root_id);
+        node.children.insert(child_id);
+    })?;
+    applier.with_node::<LayoutNode, _>(child_id, |node| {
+        node.set_node_id(child_id);
+        node.set_parent(root_id);
+        node.children.insert(leaf_id);
+    })?;
+    applier.with_node::<LayoutNode, _>(leaf_id, |node| {
+        node.set_node_id(leaf_id);
+        node.set_parent(child_id);
+    })?;
+
+    // Clear all dirty flags
+    for id in [root_id, child_id, leaf_id] {
+        applier.with_node::<LayoutNode, _>(id, |node| {
+            node.clear_needs_measure();
+            node.clear_needs_layout();
+        })?;
+    }
+
+    // Verify tree is clean
+    assert!(!applier.with_node::<LayoutNode, _>(root_id, |n| n.needs_layout())?);
+    assert!(!applier.with_node::<LayoutNode, _>(child_id, |n| n.needs_layout())?);
+    assert!(!applier.with_node::<LayoutNode, _>(leaf_id, |n| n.needs_layout())?);
+
+    // Change property on leaf (like set_modifier would do in Layout() composable)
+    // This marks the node dirty but doesn't bubble yet
+    applier.with_node::<LayoutNode, _>(leaf_id, |node| {
+        node.set_modifier(Modifier::width(100.0));
+    })?;
+
+    // Leaf should be dirty now
+    assert!(applier.with_node::<LayoutNode, _>(leaf_id, |n| n.needs_layout())?);
+
+    // But parent and root are still clean (no manual bubble yet!)
+    assert!(!applier.with_node::<LayoutNode, _>(child_id, |n| n.needs_layout())?);
+    assert!(!applier.with_node::<LayoutNode, _>(root_id, |n| n.needs_layout())?);
+
+    // Now simulate pop_parent() bubbling - this is what happens in the composer
+    bubble_layout_dirty(&mut applier, leaf_id);
+
+    // Now root should be dirty - proves bubbling worked
+    assert!(
+        applier.with_node::<LayoutNode, _>(root_id, |n| n.needs_layout())?,
+        "Root should be dirty after property change bubbled from leaf"
+    );
 
     Ok(())
 }

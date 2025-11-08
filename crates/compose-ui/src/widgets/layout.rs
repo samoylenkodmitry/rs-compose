@@ -34,12 +34,6 @@ where
     compose_core::push_parent(id);
     content();
     compose_core::pop_parent();
-
-    // Note: No manual bubbling needed! pop_parent() now handles bubbling for both:
-    // 1. Structural changes (insert/remove/move children) via reconciliation
-    // 2. Property changes (set_modifier/set_measure_policy) by checking dirty flag
-    // This ensures dirty propagation works purely through the mutation/apply layer.
-
     id
 }
 

@@ -46,6 +46,7 @@ pub use runtime::{TestRuntime, TestScheduler};
 
 use crate::collections::map::HashMap;
 use crate::collections::map::HashSet;
+use crate::state::{NeverEqual, SnapshotMutableState, UpdateScope};
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::fmt;
@@ -55,7 +56,6 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak}; // FUTURE(no_std): replace Rc/Weak with arena-managed handles.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use crate::state::{NeverEqual, SnapshotMutableState, UpdateScope};
 
 pub type Key = u64;
 pub type NodeId = usize;
@@ -740,10 +740,9 @@ pub use slot_storage::{GroupId, SlotStorage, StartGroup, ValueSlotId};
 
 pub mod chunked_slot_storage;
 pub mod hierarchical_slot_storage;
-pub mod split_slot_storage;
 pub mod slot_backend;
+pub mod split_slot_storage;
 pub use slot_backend::{make_backend, SlotBackend, SlotBackendKind};
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SlotTable: gap-buffer-based implementation
@@ -751,7 +750,6 @@ pub use slot_backend::{make_backend, SlotBackend, SlotBackendKind};
 
 pub mod slot_table;
 pub use slot_table::SlotTable;
-
 
 pub trait Node: Any {
     fn mount(&mut self) {}
@@ -882,9 +880,7 @@ fn bubble_layout_dirty_composer<N: Node + 'static>(mut node_id: NodeId) {
     // Then bubble up to ancestors
     loop {
         // Get parent of current node
-        let parent_id = match with_node_mut(node_id, |node: &mut N| {
-            node.parent()
-        }) {
+        let parent_id = match with_node_mut(node_id, |node: &mut N| node.parent()) {
             Ok(Some(pid)) => pid,
             _ => break, // No parent or error - stop bubbling
         };
@@ -897,7 +893,8 @@ fn bubble_layout_dirty_composer<N: Node + 'static>(mut node_id: NodeId) {
             } else {
                 false // Already dirty, stop (O(1) optimization)
             }
-        }).unwrap_or(false);
+        })
+        .unwrap_or(false);
 
         if should_continue {
             node_id = parent_id;
@@ -1276,7 +1273,10 @@ impl Composer {
     pub fn with_group<R>(&self, key: Key, f: impl FnOnce(&Composer) -> R) -> R {
         let (group, scope_ref, restored_from_gap) = {
             let mut slots = self.slots_mut();
-            let StartGroup { group, restored_from_gap } = slots.begin_group(key);
+            let StartGroup {
+                group,
+                restored_from_gap,
+            } = slots.begin_group(key);
             let scope_ref = slots
                 .remember(|| RecomposeScope::new(self.runtime_handle()))
                 .with(|scope| scope.clone());

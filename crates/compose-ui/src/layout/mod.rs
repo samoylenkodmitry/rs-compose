@@ -11,9 +11,8 @@ use std::{
 };
 
 use compose_core::{
-    Applier, ApplierHost, Composer, ConcreteApplierHost,
-    MemoryApplier, Node, NodeError, NodeId, Phase, RuntimeHandle, SlotBackend, SlotsHost,
-    SnapshotStateObserver,
+    Applier, ApplierHost, Composer, ConcreteApplierHost, MemoryApplier, Node, NodeError, NodeId,
+    Phase, RuntimeHandle, SlotBackend, SlotsHost, SnapshotStateObserver,
 };
 
 #[cfg(test)]
@@ -245,29 +244,21 @@ impl LayoutMeasurements {
 pub fn tree_needs_layout(applier: &mut dyn Applier, root: NodeId) -> Result<bool, NodeError> {
     // Just check root - bubbling ensures it's dirty if any descendant is dirty
     let node = applier.get_mut(root)?;
-    let layout_node = node
-        .as_any_mut()
-        .downcast_mut::<LayoutNode>()
-        .ok_or(NodeError::TypeMismatch {
-            id: root,
-            expected: std::any::type_name::<LayoutNode>(),
-        })?;
+    let layout_node =
+        node.as_any_mut()
+            .downcast_mut::<LayoutNode>()
+            .ok_or(NodeError::TypeMismatch {
+                id: root,
+                expected: std::any::type_name::<LayoutNode>(),
+            })?;
     Ok(layout_node.needs_layout())
 }
 
-/// Bubble layout dirty flag up the parent chain.
-///
-/// This is a thin wrapper around `compose_core::bubble_layout_dirty` for tests
-/// that use `MemoryApplier`. It casts to the trait object for compatibility.
-///
-/// # Note
-/// New code should prefer calling `compose_core::bubble_layout_dirty` directly.
-/// This wrapper exists for backward compatibility with existing tests.
+/// Test helper: bubbles layout dirty flag to root.
 #[cfg(test)]
 pub(crate) fn bubble_layout_dirty(applier: &mut MemoryApplier, node_id: NodeId) {
     compose_core::bubble_layout_dirty(applier as &mut dyn Applier, node_id);
 }
-
 
 /// Runs the measure phase for the subtree rooted at `root`.
 pub fn measure_layout(
@@ -284,9 +275,11 @@ pub fn measure_layout(
 
     // Selective measure: only increment epoch if something needs measuring
     // O(1) check - just look at root's dirty flag (bubbling ensures correctness)
-    let needs_measure = applier.with_node::<LayoutNode, _>(root, |node| {
+    let needs_measure = {
+        let node = applier.get_mut(root)?;
         node.needs_layout()
-    }).unwrap_or(true);
+    };
+
     let epoch = if needs_measure {
         NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed)
     } else {
@@ -318,15 +311,23 @@ struct LayoutBuilder {
 }
 
 impl LayoutBuilder {
+    /// Creates a new LayoutBuilder with a fresh epoch.
+    /// This always increments the global epoch counter to ensure cache invalidation.
+    /// For selective measure optimization, use `new_with_epoch()` instead.
     fn new(applier: Rc<ConcreteApplierHost<MemoryApplier>>) -> Self {
+        let epoch = NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
         Self {
-            state: Rc::new(RefCell::new(LayoutBuilderState::new(applier))),
+            state: Rc::new(RefCell::new(LayoutBuilderState::new_with_epoch(
+                applier, epoch,
+            ))),
         }
     }
 
     fn new_with_epoch(applier: Rc<ConcreteApplierHost<MemoryApplier>>, epoch: u64) -> Self {
         Self {
-            state: Rc::new(RefCell::new(LayoutBuilderState::new_with_epoch(applier, epoch))),
+            state: Rc::new(RefCell::new(LayoutBuilderState::new_with_epoch(
+                applier, epoch,
+            ))),
         }
     }
 
@@ -353,18 +354,6 @@ struct LayoutBuilderState {
 }
 
 impl LayoutBuilderState {
-    fn new(applier: Rc<ConcreteApplierHost<MemoryApplier>>) -> Self {
-        let runtime_handle = applier.borrow_typed().runtime_handle();
-        Self {
-            applier,
-            runtime_handle,
-            slots: SlotBackend::default(),
-            cache_epoch: 0, // Will be set explicitly
-            tmp_measurables: Vec::new(),
-            tmp_records: Vec::new(),
-        }
-    }
-
     fn new_with_epoch(applier: Rc<ConcreteApplierHost<MemoryApplier>>, epoch: u64) -> Self {
         let runtime_handle = applier.borrow_typed().runtime_handle();
         Self {
@@ -597,7 +586,8 @@ impl LayoutBuilderState {
                     node.clear_needs_measure();
                     node.clear_needs_layout();
                 })
-            }).ok();
+            })
+            .ok();
             return Ok(cached);
         }
 
@@ -802,7 +792,8 @@ impl LayoutBuilderState {
                 node.clear_needs_measure();
                 node.clear_needs_layout();
             })
-        }).ok();
+        })
+        .ok();
 
         Ok(measured)
     }

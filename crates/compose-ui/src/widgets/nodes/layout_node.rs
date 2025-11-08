@@ -248,15 +248,12 @@ impl LayoutNode {
     }
 }
 
-/// DEPRECATED: Use `compose_core::bubble_layout_dirty_in_composer::<LayoutNode>(node_id)` instead.
-///
-/// This function now simply delegates to the unified bubbling API in compose_core.
-/// All new code should use `compose_core::bubble_layout_dirty_in_composer` directly.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use compose_core::bubble_layout_dirty_in_composer::<LayoutNode>(node_id) instead"
-)]
-pub fn bubble_dirty_flags(node_id: compose_core::NodeId) {
+/// Legacy bubbling function kept for test compatibility only.
+/// DO NOT USE in production code - all bubbling now happens automatically
+/// via composer reconciliation and pop_parent().
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn bubble_dirty_flags(node_id: compose_core::NodeId) {
     compose_core::bubble_layout_dirty_in_composer::<LayoutNode>(node_id);
 }
 
@@ -292,9 +289,6 @@ impl Node for LayoutNode {
         self.children.shift_remove(&child);
         self.cache.clear();
         self.mark_needs_measure();
-        // Note: Parent clearing is handled by the caller (composer reconciliation)
-        // via on_removed_from_parent() in a separate command. This node-level
-        // method doesn't have applier access and shouldn't need it.
     }
 
     fn move_child(&mut self, from: usize, to: usize) {
@@ -321,9 +315,6 @@ impl Node for LayoutNode {
         }
         self.cache.clear();
         self.mark_needs_measure();
-        // Note: Parent link updates are handled by the caller (composer reconciliation)
-        // via on_attached_to_parent() in separate commands. This node-level method
-        // doesn't have applier access and shouldn't need it.
     }
 
     fn children(&self) -> Vec<NodeId> {
