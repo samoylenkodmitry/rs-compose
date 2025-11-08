@@ -360,24 +360,29 @@ impl SplitSlotStorage {
                 while self.cursor < self.layout.len() {
                     let slot = &mut self.layout[self.cursor];
                     let anchor = slot.anchor_id();
-                    let (group_key, group_scope, group_len) = match slot {
+                    let (group_key, group_scope, group_len, value_type) = match slot {
                         LayoutSlot::Group { key, scope, len, .. } => {
                             eprintln!("[finalize] ROOT marking Group at {} (key={}) as Gap", self.cursor, key);
-                            (Some(*key), *scope, *len)
+                            (Some(*key), *scope, *len, None)
                         },
-                        _ => {
-                            if matches!(slot, LayoutSlot::ValueRef { .. }) {
-                                eprintln!("[finalize] ROOT marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
-                            }
-                            (None, None, 0)
+                        LayoutSlot::ValueRef { .. } => {
+                            eprintln!("[finalize] ROOT marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
+                            // Preserve type from payload so we can restore if needed
+                            let type_id = self.payload.get(&anchor.0).map(|data| (**data).type_id());
+                            (None, None, 0, type_id)
                         },
+                        LayoutSlot::Gap { value_type, .. } => {
+                            // Already a gap - preserve its type if it had one
+                            (None, None, 0, *value_type)
+                        },
+                        _ => (None, None, 0, None),
                     };
                     *slot = LayoutSlot::Gap {
                         anchor,
                         group_key,
                         group_scope,
                         group_len,
-                        value_type: None,  // Don't preserve value types - recreate with init()
+                        value_type,
                     };
                     marked = true;
                     self.cursor += 1;
@@ -393,17 +398,22 @@ impl SplitSlotStorage {
         while self.cursor < frame_end && self.cursor < self.layout.len() {
             let slot = &mut self.layout[self.cursor];
             let anchor = slot.anchor_id();
-            let (group_key, group_scope, group_len) = match slot {
+            let (group_key, group_scope, group_len, value_type) = match slot {
                 LayoutSlot::Group { key, scope, len, .. } => {
                     eprintln!("[finalize] IN-GROUP marking Group at {} (key={}) as Gap", self.cursor, key);
-                    (Some(*key), *scope, *len)
+                    (Some(*key), *scope, *len, None)
                 },
-                _ => {
-                    if matches!(slot, LayoutSlot::ValueRef { .. }) {
-                        eprintln!("[finalize] IN-GROUP marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
-                    }
-                    (None, None, 0)
+                LayoutSlot::ValueRef { .. } => {
+                    eprintln!("[finalize] IN-GROUP marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
+                    // Preserve type from payload so we can restore if needed
+                    let type_id = self.payload.get(&anchor.0).map(|data| (**data).type_id());
+                    (None, None, 0, type_id)
                 },
+                LayoutSlot::Gap { value_type, .. } => {
+                    // Already a gap - preserve its type if it had one
+                    (None, None, 0, *value_type)
+                },
+                _ => (None, None, 0, None),
             };
 
             // Note: We do NOT drop the payload here - it persists!
@@ -414,7 +424,7 @@ impl SplitSlotStorage {
                 group_key,
                 group_scope,
                 group_len,
-                value_type: None,  // Don't preserve value types - recreate with init()
+                value_type,
             };
             marked = true;
             self.cursor += 1;
@@ -555,15 +565,35 @@ impl SlotStorage for SplitSlotStorage {
         }
 
         // Check if it's a gap we can reuse
-        if let Some(LayoutSlot::Gap { group_key, .. }) = self.layout.get(self.cursor) {
+        if let Some(LayoutSlot::Gap { anchor, group_key, value_type, .. }) = self.layout.get(self.cursor) {
+            let gap_anchor = *anchor;
             let is_group_gap = group_key.is_some();
+            let gap_value_type = *value_type;
 
-            eprintln!("[alloc_value_slot] Gap: is_group={}", is_group_gap);
+            eprintln!("[alloc_value_slot] Gap: anchor={}, is_group={}, has_type={}",
+                gap_anchor.0, is_group_gap, gap_value_type.is_some());
 
-            // Following Baseline: don't try to restore Value payloads from gaps
-            // Always create fresh values with init() - this ensures proper state initialization
-            // and effect lifecycle management
+            // For non-group gaps: try to restore if type matches
             if !is_group_gap {
+                // Check if we can restore the payload
+                if gap_anchor.is_valid() && gap_value_type.is_some() {
+                    let target_type = std::any::TypeId::of::<T>();
+                    if gap_value_type == Some(target_type) {
+                        // Type matches! Check if payload still exists
+                        let anchor_id = gap_anchor.0;
+                        if self.payload.contains_key(&anchor_id) {
+                            eprintln!("[alloc_value_slot] ✓ Restoring ValueRef from gap with matching type");
+                            // Restore the ValueRef
+                            self.layout[self.cursor] = LayoutSlot::ValueRef { anchor: gap_anchor };
+                            let slot_id = ValueSlotId::new(self.cursor);
+                            self.cursor += 1;
+                            self.anchors_dirty = true;
+                            return slot_id;
+                        }
+                    }
+                }
+
+                // Can't restore - create fresh
                 let anchor = self.alloc_anchor();
                 let anchor_id = anchor.0;
 
