@@ -93,11 +93,9 @@ const MAX_SHAPES_PER_DRAW: usize = 16_384;
 const MAX_VERTEX_BUFFER_BYTES: usize = MAX_SHAPES_PER_DRAW * 4 * std::mem::size_of::<Vertex>();
 const MAX_INDEX_BUFFER_BYTES: usize = MAX_SHAPES_PER_DRAW * 6 * std::mem::size_of::<u32>();
 const MAX_SHAPE_BUFFER_BYTES: usize = MAX_SHAPES_PER_DRAW * std::mem::size_of::<ShapeData>();
-const MAX_GRADIENT_STOPS_PER_SHAPE: usize = 64;
+const MAX_GRADIENT_STOPS_PER_DRAW: usize = MAX_SHAPES_PER_DRAW * 64;
 const MAX_GRADIENT_BUFFER_BYTES: usize =
-    MAX_SHAPES_PER_DRAW * MAX_GRADIENT_STOPS_PER_SHAPE * std::mem::size_of::<GradientStop>();
-const MAX_GRADIENT_STOPS_PER_DRAW: usize =
-    MAX_GRADIENT_BUFFER_BYTES / std::mem::size_of::<GradientStop>();
+    MAX_GRADIENT_STOPS_PER_DRAW * std::mem::size_of::<GradientStop>();
 
 struct ShapeBatchBuffers {
     vertex_buffer: wgpu::Buffer,
@@ -331,8 +329,7 @@ impl GpuRenderer {
                 }
 
                 if available_gradient_slots > 0 && !colors.is_empty() {
-                    let max_for_shape = available_gradient_slots.min(MAX_GRADIENT_STOPS_PER_SHAPE);
-                    used_stops = colors.len().min(max_for_shape);
+                    used_stops = colors.len().min(available_gradient_slots);
 
                     if used_stops > 0 {
                         let start = gradient_data.len();
@@ -359,8 +356,7 @@ impl GpuRenderer {
                 }
 
                 if available_gradient_slots > 0 && !colors.is_empty() {
-                    let max_for_shape = available_gradient_slots.min(MAX_GRADIENT_STOPS_PER_SHAPE);
-                    used_stops = colors.len().min(max_for_shape);
+                    used_stops = colors.len().min(available_gradient_slots);
 
                     if used_stops > 0 {
                         let start = gradient_data.len();
