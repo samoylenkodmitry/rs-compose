@@ -2,13 +2,14 @@
 
 use crate::scene::{DrawShape, TextDraw};
 use crate::shaders;
+use crate::text_cache::{CachedTextBuffer, SharedTextCache, TextCacheKey};
 use bytemuck::{Pod, Zeroable};
 use compose_ui_graphics::{Brush, Color};
 use glyphon::{
-    Attrs, Buffer, Color as GlyphonColor, FontSystem, Metrics, Resolution, Shaping,
-    SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer,
+    Attrs, Color as GlyphonColor, FontSystem, Resolution, SwashCache, TextArea, TextAtlas,
+    TextBounds, TextRenderer,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashSet};
 use std::sync::{Arc, Mutex};
 
 // Chunked rendering constants for robustness with large scenes
@@ -61,44 +62,6 @@ struct GradientStop {
     color: [f32; 4],
 }
 
-/// Cached text buffer for text shaping
-struct CachedTextBuffer {
-    buffer: Buffer,
-    // Track what's cached to avoid redundant reshaping
-    text: String,
-    scale: f32,
-}
-
-impl CachedTextBuffer {
-    /// Ensure the buffer has the correct text and metrics, only reshaping if needed
-    /// Returns true if reshaping occurred
-    fn ensure(
-        &mut self,
-        font_system: &mut FontSystem,
-        text: &str,
-        scale: f32,
-        attrs: Attrs,
-    ) -> bool {
-        // Check if anything changed that requires reshaping
-        if self.text == text && self.scale == scale {
-            return false; // No reshaping needed!
-        }
-
-        // Something changed, need to reshape
-        let metrics = Metrics::new(14.0 * scale, 20.0 * scale);
-        self.buffer.set_metrics(font_system, metrics);
-        self.buffer.set_text(font_system, text, attrs, Shaping::Advanced);
-        self.buffer.shape_until_scroll(font_system);
-
-        // Update cached values
-        self.text.clear();
-        self.text.push_str(text);
-        self.scale = scale;
-
-        true
-    }
-}
-
 /// Persistent GPU buffers for batched shape rendering
 struct ShapeBatchBuffers {
     vertex_buffer: wgpu::Buffer,
@@ -114,8 +77,8 @@ struct ShapeBatchBuffers {
 
 impl ShapeBatchBuffers {
     fn new(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout) -> Self {
-        let initial_vertex_cap = 64;  // 16 shapes * 4 vertices
-        let initial_index_cap = 96;   // 16 shapes * 6 indices
+        let initial_vertex_cap = 64; // 16 shapes * 4 vertices
+        let initial_index_cap = 96; // 16 shapes * 6 indices
         let initial_shape_cap = 16;
         let initial_gradient_cap = 16;
 
@@ -262,15 +225,6 @@ impl ShapeBatchBuffers {
     }
 }
 
-/// Hash key for text caching - only content matters, not position
-#[derive(Hash, Eq, PartialEq, Clone)]
-struct TextKey {
-    text: String,
-    scale_bits: u32,
-    // NOTE: Removed rect and z_index - text shaping only depends on content + scale
-    // Position is applied during rendering, not shaping
-}
-
 pub struct GpuRenderer {
     pub(crate) device: Arc<wgpu::Device>,
     pub(crate) queue: Arc<wgpu::Queue>,
@@ -284,8 +238,8 @@ pub struct GpuRenderer {
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
     shape_buffers: ShapeBatchBuffers,
-    // Text cache (content-based, not GPU buffers)
-    text_cache: HashMap<TextKey, CachedTextBuffer>,
+    // Text cache shared with layout measurements
+    shared_text_cache: SharedTextCache,
 }
 
 impl GpuRenderer {
@@ -294,6 +248,7 @@ impl GpuRenderer {
         queue: Arc<wgpu::Queue>,
         surface_format: wgpu::TextureFormat,
         font_system: Arc<Mutex<FontSystem>>,
+        shared_text_cache: SharedTextCache,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shape Shader"),
@@ -420,15 +375,12 @@ impl GpuRenderer {
             uniform_buffer,
             uniform_bind_group,
             shape_buffers,
-            text_cache: HashMap::new(),
+            shared_text_cache,
         }
     }
 
-    fn create_text_key(text: &TextDraw) -> TextKey {
-        TextKey {
-            text: text.text.clone(),
-            scale_bits: text.scale.to_bits(),
-        }
+    fn create_text_key(text: &TextDraw) -> TextCacheKey {
+        TextCacheKey::new(&text.text, text.scale)
     }
 
     pub fn render(
@@ -451,20 +403,19 @@ impl GpuRenderer {
             viewport: [width as f32, height as f32],
             _padding: [0.0, 0.0],
         };
-        self.queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Chunked rendering for robustness with large scenes
         let total_shape_count = sorted_shapes.len();
 
         if total_shape_count > MAX_SHAPES_PER_DRAW {
-            eprintln!("INFO: Rendering {} shapes in {} chunks (max {} per draw)",
-                     total_shape_count,
-                     (total_shape_count + MAX_SHAPES_PER_DRAW - 1) / MAX_SHAPES_PER_DRAW,
-                     MAX_SHAPES_PER_DRAW);
+            eprintln!(
+                "INFO: Rendering {} shapes in {} chunks (max {} per draw)",
+                total_shape_count,
+                (total_shape_count + MAX_SHAPES_PER_DRAW - 1) / MAX_SHAPES_PER_DRAW,
+                MAX_SHAPES_PER_DRAW
+            );
         }
 
         // First pass: collect all shape data and gradients across entire scene
@@ -477,9 +428,7 @@ impl GpuRenderer {
             // Determine gradient parameters and collect stops
             let mut gradient_params = [0.0f32; 4];
             let (brush_type, gradient_start, gradient_count) = match &shape.brush {
-                Brush::Solid(_) => {
-                    (0u32, 0u32, 0u32)
-                }
+                Brush::Solid(_) => (0u32, 0u32, 0u32),
                 Brush::LinearGradient(colors) => {
                     let start = all_gradients.len() as u32;
                     for c in colors {
@@ -489,7 +438,11 @@ impl GpuRenderer {
                     }
                     (1u32, start, colors.len() as u32)
                 }
-                Brush::RadialGradient { colors, center, radius } => {
+                Brush::RadialGradient {
+                    colors,
+                    center,
+                    radius,
+                } => {
                     let start = all_gradients.len() as u32;
                     for c in colors {
                         all_gradients.push(GradientStop {
@@ -510,7 +463,12 @@ impl GpuRenderer {
             // Shape data
             let radii = if let Some(rounded) = shape.shape {
                 let resolved = rounded.resolve(rect.width, rect.height);
-                [resolved.top_left, resolved.top_right, resolved.bottom_left, resolved.bottom_right]
+                [
+                    resolved.top_left,
+                    resolved.top_right,
+                    resolved.bottom_left,
+                    resolved.bottom_right,
+                ]
             } else {
                 [0.0, 0.0, 0.0, 0.0]
             };
@@ -530,15 +488,19 @@ impl GpuRenderer {
         self.shape_buffers.ensure_capacity(
             &self.device,
             &self.shape_bind_group_layout,
-            MAX_SHAPES_PER_DRAW * 4,  // vertices
-            MAX_SHAPES_PER_DRAW * 6,  // indices
-            MAX_SHAPES_PER_DRAW,       // shapes
+            MAX_SHAPES_PER_DRAW * 4,    // vertices
+            MAX_SHAPES_PER_DRAW * 6,    // indices
+            MAX_SHAPES_PER_DRAW,        // shapes
             all_gradients.len().max(1), // all gradients (written once)
         );
 
         // Write gradients once for all chunks
         if !all_gradients.is_empty() {
-            self.queue.write_buffer(&self.shape_buffers.gradient_buffer, 0, bytemuck::cast_slice(&all_gradients));
+            self.queue.write_buffer(
+                &self.shape_buffers.gradient_buffer,
+                0,
+                bytemuck::cast_slice(&all_gradients),
+            );
         }
 
         // Second pass: render shapes in chunks with proper synchronization
@@ -570,16 +532,36 @@ impl GpuRenderer {
 
                 // Vertices for quad
                 vertices.extend_from_slice(&[
-                    Vertex { position: [rect.x, rect.y], color, uv: [0.0, 0.0] },
-                    Vertex { position: [rect.x + rect.width, rect.y], color, uv: [1.0, 0.0] },
-                    Vertex { position: [rect.x, rect.y + rect.height], color, uv: [0.0, 1.0] },
-                    Vertex { position: [rect.x + rect.width, rect.y + rect.height], color, uv: [1.0, 1.0] },
+                    Vertex {
+                        position: [rect.x, rect.y],
+                        color,
+                        uv: [0.0, 0.0],
+                    },
+                    Vertex {
+                        position: [rect.x + rect.width, rect.y],
+                        color,
+                        uv: [1.0, 0.0],
+                    },
+                    Vertex {
+                        position: [rect.x, rect.y + rect.height],
+                        color,
+                        uv: [0.0, 1.0],
+                    },
+                    Vertex {
+                        position: [rect.x + rect.width, rect.y + rect.height],
+                        color,
+                        uv: [1.0, 1.0],
+                    },
                 ]);
 
                 // Indices for two triangles
                 indices.extend_from_slice(&[
-                    base_vertex, base_vertex + 1, base_vertex + 2,
-                    base_vertex + 2, base_vertex + 1, base_vertex + 3,
+                    base_vertex,
+                    base_vertex + 1,
+                    base_vertex + 2,
+                    base_vertex + 2,
+                    base_vertex + 1,
+                    base_vertex + 3,
                 ]);
             }
 
@@ -589,14 +571,28 @@ impl GpuRenderer {
             // Write chunk data and render in one encoder (submit after to ensure synchronization)
             if !vertices.is_empty() {
                 // Write this chunk's data to buffers
-                self.queue.write_buffer(&self.shape_buffers.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
-                self.queue.write_buffer(&self.shape_buffers.index_buffer, 0, bytemuck::cast_slice(&indices));
-                self.queue.write_buffer(&self.shape_buffers.shape_buffer, 0, bytemuck::cast_slice(chunk_shape_data));
+                self.queue.write_buffer(
+                    &self.shape_buffers.vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&vertices),
+                );
+                self.queue.write_buffer(
+                    &self.shape_buffers.index_buffer,
+                    0,
+                    bytemuck::cast_slice(&indices),
+                );
+                self.queue.write_buffer(
+                    &self.shape_buffers.shape_buffer,
+                    0,
+                    bytemuck::cast_slice(chunk_shape_data),
+                );
 
                 // Create encoder for this chunk
-                let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Shape Chunk Encoder"),
-                });
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Shape Chunk Encoder"),
+                        });
 
                 // Create render pass for this chunk (Clear on first chunk, Load on subsequent)
                 {
@@ -644,66 +640,44 @@ impl GpuRenderer {
 
         // Prepare text rendering - create buffers and text areas (with caching)
         let mut font_system = self.font_system.lock().unwrap();
+        let mut text_cache = self.shared_text_cache.lock().unwrap();
 
-        // Collect keys for current frame text using HashSet for O(1) lookups
-        let current_text_keys: HashSet<TextKey> = sorted_texts
+        let text_entries: Vec<(TextCacheKey, &TextDraw)> = sorted_texts
             .iter()
             .filter(|t| !t.text.is_empty() && t.rect.width > 0.0 && t.rect.height > 0.0)
-            .map(|text| Self::create_text_key(text))
+            .map(|text| (Self::create_text_key(text), text))
             .collect();
 
-        // Remove cache entries for text no longer present (O(1) lookups via HashSet)
-        self.text_cache.retain(|key, _| current_text_keys.contains(key));
+        let current_text_keys: HashSet<TextCacheKey> =
+            text_entries.iter().map(|(key, _)| key.clone()).collect();
 
-        // Create or update cached text buffers (only reshape when needed)
-        for text_draw in &sorted_texts {
-            // Skip empty text or zero-sized rects
-            if text_draw.text.is_empty() || text_draw.rect.width <= 0.0 || text_draw.rect.height <= 0.0 {
-                continue;
-            }
+        text_cache.retain(|key, _| current_text_keys.contains(key));
 
-            let key = Self::create_text_key(text_draw);
-
-            if let Some(cached) = self.text_cache.get_mut(&key) {
-                // Already in cache - use ensure() to only reshape if needed
-                cached.ensure(&mut font_system, &text_draw.text, text_draw.scale, Attrs::new());
-            } else {
-                // Not in cache, create new buffer
-                let mut buffer = Buffer::new(
-                    &mut font_system,
-                    Metrics::new(14.0 * text_draw.scale, 20.0 * text_draw.scale),
-                );
-                buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
-                buffer.set_text(
-                    &mut font_system,
-                    &text_draw.text,
-                    Attrs::new(),
-                    Shaping::Advanced,
-                );
-                buffer.shape_until_scroll(&mut font_system);
-
-                self.text_cache.insert(
-                    key,
-                    CachedTextBuffer {
-                        buffer,
-                        text: text_draw.text.clone(),
-                        scale: text_draw.scale,
-                    },
-                );
+        for (key, text_draw) in &text_entries {
+            match text_cache.entry(key.clone()) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().ensure(
+                        &mut font_system,
+                        &text_draw.text,
+                        text_draw.scale,
+                        Attrs::new(),
+                    );
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(CachedTextBuffer::new(
+                        &mut font_system,
+                        &text_draw.text,
+                        text_draw.scale,
+                        Attrs::new(),
+                    ));
+                }
             }
         }
 
-        // Collect text data from cache
-        let text_data: Vec<(&TextDraw, TextKey)> = sorted_texts
-            .iter()
-            .filter(|t| !t.text.is_empty() && t.rect.width > 0.0 && t.rect.height > 0.0)
-            .map(|text| (text, Self::create_text_key(text)))
-            .collect();
-
         // Create text areas using cached buffers
-        let mut text_areas = Vec::new();
-        for (text_draw, key) in &text_data {
-            let cached = self.text_cache.get(key).expect("Text should be in cache");
+        let mut text_areas = Vec::with_capacity(text_entries.len());
+        for (key, text_draw) in &text_entries {
+            let cached = text_cache.get(key).expect("Text should be in cache");
             let color = GlyphonColor::rgba(
                 (text_draw.color.r() * 255.0) as u8,
                 (text_draw.color.g() * 255.0) as u8,
@@ -712,7 +686,7 @@ impl GpuRenderer {
             );
 
             text_areas.push(TextArea {
-                buffer: &cached.buffer,
+                buffer: cached.buffer(),
                 left: text_draw.rect.x,
                 top: text_draw.rect.y,
                 scale: 1.0,
@@ -751,9 +725,11 @@ impl GpuRenderer {
         drop(font_system);
 
         // Create encoder for text rendering
-        let mut text_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Text Encoder"),
-        });
+        let mut text_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Text Encoder"),
+                });
 
         {
             let mut text_pass = text_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
