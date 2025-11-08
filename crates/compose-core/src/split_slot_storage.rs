@@ -93,6 +93,8 @@ enum LayoutSlot {
         group_key: Option<Key>,
         group_scope: Option<ScopeId>,
         group_len: usize,
+        /// TypeId of the value that was here (if it was a Value, not a Group/Node)
+        value_type: Option<std::any::TypeId>,
     },
 }
 
@@ -114,6 +116,7 @@ impl Default for LayoutSlot {
             group_key: None,
             group_scope: None,
             group_len: 0,
+            value_type: None,
         }
     }
 }
@@ -177,15 +180,18 @@ impl SplitSlotStorage {
                             if let Some(child_slot) = self.layout.get_mut(i) {
                                 // Preserve anchor for all slot types so values can be restored
                                 let child_anchor = child_slot.anchor_id();
-                                let (child_key, child_scope, child_len) = match child_slot {
-                                    LayoutSlot::Group { key, scope, len, .. } => (Some(*key), *scope, *len),
-                                    _ => (None, None, 0),
+                                let (child_key, child_scope, child_len, value_type) = match child_slot {
+                                    LayoutSlot::Group { key, scope, len, .. } => (Some(*key), *scope, *len, None),
+                                    // For Values/Nodes: don't preserve type, following Baseline's approach
+                                    // Values will be recreated with init() when crossing gap boundaries
+                                    _ => (None, None, 0, None),
                                 };
                                 *child_slot = LayoutSlot::Gap {
                                     anchor: child_anchor,
                                     group_key: child_key,
                                     group_scope: child_scope,
                                     group_len: child_len,
+                                    value_type,
                                 };
                             }
                         }
@@ -226,6 +232,7 @@ impl SplitSlotStorage {
             group_scope,
             group_len,
             anchor: gap_anchor,
+            value_type: _,
         }) = self.layout.get(self.cursor)
         {
             if *gap_key == key {
@@ -358,17 +365,19 @@ impl SplitSlotStorage {
                             eprintln!("[finalize] ROOT marking Group at {} (key={}) as Gap", self.cursor, key);
                             (Some(*key), *scope, *len)
                         },
-                        LayoutSlot::ValueRef { .. } => {
-                            eprintln!("[finalize] ROOT marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
+                        _ => {
+                            if matches!(slot, LayoutSlot::ValueRef { .. }) {
+                                eprintln!("[finalize] ROOT marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
+                            }
                             (None, None, 0)
                         },
-                        _ => (None, None, 0),
                     };
                     *slot = LayoutSlot::Gap {
                         anchor,
                         group_key,
                         group_scope,
                         group_len,
+                        value_type: None,  // Don't preserve value types - recreate with init()
                     };
                     marked = true;
                     self.cursor += 1;
@@ -389,11 +398,12 @@ impl SplitSlotStorage {
                     eprintln!("[finalize] IN-GROUP marking Group at {} (key={}) as Gap", self.cursor, key);
                     (Some(*key), *scope, *len)
                 },
-                LayoutSlot::ValueRef { .. } => {
-                    eprintln!("[finalize] IN-GROUP marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
+                _ => {
+                    if matches!(slot, LayoutSlot::ValueRef { .. }) {
+                        eprintln!("[finalize] IN-GROUP marking ValueRef at {} (anchor={}) as Gap", self.cursor, anchor.0);
+                    }
                     (None, None, 0)
                 },
-                _ => (None, None, 0),
             };
 
             // Note: We do NOT drop the payload here - it persists!
@@ -404,6 +414,7 @@ impl SplitSlotStorage {
                 group_key,
                 group_scope,
                 group_len,
+                value_type: None,  // Don't preserve value types - recreate with init()
             };
             marked = true;
             self.cursor += 1;
@@ -544,61 +555,38 @@ impl SlotStorage for SplitSlotStorage {
         }
 
         // Check if it's a gap we can reuse
-        if let Some(LayoutSlot::Gap { anchor, group_key, .. }) = self.layout.get(self.cursor) {
-            let gap_anchor = *anchor;
+        if let Some(LayoutSlot::Gap { group_key, .. }) = self.layout.get(self.cursor) {
             let is_group_gap = group_key.is_some();
 
-            eprintln!("[alloc_value_slot] Gap: anchor={}, is_valid={}, is_group={}", gap_anchor.0, gap_anchor.is_valid(), is_group_gap);
+            eprintln!("[alloc_value_slot] Gap: is_group={}", is_group_gap);
 
-            // If this gap was NOT a group (i.e., it was a value or node slot),
-            // try to restore it as a ValueRef and reuse the payload
-            if !is_group_gap && gap_anchor.is_valid() {
-                let anchor_id = gap_anchor.0;
-                // Check if payload exists and has correct type
-                if let Some(data) = self.payload.get(&anchor_id) {
-                    eprintln!("[alloc_value_slot] Gap has payload, type matches: {}", data.is::<T>());
-                    if data.is::<T>() {
-                        eprintln!("[alloc_value_slot] ✓ Restoring Gap as ValueRef with existing payload");
-                        // Restore the ValueRef and reuse existing payload
-                        self.layout[self.cursor] = LayoutSlot::ValueRef { anchor: gap_anchor };
-                        let slot_id = ValueSlotId::new(self.cursor);
-                        self.cursor += 1;
-                        self.anchors_dirty = true;
-                        return slot_id;
-                    } else {
-                        // Type mismatch: overwrite payload with new value
-                        self.payload.insert(anchor_id, Box::new(init()));
-                        self.layout[self.cursor] = LayoutSlot::ValueRef { anchor: gap_anchor };
-                        let slot_id = ValueSlotId::new(self.cursor);
-                        self.cursor += 1;
-                        self.anchors_dirty = true;
-                        return slot_id;
+            // Following Baseline: don't try to restore Value payloads from gaps
+            // Always create fresh values with init() - this ensures proper state initialization
+            // and effect lifecycle management
+            if !is_group_gap {
+                let anchor = self.alloc_anchor();
+                let anchor_id = anchor.0;
+
+                eprintln!("[alloc_value_slot] Creating fresh ValueRef in gap at cursor={} with anchor={}, type={}",
+                    self.cursor, anchor_id, std::any::type_name::<T>());
+
+                // Store payload
+                self.payload.insert(anchor_id, Box::new(init()));
+
+                // Store layout ref
+                self.layout[self.cursor] = LayoutSlot::ValueRef { anchor };
+
+                let slot_id = ValueSlotId::new(self.cursor);
+                self.cursor += 1;
+
+                if let Some(frame) = self.group_stack.last_mut() {
+                    if self.cursor > frame.end {
+                        frame.end = self.cursor;
                     }
                 }
+                self.anchors_dirty = true;
+                return slot_id;
             }
-
-            // Otherwise, create new value slot in the gap
-            let anchor = self.alloc_anchor();
-            let anchor_id = anchor.0;
-
-            eprintln!("[alloc_value_slot] Creating new ValueRef in gap at cursor={} with anchor={}, type={}", self.cursor, anchor_id, std::any::type_name::<T>());
-
-            // Store payload
-            self.payload.insert(anchor_id, Box::new(init()));
-
-            // Store layout ref
-            self.layout[self.cursor] = LayoutSlot::ValueRef { anchor };
-
-            let slot_id = ValueSlotId::new(self.cursor);
-            self.cursor += 1;
-
-            if let Some(frame) = self.group_stack.last_mut() {
-                if self.cursor > frame.end {
-                    frame.end = self.cursor;
-                }
-            }
-            self.anchors_dirty = true;
-            return slot_id;
         }
 
         // Create new value slot
