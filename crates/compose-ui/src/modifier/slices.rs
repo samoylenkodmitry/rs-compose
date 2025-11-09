@@ -1,7 +1,7 @@
 use std::fmt;
 use std::rc::Rc;
 
-use compose_foundation::{ModifierNode, ModifierNodeChain, PointerEvent, PointerEventKind};
+use compose_foundation::{ModifierNode, ModifierNodeChain, PointerEvent};
 
 use crate::draw::DrawCommand;
 use crate::modifier::Modifier;
@@ -12,12 +12,29 @@ use crate::modifier_nodes::{
 use super::{ModifierChainHandle, Point};
 
 /// Snapshot of modifier node slices that impact draw and pointer subsystems.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct ModifierNodeSlices {
     draw_commands: Vec<DrawCommand>,
     pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
     click_handlers: Vec<Rc<dyn Fn(Point)>>,
     clip_to_bounds: bool,
+    chain_guard: Option<Rc<ChainGuard>>,
+}
+
+struct ChainGuard {
+    _handle: ModifierChainHandle,
+}
+
+impl Clone for ModifierNodeSlices {
+    fn clone(&self) -> Self {
+        Self {
+            draw_commands: self.draw_commands.clone(),
+            pointer_inputs: self.pointer_inputs.clone(),
+            click_handlers: self.click_handlers.clone(),
+            clip_to_bounds: self.clip_to_bounds,
+            chain_guard: self.chain_guard.clone(),
+        }
+    }
 }
 
 impl ModifierNodeSlices {
@@ -42,6 +59,14 @@ impl ModifierNodeSlices {
         self.pointer_inputs.extend(other.pointer_inputs.into_iter());
         self.click_handlers.extend(other.click_handlers.into_iter());
         self.clip_to_bounds |= other.clip_to_bounds;
+        if self.chain_guard.is_none() {
+            self.chain_guard = other.chain_guard;
+        }
+    }
+
+    pub fn with_chain_guard(mut self, handle: ModifierChainHandle) -> Self {
+        self.chain_guard = Some(Rc::new(ChainGuard { _handle: handle }));
+        self
     }
 }
 
@@ -61,26 +86,13 @@ pub fn collect_modifier_slices(chain: &ModifierNodeChain) -> ModifierNodeSlices 
     let mut slices = ModifierNodeSlices::default();
 
     for node in chain.pointer_input_nodes() {
+        if let Some(handler) = node.pointer_input_handler() {
+            slices.pointer_inputs.push(handler);
+        }
+
         let modifier_node = node as &dyn ModifierNode;
         if let Some(clickable) = modifier_node.as_any().downcast_ref::<ClickableNode>() {
-            let handler = clickable.handler();
-            slices.click_handlers.push(handler.clone());
-            let pointer_handler = handler.clone();
-            slices
-                .pointer_inputs
-                .push(Rc::new(move |event: PointerEvent| {
-                    if matches!(event.kind, PointerEventKind::Down) {
-                        pointer_handler(Point {
-                            x: event.position.x,
-                            y: event.position.y,
-                        });
-                    }
-                }));
-        } else if let Some(handler) = modifier_node
-            .as_any()
-            .downcast_ref::<PointerEventHandlerNode>()
-        {
-            slices.pointer_inputs.push(handler.handler());
+            slices.click_handlers.push(clickable.handler());
         }
     }
 
@@ -103,5 +115,5 @@ pub fn collect_modifier_slices(chain: &ModifierNodeChain) -> ModifierNodeSlices 
 pub fn collect_slices_from_modifier(modifier: &Modifier) -> ModifierNodeSlices {
     let mut handle = ModifierChainHandle::new();
     handle.update(modifier);
-    collect_modifier_slices(handle.chain())
+    collect_modifier_slices(handle.chain()).with_chain_guard(handle)
 }

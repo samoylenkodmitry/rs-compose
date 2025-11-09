@@ -544,6 +544,18 @@ impl PointerInputNode for ClickableNode {
         // Always participate in hit testing
         true
     }
+
+    fn pointer_input_handler(&self) -> Option<Rc<dyn Fn(PointerEvent)>> {
+        let handler = self.on_click.clone();
+        Some(Rc::new(move |event: PointerEvent| {
+            if matches!(event.kind, PointerEventKind::Down) {
+                handler(Point {
+                    x: event.position.x,
+                    y: event.position.y,
+                });
+            }
+        }))
+    }
 }
 
 /// Element that creates and updates clickable nodes.
@@ -653,6 +665,10 @@ impl PointerInputNode for PointerEventHandlerNode {
 
     fn hit_test(&self, _x: f32, _y: f32) -> bool {
         true
+    }
+
+    fn pointer_input_handler(&self) -> Option<Rc<dyn Fn(PointerEvent)>> {
+        Some(self.handler.clone())
     }
 }
 

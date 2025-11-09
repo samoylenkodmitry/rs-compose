@@ -6,8 +6,8 @@ use compose_core::{
 use compose_foundation::{PointerEvent, PointerEventKind};
 use compose_ui::{
     composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, GraphicsLayer,
-    IntrinsicSize, LinearArrangement, Modifier, Point, RoundedCornerShape, Row, RowSpec, Size,
-    Spacer, Text, VerticalAlignment,
+    IntrinsicSize, LinearArrangement, Modifier, Point, PointerInputScope, RoundedCornerShape, Row,
+    RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
 use std::cell::RefCell;
 
@@ -913,19 +913,36 @@ fn counter_app() {
                                 );
                             }
                         }))
-                        .then(Modifier::pointer_input({
+                        .then(Modifier::pointer_input((), {
                             let pointer_position = pointer_position.clone();
                             let pointer_down = pointer_down.clone();
-                            move |event: PointerEvent| match event.kind {
-                                PointerEventKind::Down => pointer_down.set(true),
-                                PointerEventKind::Up => pointer_down.set(false),
-                                PointerEventKind::Move => {
-                                    pointer_position.set(Point {
-                                        x: event.position.x,
-                                        y: event.position.y,
-                                    });
+                            move |scope: PointerInputScope| {
+                                let pointer_position = pointer_position.clone();
+                                let pointer_down = pointer_down.clone();
+                                async move {
+                                    scope
+                                        .await_pointer_event_scope(|await_scope| async move {
+                                            loop {
+                                                let event = await_scope.await_pointer_event().await;
+                                                match event.kind {
+                                                    PointerEventKind::Down => {
+                                                        pointer_down.set(true)
+                                                    }
+                                                    PointerEventKind::Up => pointer_down.set(false),
+                                                    PointerEventKind::Move => {
+                                                        pointer_position.set(Point {
+                                                            x: event.position.x,
+                                                            y: event.position.y,
+                                                        });
+                                                    }
+                                                    PointerEventKind::Cancel => {
+                                                        pointer_down.set(false)
+                                                    }
+                                                }
+                                            }
+                                        })
+                                        .await;
                                 }
-                                PointerEventKind::Cancel => pointer_down.set(false),
                             }
                         }))
                         .then(Modifier::padding(16.0)),

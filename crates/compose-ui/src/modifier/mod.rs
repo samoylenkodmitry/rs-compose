@@ -29,6 +29,8 @@ pub use compose_ui_graphics::{
     Brush, Color, CornerRadii, EdgeInsets, GraphicsLayer, Point, Rect, RoundedCornerShape, Size,
 };
 use compose_ui_layout::{Alignment, HorizontalAlignment, IntrinsicSize, VerticalAlignment};
+#[allow(unused_imports)]
+pub use pointer_input::{AwaitPointerEventScope, PointerInputScope};
 pub use slices::{collect_modifier_slices, collect_slices_from_modifier, ModifierNodeSlices};
 
 use crate::modifier_nodes::{ClipToBoundsElement, SizeElement};
@@ -476,17 +478,6 @@ impl Modifier {
         collect_slices_from_modifier(self).draw_commands().to_vec()
     }
 
-    pub fn click_handler(&self) -> Option<Rc<dyn Fn(Point)>> {
-        collect_slices_from_modifier(self)
-            .click_handlers()
-            .first()
-            .cloned()
-    }
-
-    pub fn pointer_inputs(&self) -> Vec<Rc<dyn Fn(PointerEvent)>> {
-        collect_slices_from_modifier(self).pointer_inputs().to_vec()
-    }
-
     pub fn graphics_layer_values(&self) -> Option<GraphicsLayer> {
         self.state.graphics_layer
     }
@@ -620,8 +611,6 @@ struct ModifierState {
     background: Option<Color>,
     corner_shape: Option<RoundedCornerShape>,
     draw_commands: Vec<DrawCommand>,
-    click_handler: Option<Rc<dyn Fn(Point)>>,
-    pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
     graphics_layer: Option<GraphicsLayer>,
     clip_to_bounds: bool,
 }
@@ -650,9 +639,6 @@ impl ModifierState {
         if let Some(shape) = other.corner_shape {
             self.corner_shape = Some(shape);
         }
-        if let Some(handler) = &other.click_handler {
-            self.click_handler = Some(handler.clone());
-        }
         if let Some(layer) = other.graphics_layer {
             self.graphics_layer = Some(layer);
         }
@@ -661,8 +647,6 @@ impl ModifierState {
         }
         self.draw_commands
             .extend(other.draw_commands.iter().cloned());
-        self.pointer_inputs
-            .extend(other.pointer_inputs.iter().cloned());
     }
 
     fn is_default(&self) -> bool {
@@ -670,11 +654,9 @@ impl ModifierState {
             && self.offset == Point { x: 0.0, y: 0.0 }
             && self.background.is_none()
             && self.corner_shape.is_none()
-            && self.click_handler.is_none()
             && self.graphics_layer.is_none()
             && !self.clip_to_bounds
             && self.draw_commands.is_empty()
-            && self.pointer_inputs.is_empty()
     }
 }
 
@@ -686,8 +668,6 @@ impl Default for ModifierState {
             background: None,
             corner_shape: None,
             draw_commands: Vec::new(),
-            click_handler: None,
-            pointer_inputs: Vec::new(),
             graphics_layer: None,
             clip_to_bounds: false,
         }

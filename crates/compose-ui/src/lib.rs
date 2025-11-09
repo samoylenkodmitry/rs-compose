@@ -29,8 +29,8 @@ pub use layout::{
 };
 pub use modifier::{
     collect_modifier_slices, collect_slices_from_modifier, Brush, Color, CornerRadii, EdgeInsets,
-    GraphicsLayer, Modifier, ModifierNodeSlices, Point, PointerEvent, PointerEventKind, Rect,
-    ResolvedBackground, ResolvedModifiers, RoundedCornerShape, Size,
+    GraphicsLayer, Modifier, ModifierNodeSlices, Point, PointerEvent, PointerEventKind,
+    PointerInputScope, Rect, ResolvedBackground, ResolvedModifiers, RoundedCornerShape, Size,
 };
 pub use modifier_nodes::{
     AlphaElement, AlphaNode, BackgroundElement, BackgroundNode, ClickableElement, ClickableNode,

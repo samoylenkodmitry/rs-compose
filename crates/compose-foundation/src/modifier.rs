@@ -8,11 +8,12 @@
 //! begin migrating without expanding the public API surface.
 
 use std::any::{type_name, Any, TypeId};
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{BitOr, BitOrAssign};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::slice::{Iter, IterMut};
 
 pub use compose_ui_graphics::DrawScope;
@@ -218,6 +219,11 @@ pub trait PointerInputNode: ModifierNode {
     /// given pointer position.
     fn hit_test(&self, _x: f32, _y: f32) -> bool {
         true
+    }
+
+    /// Returns an event handler closure if the node wants to participate in pointer dispatch.
+    fn pointer_input_handler(&self) -> Option<Rc<dyn Fn(PointerEvent)>> {
+        None
     }
 }
 
@@ -554,10 +560,15 @@ impl ModifierNodeEntry {
 /// updates when the incoming element list still contains a node of the
 /// same type. Removed nodes detach automatically so callers do not need
 /// to manually manage their lifetimes.
-#[derive(Default)]
 pub struct ModifierNodeChain {
-    entries: Vec<ModifierNodeEntry>,
+    entries: Vec<Box<ModifierNodeEntry>>,
     aggregated_capabilities: NodeCapabilities,
+}
+
+impl Default for ModifierNodeChain {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModifierNodeChain {
@@ -576,7 +587,7 @@ impl ModifierNodeChain {
         context: &mut dyn ModifierNodeContext,
     ) {
         let mut old_entries = std::mem::take(&mut self.entries);
-        let mut new_entries = Vec::with_capacity(elements.len());
+        let mut new_entries: Vec<Box<ModifierNodeEntry>> = Vec::with_capacity(elements.len());
         let mut aggregated = NodeCapabilities::empty();
 
         for element in elements {
@@ -585,7 +596,7 @@ impl ModifierNodeChain {
             let hash_code = element.hash_code();
             let capabilities = element.capabilities();
             let mut same_element = false;
-            let mut reused_entry = None;
+            let mut reused_entry: Option<Box<ModifierNodeEntry>> = None;
 
             if let Some(key_value) = key {
                 if let Some(index) = old_entries.iter().position(|entry| {
@@ -613,36 +624,41 @@ impl ModifierNodeChain {
             }
 
             if let Some(mut entry) = reused_entry {
-                if !entry.attached {
-                    entry.node.on_attach(context);
-                    entry.attached = true;
-                }
+                {
+                    let entry_mut = entry.as_mut();
+                    if !entry_mut.attached {
+                        entry_mut.node.on_attach(context);
+                        entry_mut.attached = true;
+                    }
 
-                if !same_element {
-                    element.update_node(entry.node.as_mut());
-                }
+                    if !same_element {
+                        element.update_node(entry_mut.node.as_mut());
+                    }
 
-                entry.key = key;
-                entry.element = element.clone();
-                entry.element_type = element_type;
-                entry.hash_code = hash_code;
-                entry.capabilities = capabilities;
-                aggregated |= entry.capabilities;
+                    entry_mut.key = key;
+                    entry_mut.element = element.clone();
+                    entry_mut.element_type = element_type;
+                    entry_mut.hash_code = hash_code;
+                    entry_mut.capabilities = capabilities;
+                    aggregated |= entry_mut.capabilities;
+                }
                 new_entries.push(entry);
             } else {
-                let mut node = element.create_node();
-                node.on_attach(context);
-                element.update_node(node.as_mut());
-                let mut entry = ModifierNodeEntry::new(
+                let mut entry = Box::new(ModifierNodeEntry::new(
                     element_type,
                     key,
                     element.clone(),
-                    node,
+                    element.create_node(),
                     hash_code,
                     capabilities,
-                );
-                entry.attached = true;
-                aggregated |= entry.capabilities;
+                ));
+                {
+                    let entry_mut = entry.as_mut();
+                    entry_mut.node.on_attach(context);
+                    entry_mut.attached = true;
+                    element.update_node(entry_mut.node.as_mut());
+                    aggregated |= entry_mut.capabilities;
+                }
                 new_entries.push(entry);
             }
         }
@@ -682,6 +698,7 @@ impl ModifierNodeChain {
         for mut entry in std::mem::take(&mut self.entries) {
             if entry.attached {
                 entry.node.on_detach();
+                entry.attached = false;
             }
         }
         self.aggregated_capabilities = NodeCapabilities::empty();
@@ -764,11 +781,11 @@ impl ModifierNodeChain {
 
 /// Iterator over draw modifier nodes stored in a [`ModifierNodeChain`].
 pub struct DrawNodes<'a> {
-    entries: Iter<'a, ModifierNodeEntry>,
+    entries: Iter<'a, Box<ModifierNodeEntry>>,
 }
 
 impl<'a> DrawNodes<'a> {
-    fn new(entries: Iter<'a, ModifierNodeEntry>) -> Self {
+    fn new(entries: Iter<'a, Box<ModifierNodeEntry>>) -> Self {
         Self { entries }
     }
 }
@@ -788,11 +805,11 @@ impl<'a> Iterator for DrawNodes<'a> {
 
 /// Mutable iterator over draw modifier nodes.
 pub struct DrawNodesMut<'a> {
-    entries: IterMut<'a, ModifierNodeEntry>,
+    entries: IterMut<'a, Box<ModifierNodeEntry>>,
 }
 
 impl<'a> DrawNodesMut<'a> {
-    fn new(entries: IterMut<'a, ModifierNodeEntry>) -> Self {
+    fn new(entries: IterMut<'a, Box<ModifierNodeEntry>>) -> Self {
         Self { entries }
     }
 }
@@ -812,11 +829,11 @@ impl<'a> Iterator for DrawNodesMut<'a> {
 
 /// Iterator over pointer-input modifier nodes.
 pub struct PointerInputNodes<'a> {
-    entries: Iter<'a, ModifierNodeEntry>,
+    entries: Iter<'a, Box<ModifierNodeEntry>>,
 }
 
 impl<'a> PointerInputNodes<'a> {
-    fn new(entries: Iter<'a, ModifierNodeEntry>) -> Self {
+    fn new(entries: Iter<'a, Box<ModifierNodeEntry>>) -> Self {
         Self { entries }
     }
 }
@@ -836,11 +853,11 @@ impl<'a> Iterator for PointerInputNodes<'a> {
 
 /// Mutable iterator over pointer-input modifier nodes.
 pub struct PointerInputNodesMut<'a> {
-    entries: IterMut<'a, ModifierNodeEntry>,
+    entries: IterMut<'a, Box<ModifierNodeEntry>>,
 }
 
 impl<'a> PointerInputNodesMut<'a> {
-    fn new(entries: IterMut<'a, ModifierNodeEntry>) -> Self {
+    fn new(entries: IterMut<'a, Box<ModifierNodeEntry>>) -> Self {
         Self { entries }
     }
 }

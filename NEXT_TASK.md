@@ -1,38 +1,43 @@
-# Next Task: Pointer-Input Coroutine & Node Lifecycle Parity
+# Next Task: NodeChain Delegation, Modifier Locals & Semantics Parity
 
 ## Context
-Renderers, pointer dispatch, and layout now traverse reconciled `ModifierNodeChain` slices, but we still lack Kotlin’s coroutine-backed pointer input machinery and the sentinel-based node lifecycle that powers modifier locals and semantics. Kotlin’s implementation lives under `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui`, especially:
+Coroutine-backed `Modifier.pointerInput`/`clickable` are live, renderers source draw/pointer slices from reconciled `ModifierNodeChain`s, and legacy pointer closures are gone. The remaining gap to Jetpack Compose parity sits in the node chain itself (delegate links, parent pointers, modifier-local plumbing) and the semantics/modifier-local subsystems that rely on it. Kotlin’s reference lives under `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui`, especially:
 
-- `input/pointer/PointerInputModifierNode.kt`, `SuspendingPointerInputFilter.kt`, `AwaitPointerEventScope.kt`
-- `ModifierNodeElement.kt`, `DelegatableNode.kt`, `NodeChain.kt`
+- `node/NodeChain.kt`, `node/DelegatableNode.kt`, `node/NodeKind.kt`
+- `modifier/ModifierLocal*`, `semantics/*`, `semantics/SemanticsNode.kt`
+- `Modifier.kt` for inspector/debug dumps
 
-Matching these files 1:1 will let us delete the remaining `ModifierState` pointer hooks, introduce restartable pointer scopes, and unblock semantics/modifier-local parity.
+Matching those files 1:1 will unblock semantics/focus/modifier-local parity and allow us to delete the remaining `ModifierState` shims.
 
 ## Goals
-1. Port the coroutine-driven pointer input lifecycle (await scope, restart, cancellation, resume on attach/detach) and expose it through `Modifier.pointerInput`.
-2. Re-implement clickable/gesture modifiers so they create real `PointerInputModifierNode`s and stop storing closures in `ModifierState`.
-3. Extend `ModifierNodeChain` with sentinel head/tail nodes and delegate links so nodes can reach parents/children just like Kotlin’s `DelegatableNode`; this coordinator wiring must host coroutine scopes for pointer nodes.
-4. Add tests proving pointer cancellation/restart order, coroutine lifetime, and node traversal matches the reference implementation.
+1. Reintroduce Kotlin’s sentinel head/tail chain model *without unsafe blocks* while providing `parent`, `child`, and `aggregateChildKindSet` data so traversal mirrors `DelegatableNode`.
+2. Port modifier local infrastructure (`ModifierLocalNode`, `ModifierLocalManager`, lookups/invalidation) and semantics participation (`SemanticsModifierNode`, configuration merges, tree invalidations).
+3. Add Kotlin-style diagnostics (`Modifier.toString()`, chain dumps, capability masks) guarded behind a debug flag so future regressions are easy to inspect.
+4. Wire the new plumbing into layout/render/semantics builders so modifier locals and semantics consume reconciled nodes instead of `RuntimeNodeMetadata`.
 
 ## Suggested Steps
 1. **Study Kotlin reference**  
-   - Read `PointerInputModifierNode.kt`, `SuspendingPointerInputFilter.kt`, and `AwaitPointerEventScope.kt` under `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/input/pointer`.  
-   - Mirror the public surface (suspending `awaitPointerEventScope`, `PointerInputModifierNode` trait) in `crates/compose-ui/src/modifier/pointer_input.rs`.
-2. **Port coroutine scaffolding**  
-   - Introduce a `PointerInputModifierNode` trait (or extend `PointerInputNode`) with `onPointerEvent` + coroutine scope injection.  
-   - Implement the coroutine dispatcher that starts when nodes attach, restarts when keys change, and cancels on detach/reset.
-3. **Update modifier factories**  
-   - Rewrite `Modifier.pointerInput` and `Modifier.clickable` (plus any gesture helpers in `modifier_nodes.rs`) to create the new nodes. Remove unused `ModifierState` pointer fields.  
-   - Ensure capability masks and invalidations fire (`InvalidationKind::PointerInput`) via node contexts.
-4. **Add sentinel + delegate wiring**  
-   - Extend `ModifierNodeChain` (`crates/compose-foundation/src/modifier.rs`) with sentinel head/tail nodes, `parent`/`child` pointers, and delegate links so pointer nodes can walk to siblings/parents (needed for modifier locals & semantics).  
-   - Add unit tests covering traversal order and capability aggregation with the new structure.
-5. **Tests & parity validation**  
-   - Add coroutine-focused tests under `crates/compose-ui/src/tests/modifier_nodes_tests.rs` and `modifier/pointer_input.rs` mirroring Kotlin’s `PointerInputModifierNodeTest`.  
-   - Add integration tests that simulate pointer cancellation/restart sequences via `compose_render` scenes to ensure behaviors match Android.
+   - Review `NodeChain.kt`, `DelegatableNode.kt`, and helpers in `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/node`.  
+   - Audit how Kotlin stores sentinel nodes, delegate links, and capability aggregation; note the `node.parent`, `child`, and `kindSet` mechanics.
+2. **Implement safe sentinel/delegate structure**  
+   - Create a safe Rust equivalent by storing sentinel entries inside `ModifierNodeChain` (e.g., boxed structs held inside `Rc<RefCell<_>>`) so we can mutate neighbor pointers without `unsafe`.  
+   - Ensure every `ModifierNode` can access its parent/child and aggregate capability masks (needed by modifier locals and semantics traversal).  
+   - Add focused tests covering reordering, keyed reuse, and traversal order in `crates/compose-foundation/src/tests/modifier_tests.rs`.
+3. **Port modifier locals**  
+   - Mirror `ModifierLocalProvider`, `ModifierLocalNode`, and `ModifierLocalManager` from Kotlin inside Compose-RS (likely under `crates/compose-ui/src/modifier_locals`).  
+   - Expose lookup APIs (`ModifierLocalProvider { }`, `ModifierLocalConsumer { }`) and ensure invalidations bubble through the new node chain capabilities.  
+   - Add unit tests similar to Kotlin’s `ModifierLocalTest`.
+4. **Port semantics stack**  
+   - Implement `SemanticsModifierNode`, configuration merging, and semantics invalidation as Kotlin does (`semantics/SemanticsNode.kt`, `SemanticsOwner`).  
+   - Update `crates/compose-ui/src/layout/mod.rs` and renderers to build semantics trees directly from modifier nodes (drop reliance on cached `RuntimeNodeMetadata`).  
+   - Add parity tests (e.g., clickable semantics, custom properties) mirroring Android’s `SemanticsModifierNodeTest`.
+5. **Diagnostics & cleanup**  
+   - Add `COMPOSE_DEBUG_MODIFIERS` / `compose_ui::debug::log_modifier_chain` that prints node order, capability masks, and modifier locals (similar to `Modifier.toString()` in Kotlin).  
+   - Remove the remaining `ModifierState` responsibilities once modifier locals/semantics no longer need metadata shims.
 
 ## Definition of Done
-- `Modifier.pointerInput`, `Modifier.clickable`, and gesture helpers create coroutine-backed nodes; no pointer closures remain in `ModifierState`.
-- Pointer nodes receive coroutine scopes that start on attach, restart on key change, and cancel on detach/reset, matching Kotlin’s lifecycle (validated via tests).
-- `ModifierNodeChain` has sentinel head/tail nodes and delegate links; traversal helpers (layout/draw/pointer) operate on this structure, and new tests cover the topology.
-- New unit/integration tests prove pointer cancellation/restart ordering and node traversal parity; `cargo test -p compose-ui` and workspace `cargo test` stay green.
+- `ModifierNodeChain` offers safe head/tail sentinels, parent/child links, and delegate traversal without `unsafe`. Tests cover reordering, keyed reuse, and capability aggregation.
+- Modifier locals (`ModifierLocalNode`, providers/consumers, invalidation) and semantics (`SemanticsModifierNode`, `SemanticsOwner`) exist in Compose-RS and match Kotlin behaviors via targeted tests.
+- Layout/render/semantics builders consume modifier locals and semantics directly from reconciled node chains; no reliance on `RuntimeNodeMetadata` for these concerns.
+- Debug hooks (`Modifier::toString`, chain dumps, optional logging) exist behind a feature/flag for tracing capability masks and node order.
+- Workspace `cargo test` (and targeted `cargo test -p compose-ui`) remain green.

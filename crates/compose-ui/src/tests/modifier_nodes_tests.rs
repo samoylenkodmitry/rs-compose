@@ -1,11 +1,13 @@
 use super::*;
+use crate::modifier::{collect_slices_from_modifier, Modifier, PointerInputScope};
 use compose_core::NodeId;
 use compose_foundation::{
     modifier_element, BasicModifierNodeContext, ModifierNodeChain, PointerButton, PointerButtons,
-    PointerPhase,
+    PointerEvent, PointerEventKind, PointerPhase,
 };
 use compose_ui_layout::Placeable;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::future::pending;
 
 struct TestPlaceable {
     width: f32,
@@ -350,4 +352,81 @@ fn reordering_modifiers_with_stable_reuse() {
         padding_ptr, new_padding_ptr,
         "Padding node should be reused"
     );
+}
+
+#[test]
+fn pointer_input_coroutine_receives_events() {
+    let mut chain = ModifierNodeChain::new();
+    let mut context = BasicModifierNodeContext::new();
+    let recorded = Rc::new(RefCell::new(Vec::new()));
+    let modifier = Modifier::pointer_input((), {
+        let recorded = recorded.clone();
+        move |scope: PointerInputScope| {
+            let recorded = recorded.clone();
+            async move {
+                scope
+                    .await_pointer_event_scope(|await_scope| async move {
+                        loop {
+                            let event = await_scope.await_pointer_event().await;
+                            recorded.borrow_mut().push(event.kind);
+                        }
+                    })
+                    .await;
+            }
+        }
+    });
+
+    chain.update_from_slice(modifier.elements(), &mut context);
+    let slices = collect_slices_from_modifier(&modifier);
+    assert_eq!(slices.pointer_inputs().len(), 1);
+    let handler = slices.pointer_inputs()[0].clone();
+
+    handler(PointerEvent::new(
+        PointerEventKind::Down,
+        Point { x: 0.0, y: 0.0 },
+        Point { x: 0.0, y: 0.0 },
+    ));
+    handler(PointerEvent::new(
+        PointerEventKind::Up,
+        Point { x: 1.0, y: 1.0 },
+        Point { x: 1.0, y: 1.0 },
+    ));
+
+    let events = recorded.borrow();
+    assert_eq!(*events, vec![PointerEventKind::Down, PointerEventKind::Up]);
+}
+
+#[test]
+fn pointer_input_restarts_on_key_change() {
+    let mut chain = ModifierNodeChain::new();
+    let mut context = BasicModifierNodeContext::new();
+    let starts = Rc::new(Cell::new(0));
+
+    let modifier = Modifier::pointer_input(0u32, {
+        let starts = starts.clone();
+        move |_scope: PointerInputScope| {
+            let starts = starts.clone();
+            async move {
+                starts.set(starts.get() + 1);
+                pending::<()>().await;
+            }
+        }
+    });
+
+    chain.update_from_slice(modifier.elements(), &mut context);
+    assert_eq!(starts.get(), 1);
+
+    let modifier_updated = Modifier::pointer_input(1u32, {
+        let starts = starts.clone();
+        move |_scope: PointerInputScope| {
+            let starts = starts.clone();
+            async move {
+                starts.set(starts.get() + 1);
+                pending::<()>().await;
+            }
+        }
+    });
+
+    chain.update_from_slice(modifier_updated.elements(), &mut context);
+    assert_eq!(starts.get(), 2);
 }
