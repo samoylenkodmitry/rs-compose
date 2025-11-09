@@ -19,7 +19,8 @@ use compose_core::{
 use self::core::VerticalAlignment;
 use self::core::{HorizontalAlignment, LinearArrangement, Measurable, Placeable};
 use crate::modifier::{
-    DimensionConstraint, EdgeInsets, Modifier, Point, Rect as GeometryRect, ResolvedModifiers, Size,
+    collect_slices_from_modifier, DimensionConstraint, EdgeInsets, Modifier, ModifierNodeSlices,
+    Point, Rect as GeometryRect, ResolvedModifiers, Size,
 };
 use crate::subcompose_layout::SubcomposeLayoutNode;
 use crate::widgets::nodes::{
@@ -153,6 +154,7 @@ impl LayoutBox {
 pub struct LayoutNodeData {
     pub modifier: Modifier,
     pub resolved_modifiers: ResolvedModifiers,
+    pub modifier_slices: ModifierNodeSlices,
     pub kind: LayoutNodeKind,
 }
 
@@ -160,17 +162,23 @@ impl LayoutNodeData {
     pub fn new(
         modifier: Modifier,
         resolved_modifiers: ResolvedModifiers,
+        modifier_slices: ModifierNodeSlices,
         kind: LayoutNodeKind,
     ) -> Self {
         Self {
             modifier,
             resolved_modifiers,
+            modifier_slices,
             kind,
         }
     }
 
     pub fn resolved_modifiers(&self) -> ResolvedModifiers {
         self.resolved_modifiers
+    }
+
+    pub fn modifier_slices(&self) -> &ModifierNodeSlices {
+        &self.modifier_slices
     }
 }
 
@@ -1325,6 +1333,7 @@ fn measure_leaf(
 struct RuntimeNodeMetadata {
     modifier: Modifier,
     resolved_modifiers: ResolvedModifiers,
+    modifier_slices: ModifierNodeSlices,
     role: SemanticsRole,
     actions: Vec<SemanticsAction>,
     button_handler: Option<Rc<RefCell<dyn FnMut()>>>,
@@ -1335,6 +1344,7 @@ impl Default for RuntimeNodeMetadata {
         Self {
             modifier: Modifier::empty(),
             resolved_modifiers: ResolvedModifiers::default(),
+            modifier_slices: ModifierNodeSlices::default(),
             role: SemanticsRole::Unknown,
             actions: Vec::new(),
             button_handler: None,
@@ -1374,6 +1384,7 @@ fn runtime_metadata_for(
         return Ok(RuntimeNodeMetadata {
             modifier: layout.modifier.clone(),
             resolved_modifiers: layout.resolved_modifiers(),
+            modifier_slices: layout.modifier_slices_snapshot(),
             role: SemanticsRole::Layout,
             actions: Vec::new(),
             button_handler: None,
@@ -1383,6 +1394,7 @@ fn runtime_metadata_for(
         return Ok(RuntimeNodeMetadata {
             modifier: button.modifier.clone(),
             resolved_modifiers: button.modifier.resolved_modifiers(),
+            modifier_slices: collect_slices_from_modifier(&button.modifier),
             role: SemanticsRole::Button,
             actions: vec![SemanticsAction::Click {
                 handler: SemanticsCallback::new(node_id),
@@ -1394,6 +1406,7 @@ fn runtime_metadata_for(
         return Ok(RuntimeNodeMetadata {
             modifier: text.modifier.clone(),
             resolved_modifiers: text.modifier.resolved_modifiers(),
+            modifier_slices: collect_slices_from_modifier(&text.modifier),
             role: SemanticsRole::Text {
                 value: text.text.clone(),
             },
@@ -1405,6 +1418,7 @@ fn runtime_metadata_for(
         return Ok(RuntimeNodeMetadata {
             modifier: Modifier::empty(),
             resolved_modifiers: ResolvedModifiers::default(),
+            modifier_slices: ModifierNodeSlices::default(),
             role: SemanticsRole::Spacer,
             actions: Vec::new(),
             button_handler: None,
@@ -1415,9 +1429,11 @@ fn runtime_metadata_for(
             (node.modifier(), node.resolved_modifiers())
         })
     {
+        let modifier_slices = collect_slices_from_modifier(&modifier);
         return Ok(RuntimeNodeMetadata {
             modifier,
             resolved_modifiers,
+            modifier_slices,
             role: SemanticsRole::Subcompose,
             actions: Vec::new(),
             button_handler: None,
@@ -1460,7 +1476,12 @@ fn build_layout_tree_from_metadata(
         };
         let info = metadata.get(&node.node_id).cloned().unwrap_or_default();
         let kind = layout_kind_from_metadata(node.node_id, &info);
-        let data = LayoutNodeData::new(info.modifier.clone(), info.resolved_modifiers, kind);
+        let data = LayoutNodeData::new(
+            info.modifier.clone(),
+            info.resolved_modifiers,
+            info.modifier_slices.clone(),
+            kind,
+        );
         let children = node
             .children
             .iter()

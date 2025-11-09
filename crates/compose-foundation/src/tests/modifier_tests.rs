@@ -551,7 +551,15 @@ struct TestDrawNode {
     draw_count: Cell<usize>,
 }
 
-impl ModifierNode for TestDrawNode {}
+impl ModifierNode for TestDrawNode {
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
+    }
+}
 
 impl DrawModifierNode for TestDrawNode {
     fn draw(&mut self, _context: &mut dyn ModifierNodeContext, _draw_scope: &mut dyn DrawScope) {

@@ -1,9 +1,12 @@
 use crate::{
     layout::MeasuredNode,
-    modifier::{Modifier, ModifierChainHandle, ResolvedModifiers},
+    modifier::{
+        collect_modifier_slices, Modifier, ModifierChainHandle, ModifierNodeSlices,
+        ResolvedModifiers,
+    },
 };
 use compose_core::{Node, NodeId};
-use compose_foundation::{InvalidationKind, NodeCapabilities};
+use compose_foundation::{DrawModifierNode, InvalidationKind, NodeCapabilities, PointerInputNode};
 use compose_ui_layout::{Constraints, MeasurePolicy};
 use indexmap::IndexSet;
 use std::cell::Cell;
@@ -306,6 +309,18 @@ impl LayoutNode {
     pub fn has_semantics_modifier_nodes(&self) -> bool {
         self.modifier_capabilities
             .contains(NodeCapabilities::SEMANTICS)
+    }
+
+    pub fn draw_nodes(&self) -> impl Iterator<Item = &dyn DrawModifierNode> {
+        self.modifier_chain.chain().draw_nodes()
+    }
+
+    pub fn pointer_input_nodes(&self) -> impl Iterator<Item = &dyn PointerInputNode> {
+        self.modifier_chain.chain().pointer_input_nodes()
+    }
+
+    pub fn modifier_slices_snapshot(&self) -> ModifierNodeSlices {
+        collect_modifier_slices(self.modifier_chain.chain())
     }
 }
 

@@ -93,7 +93,8 @@ impl ModifierChainHandle {
 
         if self.has_draw_nodes() {
             for node in self.chain.draw_nodes() {
-                let any = node.as_any();
+                let modifier_node = node as &dyn ModifierNode;
+                let any = modifier_node.as_any();
                 if let Some(background) = any.downcast_ref::<BackgroundNode>() {
                     resolved.set_background_color(background.color());
                 } else if let Some(shape) = any.downcast_ref::<CornerShapeNode>() {

@@ -16,6 +16,7 @@ mod draw_cache;
 mod graphics_layer;
 mod padding;
 mod pointer_input;
+mod slices;
 
 pub use crate::draw::{DrawCacheBuilder, DrawCommand};
 #[allow(unused_imports)]
@@ -28,8 +29,9 @@ pub use compose_ui_graphics::{
     Brush, Color, CornerRadii, EdgeInsets, GraphicsLayer, Point, Rect, RoundedCornerShape, Size,
 };
 use compose_ui_layout::{Alignment, HorizontalAlignment, IntrinsicSize, VerticalAlignment};
+pub use slices::{collect_modifier_slices, collect_slices_from_modifier, ModifierNodeSlices};
 
-use crate::modifier_nodes::SizeElement;
+use crate::modifier_nodes::{ClipToBoundsElement, SizeElement};
 
 /// Trait mirroring Jetpack Compose's `Modifier` interface.
 ///
@@ -386,12 +388,11 @@ impl Modifier {
     }
 
     pub fn clip_to_bounds() -> Self {
-        Self::with_state(|state| {
-            state.clip_to_bounds = true;
-        })
-        .with_inspector_metadata(inspector_metadata("clipToBounds", |info| {
-            info.add_property("clipToBounds", "true");
-        }))
+        Self::with_element(ClipToBoundsElement::new(), |_| {}).with_inspector_metadata(
+            inspector_metadata("clipToBounds", |info| {
+                info.add_property("clipToBounds", "true");
+            }),
+        )
     }
 
     pub fn then(&self, next: Modifier) -> Modifier {
@@ -472,15 +473,18 @@ impl Modifier {
     }
 
     pub fn draw_commands(&self) -> Vec<DrawCommand> {
-        self.state.draw_commands.clone()
+        collect_slices_from_modifier(self).draw_commands().to_vec()
     }
 
     pub fn click_handler(&self) -> Option<Rc<dyn Fn(Point)>> {
-        self.state.click_handler.clone()
+        collect_slices_from_modifier(self)
+            .click_handlers()
+            .first()
+            .cloned()
     }
 
     pub fn pointer_inputs(&self) -> Vec<Rc<dyn Fn(PointerEvent)>> {
-        self.state.pointer_inputs.clone()
+        collect_slices_from_modifier(self).pointer_inputs().to_vec()
     }
 
     pub fn graphics_layer_values(&self) -> Option<GraphicsLayer> {
@@ -488,7 +492,7 @@ impl Modifier {
     }
 
     pub fn clips_to_bounds(&self) -> bool {
-        self.state.clip_to_bounds
+        collect_slices_from_modifier(self).clip_to_bounds()
     }
 
     pub fn resolved_modifiers(&self) -> ResolvedModifiers {

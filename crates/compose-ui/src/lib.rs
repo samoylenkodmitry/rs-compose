@@ -23,12 +23,14 @@ pub use layout::{
         Alignment, Arrangement, HorizontalAlignment, LinearArrangement, Measurable, Placeable,
         VerticalAlignment,
     },
-    measure_layout, tree_needs_layout, LayoutBox, LayoutEngine, LayoutMeasurements, LayoutNodeKind,
-    LayoutTree, SemanticsAction, SemanticsCallback, SemanticsNode, SemanticsRole, SemanticsTree,
+    measure_layout, tree_needs_layout, LayoutBox, LayoutEngine, LayoutMeasurements, LayoutNodeData,
+    LayoutNodeKind, LayoutTree, SemanticsAction, SemanticsCallback, SemanticsNode, SemanticsRole,
+    SemanticsTree,
 };
 pub use modifier::{
-    Brush, Color, CornerRadii, EdgeInsets, GraphicsLayer, Modifier, Point, PointerEvent,
-    PointerEventKind, Rect, ResolvedBackground, ResolvedModifiers, RoundedCornerShape, Size,
+    collect_modifier_slices, collect_slices_from_modifier, Brush, Color, CornerRadii, EdgeInsets,
+    GraphicsLayer, Modifier, ModifierNodeSlices, Point, PointerEvent, PointerEventKind, Rect,
+    ResolvedBackground, ResolvedModifiers, RoundedCornerShape, Size,
 };
 pub use modifier_nodes::{
     AlphaElement, AlphaNode, BackgroundElement, BackgroundNode, ClickableElement, ClickableNode,

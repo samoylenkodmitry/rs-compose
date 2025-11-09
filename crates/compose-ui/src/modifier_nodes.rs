@@ -55,6 +55,7 @@ use compose_foundation::{
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use crate::draw::DrawCommand;
 use crate::modifier::{Color, EdgeInsets, Point, RoundedCornerShape};
 
 fn hash_f32_value<H: Hasher>(state: &mut H, value: f32) {
@@ -226,6 +227,14 @@ impl ModifierNode for BackgroundNode {
     fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
         context.invalidate(compose_foundation::InvalidationKind::Draw);
     }
+
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
+    }
 }
 
 impl DrawModifierNode for BackgroundNode {
@@ -299,6 +308,14 @@ impl CornerShapeNode {
 impl ModifierNode for CornerShapeNode {
     fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
         context.invalidate(compose_foundation::InvalidationKind::Draw);
+    }
+
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
     }
 }
 
@@ -485,11 +502,23 @@ impl ClickableNode {
     pub fn with_handler(on_click: Rc<dyn Fn(Point)>) -> Self {
         Self { on_click }
     }
+
+    pub fn handler(&self) -> Rc<dyn Fn(Point)> {
+        self.on_click.clone()
+    }
 }
 
 impl ModifierNode for ClickableNode {
     fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
         context.invalidate(compose_foundation::InvalidationKind::PointerInput);
+    }
+
+    fn as_pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
+        Some(self)
+    }
+
+    fn as_pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
+        Some(self)
     }
 }
 
@@ -574,6 +603,109 @@ impl ModifierNodeElement for ClickableElement {
 }
 
 // ============================================================================
+// Pointer Input Modifier Node
+// ============================================================================
+
+/// Node that dispatches pointer events to a user-provided handler.
+pub struct PointerEventHandlerNode {
+    handler: Rc<dyn Fn(PointerEvent)>,
+}
+
+impl std::fmt::Debug for PointerEventHandlerNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PointerEventHandlerNode").finish()
+    }
+}
+
+impl PointerEventHandlerNode {
+    pub fn new(handler: Rc<dyn Fn(PointerEvent)>) -> Self {
+        Self { handler }
+    }
+
+    pub fn handler(&self) -> Rc<dyn Fn(PointerEvent)> {
+        self.handler.clone()
+    }
+}
+
+impl ModifierNode for PointerEventHandlerNode {
+    fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
+        context.invalidate(compose_foundation::InvalidationKind::PointerInput);
+    }
+
+    fn as_pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
+        Some(self)
+    }
+
+    fn as_pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
+        Some(self)
+    }
+}
+
+impl PointerInputNode for PointerEventHandlerNode {
+    fn on_pointer_event(
+        &mut self,
+        _context: &mut dyn ModifierNodeContext,
+        event: &PointerEvent,
+    ) -> bool {
+        (self.handler)(*event);
+        false
+    }
+
+    fn hit_test(&self, _x: f32, _y: f32) -> bool {
+        true
+    }
+}
+
+/// Element that wires pointer input handlers into the node chain.
+#[derive(Clone)]
+pub struct PointerEventHandlerElement {
+    handler: Rc<dyn Fn(PointerEvent)>,
+}
+
+impl PointerEventHandlerElement {
+    pub fn new(handler: Rc<dyn Fn(PointerEvent)>) -> Self {
+        Self { handler }
+    }
+}
+
+impl std::fmt::Debug for PointerEventHandlerElement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PointerEventHandlerElement").finish()
+    }
+}
+
+impl PartialEq for PointerEventHandlerElement {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.handler, &other.handler)
+    }
+}
+
+impl Eq for PointerEventHandlerElement {}
+
+impl Hash for PointerEventHandlerElement {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let ptr = Rc::as_ptr(&self.handler) as *const ();
+        (ptr as usize).hash(state);
+    }
+}
+
+impl ModifierNodeElement for PointerEventHandlerElement {
+    type Node = PointerEventHandlerNode;
+
+    fn create(&self) -> Self::Node {
+        PointerEventHandlerNode::new(self.handler.clone())
+    }
+
+    fn update(&self, node: &mut Self::Node) {
+        node.handler = self.handler.clone();
+    }
+
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities::POINTER_INPUT
+    }
+}
+
+// ============================================================================
 // Alpha Modifier Node
 // ============================================================================
 
@@ -594,6 +726,14 @@ impl AlphaNode {
 impl ModifierNode for AlphaNode {
     fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
         context.invalidate(compose_foundation::InvalidationKind::Draw);
+    }
+
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
     }
 }
 
@@ -642,6 +782,173 @@ impl ModifierNodeElement for AlphaElement {
             node.alpha = new_alpha;
             // In a full implementation, would invalidate draw here
         }
+    }
+
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities::DRAW
+    }
+}
+
+// ============================================================================
+// Clip-To-Bounds Modifier Node
+// ============================================================================
+
+/// Node that marks the subtree for clipping during rendering.
+#[derive(Debug)]
+pub struct ClipToBoundsNode;
+
+impl ClipToBoundsNode {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ModifierNode for ClipToBoundsNode {
+    fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
+        context.invalidate(compose_foundation::InvalidationKind::Draw);
+    }
+
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
+    }
+}
+
+impl DrawModifierNode for ClipToBoundsNode {
+    fn draw(&mut self, _context: &mut dyn ModifierNodeContext, _draw_scope: &mut dyn DrawScope) {}
+}
+
+/// Element that creates clip-to-bounds nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClipToBoundsElement;
+
+impl ClipToBoundsElement {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ModifierNodeElement for ClipToBoundsElement {
+    type Node = ClipToBoundsNode;
+
+    fn create(&self) -> Self::Node {
+        ClipToBoundsNode::new()
+    }
+
+    fn update(&self, _node: &mut Self::Node) {}
+
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities::DRAW
+    }
+}
+
+// ============================================================================
+// Draw Command Modifier Node
+// ============================================================================
+
+/// Node that stores draw commands emitted by draw modifiers.
+pub struct DrawCommandNode {
+    commands: Vec<DrawCommand>,
+}
+
+impl DrawCommandNode {
+    pub fn new(commands: Vec<DrawCommand>) -> Self {
+        Self { commands }
+    }
+
+    pub fn commands(&self) -> &[DrawCommand] {
+        &self.commands
+    }
+}
+
+impl ModifierNode for DrawCommandNode {
+    fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
+        context.invalidate(compose_foundation::InvalidationKind::Draw);
+    }
+
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
+    }
+}
+
+impl DrawModifierNode for DrawCommandNode {
+    fn draw(&mut self, _context: &mut dyn ModifierNodeContext, _draw_scope: &mut dyn DrawScope) {}
+}
+
+fn draw_command_ptr(cmd: &DrawCommand) -> (*const (), u8) {
+    match cmd {
+        DrawCommand::Behind(func) => (Rc::as_ptr(func) as *const (), 0),
+        DrawCommand::Overlay(func) => (Rc::as_ptr(func) as *const (), 1),
+    }
+}
+
+/// Element that wires draw commands into the modifier node chain.
+#[derive(Clone)]
+pub struct DrawCommandElement {
+    commands: Vec<DrawCommand>,
+}
+
+impl DrawCommandElement {
+    pub fn new(command: DrawCommand) -> Self {
+        Self {
+            commands: vec![command],
+        }
+    }
+
+    pub fn from_commands(commands: Vec<DrawCommand>) -> Self {
+        Self { commands }
+    }
+}
+
+impl std::fmt::Debug for DrawCommandElement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DrawCommandElement")
+            .field("commands", &self.commands.len())
+            .finish()
+    }
+}
+
+impl PartialEq for DrawCommandElement {
+    fn eq(&self, other: &Self) -> bool {
+        if self.commands.len() != other.commands.len() {
+            return false;
+        }
+        self.commands
+            .iter()
+            .zip(other.commands.iter())
+            .all(|(a, b)| draw_command_ptr(a) == draw_command_ptr(b))
+    }
+}
+
+impl Eq for DrawCommandElement {}
+
+impl std::hash::Hash for DrawCommandElement {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.commands.len().hash(state);
+        for command in &self.commands {
+            let (ptr, tag) = draw_command_ptr(command);
+            state.write_u8(tag);
+            (ptr as usize).hash(state);
+        }
+    }
+}
+
+impl ModifierNodeElement for DrawCommandElement {
+    type Node = DrawCommandNode;
+
+    fn create(&self) -> Self::Node {
+        DrawCommandNode::new(self.commands.clone())
+    }
+
+    fn update(&self, node: &mut Self::Node) {
+        node.commands = self.commands.clone();
     }
 
     fn capabilities(&self) -> NodeCapabilities {

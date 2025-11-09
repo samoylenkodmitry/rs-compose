@@ -13,6 +13,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{BitOr, BitOrAssign};
 use std::rc::Rc;
+use std::slice::{Iter, IterMut};
 
 pub use compose_ui_graphics::DrawScope;
 pub use compose_ui_graphics::Size;
@@ -116,6 +117,26 @@ pub trait ModifierNode: Any {
     fn on_detach(&mut self) {}
 
     fn on_reset(&mut self) {}
+
+    /// Returns this node as a draw modifier if it implements the trait.
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        None
+    }
+
+    /// Returns this node as a mutable draw modifier if it implements the trait.
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        None
+    }
+
+    /// Returns this node as a pointer-input modifier if it implements the trait.
+    fn as_pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
+        None
+    }
+
+    /// Returns this node as a mutable pointer-input modifier if it implements the trait.
+    fn as_pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
+        None
+    }
 }
 
 /// Marker trait for layout-specific modifier nodes.
@@ -509,6 +530,22 @@ impl ModifierNodeEntry {
         self.capabilities
             .contains(NodeCapabilities::for_invalidation(kind))
     }
+
+    fn draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        self.node.as_ref().as_draw_node()
+    }
+
+    fn draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        self.node.as_mut().as_draw_node_mut()
+    }
+
+    fn pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
+        self.node.as_ref().as_pointer_input_node()
+    }
+
+    fn pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
+        self.node.as_mut().as_pointer_input_node_mut()
+    }
 }
 
 /// Chain of modifier nodes attached to a layout node.
@@ -697,19 +734,23 @@ impl ModifierNodeChain {
     }
 
     /// Iterates over all draw nodes in the chain.
-    pub fn draw_nodes(&self) -> impl Iterator<Item = &dyn ModifierNode> {
-        self.entries
-            .iter()
-            .filter(|entry| entry.capabilities.contains(NodeCapabilities::DRAW))
-            .map(|entry| entry.node.as_ref())
+    pub fn draw_nodes(&self) -> DrawNodes<'_> {
+        DrawNodes::new(self.entries.iter())
+    }
+
+    /// Iterates over all mutable draw nodes in the chain.
+    pub fn draw_nodes_mut(&mut self) -> DrawNodesMut<'_> {
+        DrawNodesMut::new(self.entries.iter_mut())
     }
 
     /// Iterates over all pointer input nodes in the chain.
-    pub fn pointer_input_nodes(&self) -> impl Iterator<Item = &dyn ModifierNode> {
-        self.entries
-            .iter()
-            .filter(|entry| entry.capabilities.contains(NodeCapabilities::POINTER_INPUT))
-            .map(|entry| entry.node.as_ref())
+    pub fn pointer_input_nodes(&self) -> PointerInputNodes<'_> {
+        PointerInputNodes::new(self.entries.iter())
+    }
+
+    /// Iterates over all mutable pointer input nodes in the chain.
+    pub fn pointer_input_nodes_mut(&mut self) -> PointerInputNodesMut<'_> {
+        PointerInputNodesMut::new(self.entries.iter_mut())
     }
 
     /// Iterates over all semantics nodes in the chain.
@@ -718,6 +759,102 @@ impl ModifierNodeChain {
             .iter()
             .filter(|entry| entry.capabilities.contains(NodeCapabilities::SEMANTICS))
             .map(|entry| entry.node.as_ref())
+    }
+}
+
+/// Iterator over draw modifier nodes stored in a [`ModifierNodeChain`].
+pub struct DrawNodes<'a> {
+    entries: Iter<'a, ModifierNodeEntry>,
+}
+
+impl<'a> DrawNodes<'a> {
+    fn new(entries: Iter<'a, ModifierNodeEntry>) -> Self {
+        Self { entries }
+    }
+}
+
+impl<'a> Iterator for DrawNodes<'a> {
+    type Item = &'a dyn DrawModifierNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(entry) = self.entries.next() {
+            if let Some(node) = entry.draw_node() {
+                return Some(node);
+            }
+        }
+        None
+    }
+}
+
+/// Mutable iterator over draw modifier nodes.
+pub struct DrawNodesMut<'a> {
+    entries: IterMut<'a, ModifierNodeEntry>,
+}
+
+impl<'a> DrawNodesMut<'a> {
+    fn new(entries: IterMut<'a, ModifierNodeEntry>) -> Self {
+        Self { entries }
+    }
+}
+
+impl<'a> Iterator for DrawNodesMut<'a> {
+    type Item = &'a mut dyn DrawModifierNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(entry) = self.entries.next() {
+            if let Some(node) = entry.draw_node_mut() {
+                return Some(node);
+            }
+        }
+        None
+    }
+}
+
+/// Iterator over pointer-input modifier nodes.
+pub struct PointerInputNodes<'a> {
+    entries: Iter<'a, ModifierNodeEntry>,
+}
+
+impl<'a> PointerInputNodes<'a> {
+    fn new(entries: Iter<'a, ModifierNodeEntry>) -> Self {
+        Self { entries }
+    }
+}
+
+impl<'a> Iterator for PointerInputNodes<'a> {
+    type Item = &'a dyn PointerInputNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(entry) = self.entries.next() {
+            if let Some(node) = entry.pointer_input_node() {
+                return Some(node);
+            }
+        }
+        None
+    }
+}
+
+/// Mutable iterator over pointer-input modifier nodes.
+pub struct PointerInputNodesMut<'a> {
+    entries: IterMut<'a, ModifierNodeEntry>,
+}
+
+impl<'a> PointerInputNodesMut<'a> {
+    fn new(entries: IterMut<'a, ModifierNodeEntry>) -> Self {
+        Self { entries }
+    }
+}
+
+impl<'a> Iterator for PointerInputNodesMut<'a> {
+    type Item = &'a mut dyn PointerInputNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(entry) = self.entries.next() {
+            if let Some(node) = entry.pointer_input_node_mut() {
+                return Some(node);
+            }
+        }
+        None
     }
 }
 

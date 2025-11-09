@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use compose_foundation::PointerEvent;
-use compose_ui::{Brush, DrawCommand, Modifier, ResolvedModifiers};
+use compose_ui::{Brush, DrawCommand, LayoutNodeData, ModifierNodeSlices};
 use compose_ui_graphics::{
     Color, CornerRadii, DrawPrimitive, GraphicsLayer, Point, Rect, RoundedCornerShape, Size,
 };
@@ -11,7 +11,7 @@ use crate::scene::Scene;
 pub(crate) struct NodeStyle {
     pub padding: compose_ui_graphics::EdgeInsets,
     pub background: Option<Color>,
-    pub clickable: Option<Rc<dyn Fn(Point)>>,
+    pub click_actions: Vec<Rc<dyn Fn(Point)>>,
     pub shape: Option<RoundedCornerShape>,
     pub pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
     pub draw_commands: Vec<DrawCommand>,
@@ -20,17 +20,19 @@ pub(crate) struct NodeStyle {
 }
 
 impl NodeStyle {
-    pub fn from_modifier(modifier: &Modifier, resolved: ResolvedModifiers) -> Self {
+    pub fn from_layout_node(data: &LayoutNodeData) -> Self {
+        let resolved = data.resolved_modifiers;
+        let slices: &ModifierNodeSlices = data.modifier_slices();
         let resolved_background = resolved.background();
         Self {
             padding: resolved.padding(),
             background: resolved_background.map(|background| background.color()),
-            clickable: modifier.click_handler(),
+            click_actions: slices.click_handlers().iter().cloned().collect(),
             shape: resolved.corner_shape(),
-            pointer_inputs: modifier.pointer_inputs(),
-            draw_commands: modifier.draw_commands(),
+            pointer_inputs: slices.pointer_inputs().to_vec(),
+            draw_commands: slices.draw_commands().to_vec(),
             graphics_layer: resolved.graphics_layer(),
-            clip_to_bounds: modifier.clips_to_bounds(),
+            clip_to_bounds: slices.clip_to_bounds(),
         }
     }
 }

@@ -1,7 +1,6 @@
-use crate::layout::{LayoutBox, LayoutNodeKind, LayoutTree};
+use crate::layout::{LayoutBox, LayoutNodeData, LayoutNodeKind, LayoutTree};
 use crate::modifier::{
-    Brush, DrawCommand as ModifierDrawCommand, Modifier, Rect, ResolvedModifiers,
-    RoundedCornerShape, Size,
+    Brush, DrawCommand as ModifierDrawCommand, Rect, ResolvedModifiers, RoundedCornerShape, Size,
 };
 use compose_core::NodeId;
 use compose_ui_graphics::DrawPrimitive;
@@ -82,9 +81,8 @@ impl HeadlessRenderer {
         let rect = layout.rect;
         match &layout.node_data.kind {
             LayoutNodeKind::Text { value } => {
-                let resolved = layout.node_data.resolved_modifiers;
                 let (mut behind, mut overlay) =
-                    evaluate_modifier(layout.node_id, &layout.node_data.modifier, resolved, rect);
+                    evaluate_modifier(layout.node_id, &layout.node_data, rect);
                 operations.append(&mut behind);
                 operations.push(RenderOp::Text {
                     node_id: layout.node_id,
@@ -94,9 +92,8 @@ impl HeadlessRenderer {
                 operations.append(&mut overlay);
             }
             _ => {
-                let resolved = layout.node_data.resolved_modifiers;
                 let (mut behind, mut overlay) =
-                    evaluate_modifier(layout.node_id, &layout.node_data.modifier, resolved, rect);
+                    evaluate_modifier(layout.node_id, &layout.node_data, rect);
                 operations.append(&mut behind);
                 for child in &layout.children {
                     self.render_box(child, operations);
@@ -109,10 +106,10 @@ impl HeadlessRenderer {
 
 fn evaluate_modifier(
     node_id: NodeId,
-    modifier: &Modifier,
-    resolved: ResolvedModifiers,
+    data: &LayoutNodeData,
     rect: Rect,
 ) -> (Vec<RenderOp>, Vec<RenderOp>) {
+    let resolved = data.resolved_modifiers;
     let _ = resolved;
     let mut behind = Vec::new();
     let mut overlay = Vec::new();
@@ -137,7 +134,7 @@ fn evaluate_modifier(
         height: rect.height,
     };
 
-    for command in modifier.draw_commands() {
+    for command in data.modifier_slices().draw_commands() {
         match command {
             ModifierDrawCommand::Behind(func) => {
                 for primitive in func(size) {
