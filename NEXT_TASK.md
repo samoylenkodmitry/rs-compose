@@ -1,34 +1,33 @@
-# Next Task: Delegate Stack Parity & Capability Propagation
+# Next Task: Wire Delegate Traversal Into Runtime Consumers
 
 ## Context
-Recent work removed all `unsafe` pointer paths from the modifier runtime: `ModifierNodeChain` now maintains sentinel-safe traversal helpers, `ModifierChainHandle` shares a `ModifierLocalsHandle`, and `LayoutNode` registers pointer-free metadata so ancestor modifier-local lookups mirror Kotlin’s behavior. The remaining blocker for behavioral parity is the lack of Kotlin’s delegate model. Our chain still reconciles a flat list of entries, so we cannot represent nested `Modifier.Node` delegates, propagate `aggregateChildKindSet` through delegate stacks, or honor the traversal contract defined in Jetpack Compose’s `DelegatableNode.kt` / `NodeChain.kt`. This prevents focus, modifier locals, pointer input, and semantics from short-circuiting based on delegate capabilities, and keyed reuse helpers (`padChain`, `trimChain`, delegate reuse) remain unimplemented.
+`ModifierNodeChain` now mirrors Jetpack Compose’s `NodeChain`: every `Modifier.Node` owns parent/child links, delegate stacks contribute to traversal order, and aggregate capability masks propagate through delegates without any `unsafe`. The remaining divergence is that higher-level systems (modifier locals, focus, pointer input, semantics, `ModifierChainHandle`) still treat the chain as a flat list. As a result, capability short-circuiting and ancestor lookups continue to rely on legacy metadata, and we must keep bespoke iterators such as `draw_nodes()` and `pointer_input_nodes()`.
 
-Use the Kotlin sources under `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui`—especially `Modifier.kt`, `ModifierNodeElement.kt`, `DelegatableNode.kt`, `DelegatingNode.kt`, and `NodeChain.kt`—as the reference for lifecycle and traversal semantics.
+Use the Kotlin sources under `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui`—especially `node/NodeChain.kt`, `node/DelegatableNode.kt`, `node/ModifierLocalManager.kt`, `node/Focus*`, and `modifier/Modifier.kt`—to match the behavior and traversal contracts.
 
 ## Goals
-1. Introduce a delegate-aware data model in `compose_foundation`: every `ModifierNode` should expose `node.parent`, `node.child`, and `aggregateChildKindSet` the same way Kotlin’s `Modifier.Node` does, including sentinel head/tail nodes.
-2. Teach `ModifierNodeChain::update_from_slice` to build and reuse delegate stacks when a `ModifierNodeElement` produces `DelegatingNode`s, recomputing capability masks and honoring Kotlin’s diff helpers (`padChain`, `trimChain`, delegate reuse by key/hash).
-3. Provide traversal helpers (`headToTail`, `visitAncestors`, capability-filtered walks) that operate on delegates rather than raw entries, and migrate runtime consumers (`ModifierChainHandle`, `ModifierLocalManager`, `LayoutNode::semantics_configuration`, pointer/focus utilities) to those helpers.
-4. Add parity tests that mirror scenarios from `NodeChainTest.kt`/`DelegatableNodeTest.kt`: delegate stacking order, capability aggregation, invalidation propagation, and reuse/detach behavior.
+1. Update every runtime consumer to use the delegate-aware traversal helpers exposed by `compose_foundation::ModifierNodeChain`.
+2. Remove or deprecate the legacy entry-only iterators (`draw_nodes*`, `pointer_input_nodes*`, etc.) once equivalent delegate-based paths exist.
+3. Ensure modifier locals, semantics extraction, pointer dispatch, and focus pipelines short-circuit based on `aggregate_child_capabilities` exactly like Kotlin’s `NodeChain`.
+4. Extend diagnostics/tests to cover the new traversal flow (delegate depth, capability masks, ancestor lookups).
 
 ## Suggested Steps
-1. **Data model & traits**
-   - Mirror `androidx.compose.ui.node.DelegatableNode` and `DelegatingNode`. Extend `ModifierNode` (or a new internal trait) with fields for `parent`, `child`, `kindSet`, and `aggregateChildKindSet`. Keep sentinel head/tail nodes compatible with delegates.
-   - Provide safe APIs for `visitAncestors`, `visitChildren`, and `nearestAncestor(mask)` that match Kotlin’s behavior (see `DelegatableNode.kt`).
-
-2. **Chain reconciliation**
-   - When reconciling entries, let elements opt into delegation (e.g., via a `DelegatingNode` helper or builder). Build delegate stacks, reuse nodes based on key/hash, and update capability aggregates using the same rules as Kotlin’s `NodeChain.structuralUpdate`.
-   - Port the lightweight diff helpers (`padChain`, `trimChain`) so keyed reuse behaves like Jetpack Compose when nodes move, duplicate, or disappear.
-
-3. **Runtime consumers**
-   - Update `ModifierNodeChain` traversal APIs (`for_each_forward_matching`, `visit_descendants_matching`, etc.) to operate on delegates and to short-circuit using `aggregateChildKindSet`.
-   - Switch modifier locals, semantics extraction, pointer dispatch, and focus scaffolding to the new delegate-aware visitors. This should reduce full-chain scans when the required capability bit is absent.
-
-4. **Testing & parity checks**
-   - Add new tests under `crates/compose-foundation/src/tests/modifier_tests.rs` (or a dedicated module) that cover delegate creation, reuse, invalidation, and capability aggregation.
-   - Include integration tests in `compose-ui` (modifier locals, semantics, pointer input) proving that delegate traversal short-circuits when `aggregateChildKindSet` is clear.
+1. **ModifierChainHandle + diagnostics**
+   - Teach `ModifierChainHandle` (in `crates/compose-ui/src/modifier/chain.rs`) to call the new traversal helpers when generating resolved modifiers, computing capability bitmasks, and logging chains.
+   - Remove direct access to `entries`/legacy iterators; keep the public surface identical.
+2. **Modifier locals**
+   - Update `crates/compose-ui/src/modifier/local.rs` so provider/consumer discovery, ancestor resolution, and invalidation bubbling walk delegates via capability masks (`NodeCapabilities::MODIFIER_LOCALS`).
+   - Verify behavior against Kotlin’s `ModifierLocalManager` by porting relevant tests.
+3. **Pointer input & focus**
+   - In `crates/compose-ui/src/modifier/pointer_input.rs` and the focus utilities under `crates/compose-ui/src/widgets`, route hit-testing and ancestor traversal through the delegate-aware visitors. Ensure capability checks gate traversal the same way `androidx.compose.ui.node.NodeChain` does (see `visitChildren`, `visitAncestors` in the Kotlin sources).
+4. **Semantics preparation**
+   - Update any semantics helpers that still call `chain.semantics_nodes()` to instead filter via `for_each_forward_matching(NodeCapabilities::SEMANTICS, …)`. This unblocks the upcoming semantics tree rewrite.
+5. **Cleanup & tests**
+   - Delete or mark deprecated the legacy iterators (`draw_nodes`, `pointer_input_nodes`, etc.) once no call sites remain.
+   - Add/adjust tests in `crates/compose-foundation/src/tests/modifier_tests.rs` and `crates/compose-ui/src/modifier/tests` to cover delegate traversal from each subsystem (modifier locals resolving through delegates, pointer input skipping chains without the capability bit, etc.).
 
 ## Definition of Done
-- `ModifierNodeChain` maintains delegate stacks that propagate parent/child links, `kindSet`, and `aggregateChildKindSet` exactly like Kotlin’s `NodeChain`.
-- `ModifierChainHandle`, modifier locals, semantics, pointer input, and focus all consume the delegate-aware traversal helpers instead of reimplementing chain scans.
-- Tests covering delegate stacking, reuse, invalidation, and capability short-circuiting pass (`cargo test -p compose-ui`), and the behavior matches the reference Kotlin sources.
+- `ModifierChainHandle`, modifier locals, pointer input, focus, and semantics helpers no longer access `ModifierNodeChain.entries` directly; they rely on delegate-aware traversal APIs.
+- Capability masks (`aggregate_child_capabilities`) short-circuit modifier locals, pointer input, focus, and semantics in the same scenarios covered by Kotlin’s `NodeChain`.
+- Legacy iterators (`draw_nodes*`, `pointer_input_nodes*`, etc.) are removed or unused.
+- New/updated tests verify delegate traversal for modifier locals, pointer input, focus, and semantics; `cargo test` across the workspace remains green.

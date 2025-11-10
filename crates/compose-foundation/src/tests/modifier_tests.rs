@@ -656,6 +656,102 @@ impl ModifierNodeElement for TestDrawElement {
     }
 }
 
+#[derive(Debug)]
+struct DelegatedDrawNode {
+    id: &'static str,
+    state: NodeState,
+}
+
+impl DelegatedDrawNode {
+    fn new(id: &'static str) -> Self {
+        let node = Self {
+            id,
+            state: NodeState::new(),
+        };
+        node.state
+            .set_capabilities(NodeCapabilities::DRAW | NodeCapabilities::SEMANTICS);
+        node
+    }
+}
+
+impl DelegatableNode for DelegatedDrawNode {
+    fn node_state(&self) -> &NodeState {
+        &self.state
+    }
+}
+
+impl ModifierNode for DelegatedDrawNode {
+    fn as_draw_node(&self) -> Option<&dyn DrawModifierNode> {
+        Some(self)
+    }
+
+    fn as_draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
+        Some(self)
+    }
+}
+
+impl DrawModifierNode for DelegatedDrawNode {}
+
+#[derive(Debug)]
+struct DelegatingHostNode {
+    id: &'static str,
+    state: NodeState,
+    delegate: DelegatedDrawNode,
+}
+
+impl DelegatingHostNode {
+    fn new(id: &'static str, delegate_id: &'static str) -> Self {
+        let node = Self {
+            id,
+            state: NodeState::new(),
+            delegate: DelegatedDrawNode::new(delegate_id),
+        };
+        node.state
+            .set_capabilities(NodeCapabilities::LAYOUT | NodeCapabilities::MODIFIER_LOCALS);
+        node
+    }
+
+    fn delegate(&self) -> &DelegatedDrawNode {
+        &self.delegate
+    }
+}
+
+impl DelegatableNode for DelegatingHostNode {
+    fn node_state(&self) -> &NodeState {
+        &self.state
+    }
+}
+
+impl ModifierNode for DelegatingHostNode {
+    fn for_each_delegate<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn ModifierNode)) {
+        visitor(&self.delegate);
+    }
+
+    fn for_each_delegate_mut<'a>(&'a mut self, visitor: &mut dyn FnMut(&'a mut dyn ModifierNode)) {
+        visitor(&mut self.delegate);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DelegatingElement {
+    host_id: &'static str,
+    delegate_id: &'static str,
+}
+
+impl ModifierNodeElement for DelegatingElement {
+    type Node = DelegatingHostNode;
+
+    fn create(&self) -> Self::Node {
+        DelegatingHostNode::new(self.host_id, self.delegate_id)
+    }
+
+    fn update(&self, _node: &mut Self::Node) {}
+
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities::LAYOUT | NodeCapabilities::MODIFIER_LOCALS
+    }
+}
+
 #[test]
 fn chain_tracks_node_capabilities() {
     let mut chain = ModifierNodeChain::new();
@@ -765,6 +861,106 @@ fn aggregated_child_capabilities_match_descendants() {
         chain.tail().aggregate_child_capabilities(),
         NodeCapabilities::empty()
     );
+}
+
+#[test]
+fn delegate_nodes_participate_in_traversal() {
+    let mut chain = ModifierNodeChain::new();
+    let mut context = BasicModifierNodeContext::new();
+    let elements = vec![
+        modifier_element(DelegatingElement {
+            host_id: "host",
+            delegate_id: "delegate",
+        }),
+        modifier_element(TestDrawElement),
+    ];
+    chain.update_from_slice(&elements, &mut context);
+
+    let order: Vec<&'static str> = chain
+        .head_to_tail()
+        .map(|node_ref| {
+            let node = node_ref.node().unwrap();
+            if node.as_any().downcast_ref::<DelegatingHostNode>().is_some() {
+                "host"
+            } else if node.as_any().downcast_ref::<DelegatedDrawNode>().is_some() {
+                "delegate"
+            } else if node.as_any().downcast_ref::<TestDrawNode>().is_some() {
+                "draw"
+            } else {
+                "unknown"
+            }
+        })
+        .collect();
+
+    assert_eq!(order, vec!["host", "delegate", "draw"]);
+}
+
+#[test]
+fn delegate_capabilities_propagate() {
+    let mut chain = ModifierNodeChain::new();
+    let mut context = BasicModifierNodeContext::new();
+    let elements = vec![modifier_element(DelegatingElement {
+        host_id: "host",
+        delegate_id: "delegate",
+    })];
+    chain.update_from_slice(&elements, &mut context);
+
+    assert!(chain.capabilities().contains(NodeCapabilities::LAYOUT));
+    assert!(chain.capabilities().contains(NodeCapabilities::DRAW));
+
+    let mut draw_nodes = 0;
+    chain.for_each_forward_matching(NodeCapabilities::DRAW, |node_ref| {
+        if node_ref
+            .node()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<DelegatedDrawNode>()
+            .is_some()
+        {
+            draw_nodes += 1;
+        }
+    });
+    assert_eq!(draw_nodes, 1, "expected delegated draw node to be visited");
+}
+
+#[test]
+fn delegate_parent_links_owner() {
+    let mut chain = ModifierNodeChain::new();
+    let mut context = BasicModifierNodeContext::new();
+    let elements = vec![
+        modifier_element(DelegatingElement {
+            host_id: "host",
+            delegate_id: "delegate",
+        }),
+        modifier_element(TestDrawElement),
+    ];
+    chain.update_from_slice(&elements, &mut context);
+
+    let host = chain
+        .node::<DelegatingHostNode>(0)
+        .expect("host node should exist");
+    let delegate = host.delegate() as &dyn ModifierNode;
+
+    let delegate_ref = chain
+        .find_node_ref(delegate)
+        .expect("delegate should be discoverable");
+    let parent = delegate_ref.parent().expect("delegate should have parent");
+    assert!(parent
+        .node()
+        .unwrap()
+        .as_any()
+        .downcast_ref::<DelegatingHostNode>()
+        .is_some());
+
+    let after_delegate = delegate_ref
+        .child()
+        .expect("delegate should have next node");
+    assert!(after_delegate
+        .node()
+        .unwrap()
+        .as_any()
+        .downcast_ref::<TestDrawNode>()
+        .is_some());
 }
 
 #[test]
@@ -890,17 +1086,19 @@ fn visit_descendants_matching_short_circuits() {
     let first = chain.head().child().expect("layout node present");
 
     let mut visited = Vec::new();
-    first.visit_descendants_matching(false, NodeCapabilities::DRAW, |node| {
-        if node
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<TestDrawNode>()
-            .is_some()
-        {
-            visited.push("draw");
-        }
-    });
+    first
+        .clone()
+        .visit_descendants_matching(false, NodeCapabilities::DRAW, |node| {
+            if node
+                .node()
+                .unwrap()
+                .as_any()
+                .downcast_ref::<TestDrawNode>()
+                .is_some()
+            {
+                visited.push("draw");
+            }
+        });
     assert_eq!(visited, vec!["draw"]);
 
     let mut skipped = false;

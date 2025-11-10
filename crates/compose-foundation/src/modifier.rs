@@ -8,13 +8,12 @@
 //! begin migrating without expanding the public API surface.
 
 use std::any::{type_name, Any, TypeId};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{BitOr, BitOrAssign};
 use std::rc::Rc;
-use std::slice::{Iter, IterMut};
 
 pub use compose_ui_graphics::DrawScope;
 pub use compose_ui_graphics::Size;
@@ -107,11 +106,55 @@ impl ModifierNodeContext for BasicModifierNodeContext {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NodePath {
+    entry: usize,
+    delegates: Vec<usize>,
+}
+
+impl NodePath {
+    fn root(entry: usize) -> Self {
+        Self {
+            entry,
+            delegates: Vec::new(),
+        }
+    }
+
+    fn from_slice(entry: usize, path: &[usize]) -> Self {
+        Self {
+            entry,
+            delegates: path.to_vec(),
+        }
+    }
+
+    fn entry(&self) -> usize {
+        self.entry
+    }
+
+    fn delegates(&self) -> &[usize] {
+        &self.delegates
+    }
+
+    fn into_parts(self) -> (usize, Vec<usize>) {
+        (self.entry, self.delegates)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum NodeLink {
+    Head,
+    Tail,
+    Entry(NodePath),
+}
+
 /// Runtime state tracked for every [`ModifierNode`].
 #[derive(Debug)]
 pub struct NodeState {
     aggregate_child_capabilities: Cell<NodeCapabilities>,
     capabilities: Cell<NodeCapabilities>,
+    parent: RefCell<Option<NodeLink>>,
+    child: RefCell<Option<NodeLink>>,
+    attached: Cell<bool>,
     is_sentinel: bool,
 }
 
@@ -120,6 +163,9 @@ impl NodeState {
         Self {
             aggregate_child_capabilities: Cell::new(NodeCapabilities::empty()),
             capabilities: Cell::new(NodeCapabilities::empty()),
+            parent: RefCell::new(None),
+            child: RefCell::new(None),
+            attached: Cell::new(false),
             is_sentinel: false,
         }
     }
@@ -128,6 +174,9 @@ impl NodeState {
         Self {
             aggregate_child_capabilities: Cell::new(NodeCapabilities::empty()),
             capabilities: Cell::new(NodeCapabilities::empty()),
+            parent: RefCell::new(None),
+            child: RefCell::new(None),
+            attached: Cell::new(true),
             is_sentinel: true,
         }
     }
@@ -146,6 +195,30 @@ impl NodeState {
 
     pub fn aggregate_child_capabilities(&self) -> NodeCapabilities {
         self.aggregate_child_capabilities.get()
+    }
+
+    pub fn set_parent_link(&self, parent: Option<NodeLink>) {
+        *self.parent.borrow_mut() = parent;
+    }
+
+    pub fn parent_link(&self) -> Option<NodeLink> {
+        self.parent.borrow().clone()
+    }
+
+    pub fn set_child_link(&self, child: Option<NodeLink>) {
+        *self.child.borrow_mut() = child;
+    }
+
+    pub fn child_link(&self) -> Option<NodeLink> {
+        self.child.borrow().clone()
+    }
+
+    pub fn set_attached(&self, attached: bool) {
+        self.attached.set(attached);
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.attached.get()
     }
 
     pub fn is_sentinel(&self) -> bool {
@@ -201,6 +274,13 @@ pub trait ModifierNode: Any + DelegatableNode {
     /// Returns this node as a mutable semantics modifier if it implements the trait.
     fn as_semantics_node_mut(&mut self) -> Option<&mut dyn SemanticsNode> {
         None
+    }
+
+    /// Visits every delegate node owned by this modifier.
+    fn for_each_delegate<'b>(&'b self, _visitor: &mut dyn FnMut(&'b dyn ModifierNode)) {}
+
+    /// Visits every delegate node mutably.
+    fn for_each_delegate_mut<'b>(&'b mut self, _visitor: &mut dyn FnMut(&'b mut dyn ModifierNode)) {
     }
 }
 
@@ -582,13 +662,6 @@ pub fn modifier_element<E: ModifierNodeElement>(element: E) -> DynModifierElemen
 pub type DynModifierElement = Rc<dyn AnyModifierElement>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChainPosition {
-    Head,
-    Tail,
-    Entry(usize),
-}
-
-#[derive(Clone, Copy)]
 enum TraversalDirection {
     Forward,
     Backward,
@@ -613,7 +686,7 @@ impl<'a> Iterator for ModifierChainIter<'a> {
     type Item = ModifierChainNodeRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let current = self.next?;
+        let current = self.next.take()?;
         if current.is_sentinel() {
             self.next = None;
             return None;
@@ -628,31 +701,14 @@ impl<'a> Iterator for ModifierChainIter<'a> {
 
 impl<'a> std::iter::FusedIterator for ModifierChainIter<'a> {}
 
-#[derive(Clone, Copy, Debug)]
-struct NodeLinks {
-    parent: ChainPosition,
-    child: ChainPosition,
-}
-
-impl Default for NodeLinks {
-    fn default() -> Self {
-        Self {
-            parent: ChainPosition::Head,
-            child: ChainPosition::Tail,
-        }
-    }
-}
-
+#[derive(Debug)]
 struct ModifierNodeEntry {
     element_type: TypeId,
     key: Option<u64>,
     hash_code: u64,
     element: DynModifierElement,
     node: Box<dyn ModifierNode>,
-    attached: bool,
     capabilities: NodeCapabilities,
-    links: NodeLinks,
-    aggregate_child_capabilities: NodeCapabilities,
 }
 
 impl ModifierNodeEntry {
@@ -670,10 +726,7 @@ impl ModifierNodeEntry {
             hash_code,
             element,
             node,
-            attached: false,
             capabilities,
-            links: NodeLinks::default(),
-            aggregate_child_capabilities: NodeCapabilities::empty(),
         };
         entry
             .node
@@ -682,27 +735,72 @@ impl ModifierNodeEntry {
             .set_capabilities(entry.capabilities);
         entry
     }
+}
 
-    fn matches_invalidation(&self, kind: InvalidationKind) -> bool {
-        self.capabilities
-            .contains(NodeCapabilities::for_invalidation(kind))
-    }
+fn visit_node_tree(node: &dyn ModifierNode, visitor: &mut dyn FnMut(&dyn ModifierNode)) {
+    visitor(node);
+    node.for_each_delegate(&mut |child| visit_node_tree(child, visitor));
+}
 
-    fn draw_node(&self) -> Option<&dyn DrawModifierNode> {
-        self.node.as_ref().as_draw_node()
-    }
+fn visit_node_tree_mut(
+    node: &mut dyn ModifierNode,
+    visitor: &mut dyn FnMut(&mut dyn ModifierNode),
+) {
+    visitor(node);
+    node.for_each_delegate_mut(&mut |child| visit_node_tree_mut(child, visitor));
+}
 
-    fn draw_node_mut(&mut self) -> Option<&mut dyn DrawModifierNode> {
-        self.node.as_mut().as_draw_node_mut()
-    }
+fn nth_delegate<'a>(node: &'a dyn ModifierNode, target: usize) -> Option<&'a dyn ModifierNode> {
+    let mut current = 0usize;
+    let mut result: Option<&dyn ModifierNode> = None;
+    node.for_each_delegate(&mut |child| {
+        if result.is_none() && current == target {
+            result = Some(child);
+        }
+        current += 1;
+    });
+    result
+}
 
-    fn pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
-        self.node.as_ref().as_pointer_input_node()
-    }
+fn nth_delegate_mut<'a>(
+    node: &'a mut dyn ModifierNode,
+    target: usize,
+) -> Option<&'a mut dyn ModifierNode> {
+    let mut current = 0usize;
+    let mut result: Option<&mut dyn ModifierNode> = None;
+    node.for_each_delegate_mut(&mut |child| {
+        if result.is_none() && current == target {
+            result = Some(child);
+        }
+        current += 1;
+    });
+    result
+}
 
-    fn pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
-        self.node.as_mut().as_pointer_input_node_mut()
-    }
+fn attach_node_tree(node: &mut dyn ModifierNode, context: &mut dyn ModifierNodeContext) {
+    visit_node_tree_mut(node, &mut |n| {
+        if !n.node_state().is_attached() {
+            n.node_state().set_attached(true);
+            n.on_attach(context);
+        }
+    });
+}
+
+fn reset_node_tree(node: &mut dyn ModifierNode) {
+    visit_node_tree_mut(node, &mut |n| n.on_reset());
+}
+
+fn detach_node_tree(node: &mut dyn ModifierNode) {
+    visit_node_tree_mut(node, &mut |n| {
+        if n.node_state().is_attached() {
+            n.on_detach();
+            n.node_state().set_attached(false);
+        }
+        n.node_state().set_parent_link(None);
+        n.node_state().set_child_link(None);
+        n.node_state()
+            .set_aggregate_child_capabilities(NodeCapabilities::empty());
+    });
 }
 
 /// Chain of modifier nodes attached to a layout node.
@@ -717,6 +815,7 @@ pub struct ModifierNodeChain {
     head_aggregate_child_capabilities: NodeCapabilities,
     head_sentinel: Box<SentinelNode>,
     tail_sentinel: Box<SentinelNode>,
+    ordered_nodes: Vec<NodeLink>,
 }
 
 struct SentinelNode {
@@ -739,10 +838,10 @@ impl DelegatableNode for SentinelNode {
 
 impl ModifierNode for SentinelNode {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ModifierChainNodeRef<'a> {
     chain: &'a ModifierNodeChain,
-    position: ChainPosition,
+    link: NodeLink,
 }
 
 impl Default for ModifierNodeChain {
@@ -753,13 +852,16 @@ impl Default for ModifierNodeChain {
 
 impl ModifierNodeChain {
     pub fn new() -> Self {
-        Self {
+        let mut chain = Self {
             entries: Vec::new(),
             aggregated_capabilities: NodeCapabilities::empty(),
             head_aggregate_child_capabilities: NodeCapabilities::empty(),
             head_sentinel: Box::new(SentinelNode::new()),
             tail_sentinel: Box::new(SentinelNode::new()),
-        }
+            ordered_nodes: Vec::new(),
+        };
+        chain.sync_chain_links();
+        chain
     }
 
     /// Reconcile the chain against the provided elements, attaching newly
@@ -771,7 +873,6 @@ impl ModifierNodeChain {
     ) {
         let mut old_entries = std::mem::take(&mut self.entries);
         let mut new_entries: Vec<Box<ModifierNodeEntry>> = Vec::with_capacity(elements.len());
-        let mut aggregated = NodeCapabilities::empty();
 
         for element in elements {
             let element_type = element.element_type();
@@ -809,9 +910,8 @@ impl ModifierNodeChain {
             if let Some(mut entry) = reused_entry {
                 {
                     let entry_mut = entry.as_mut();
-                    if !entry_mut.attached {
-                        entry_mut.node.on_attach(context);
-                        entry_mut.attached = true;
+                    if !entry_mut.node.node_state().is_attached() {
+                        attach_node_tree(entry_mut.node.as_mut(), context);
                     }
 
                     if !same_element {
@@ -828,7 +928,6 @@ impl ModifierNodeChain {
                         .as_ref()
                         .node_state()
                         .set_capabilities(entry_mut.capabilities);
-                    aggregated |= entry_mut.capabilities;
                 }
                 new_entries.push(entry);
             } else {
@@ -842,29 +941,18 @@ impl ModifierNodeChain {
                 ));
                 {
                     let entry_mut = entry.as_mut();
-                    entry_mut.node.on_attach(context);
-                    entry_mut.attached = true;
+                    attach_node_tree(entry_mut.node.as_mut(), context);
                     element.update_node(entry_mut.node.as_mut());
-                    aggregated |= entry_mut.capabilities;
                 }
                 new_entries.push(entry);
             }
         }
 
         for mut entry in old_entries {
-            if entry.attached {
-                entry.node.on_detach();
-                entry.attached = false;
-            }
-            entry
-                .node
-                .as_ref()
-                .node_state()
-                .set_aggregate_child_capabilities(NodeCapabilities::empty());
+            detach_node_tree(entry.node.as_mut());
         }
 
         self.entries = new_entries;
-        self.aggregated_capabilities = aggregated;
         self.sync_chain_links();
     }
 
@@ -883,23 +971,20 @@ impl ModifierNodeChain {
     /// Jetpack Compose's `onReset` callback.
     pub fn reset(&mut self) {
         for entry in &mut self.entries {
-            entry.node.on_reset();
+            reset_node_tree(entry.node.as_mut());
         }
     }
 
     /// Detaches every node in the chain and clears internal storage.
     pub fn detach_all(&mut self) {
         for mut entry in std::mem::take(&mut self.entries) {
-            if entry.attached {
-                entry.node.on_detach();
-                entry.attached = false;
-            }
+            detach_node_tree(entry.node.as_mut());
             let state = entry.node.as_ref().node_state();
-            state.set_aggregate_child_capabilities(NodeCapabilities::empty());
             state.set_capabilities(NodeCapabilities::empty());
         }
         self.aggregated_capabilities = NodeCapabilities::empty();
         self.head_aggregate_child_capabilities = NodeCapabilities::empty();
+        self.ordered_nodes.clear();
         self.sync_chain_links();
     }
 
@@ -923,12 +1008,12 @@ impl ModifierNodeChain {
 
     /// Returns the sentinel head reference for traversal.
     pub fn head(&self) -> ModifierChainNodeRef<'_> {
-        self.make_node_ref(ChainPosition::Head)
+        self.make_node_ref(NodeLink::Head)
     }
 
     /// Returns the sentinel tail reference for traversal.
     pub fn tail(&self) -> ModifierChainNodeRef<'_> {
-        self.make_node_ref(ChainPosition::Tail)
+        self.make_node_ref(NodeLink::Tail)
     }
 
     /// Iterates over the chain from head to tail, skipping sentinels.
@@ -1008,21 +1093,30 @@ impl ModifierNodeChain {
         if index >= self.entries.len() {
             None
         } else {
-            Some(self.make_node_ref(ChainPosition::Entry(index)))
+            Some(self.make_node_ref(NodeLink::Entry(NodePath::root(index))))
         }
     }
 
     /// Returns the node reference that owns `node`.
     pub fn find_node_ref(&self, node: &dyn ModifierNode) -> Option<ModifierChainNodeRef<'_>> {
-        #[inline]
-        fn data_ptr(node: &dyn ModifierNode) -> *const () {
+        fn node_data_ptr(node: &dyn ModifierNode) -> *const () {
             node as *const dyn ModifierNode as *const ()
         }
 
-        let target = data_ptr(node);
-        self.entries.iter().enumerate().find_map(|(index, entry)| {
-            if data_ptr(entry.node.as_ref()) == target {
-                Some(self.make_node_ref(ChainPosition::Entry(index)))
+        let target = node_data_ptr(node);
+        for (index, entry) in self.entries.iter().enumerate() {
+            if node_data_ptr(entry.node.as_ref()) == target {
+                return Some(self.make_node_ref(NodeLink::Entry(NodePath::root(index))));
+            }
+        }
+
+        self.ordered_nodes.iter().find_map(|link| {
+            if matches!(link, NodeLink::Entry(path) if path.delegates().is_empty()) {
+                return None;
+            }
+            let candidate = self.resolve_node(link);
+            if node_data_ptr(candidate) == target {
+                Some(self.make_node_ref(link.clone()))
             } else {
                 None
             }
@@ -1051,38 +1145,44 @@ impl ModifierNodeChain {
 
     /// Iterates over all layout nodes in the chain.
     pub fn layout_nodes(&self) -> impl Iterator<Item = &dyn ModifierNode> {
-        self.entries
-            .iter()
-            .filter(|entry| entry.capabilities.contains(NodeCapabilities::LAYOUT))
-            .map(|entry| entry.node.as_ref())
+        self.ordered_nodes.iter().filter_map(|link| {
+            let node = self.resolve_node(link);
+            if node
+                .node_state()
+                .capabilities()
+                .contains(NodeCapabilities::LAYOUT)
+            {
+                Some(node)
+            } else {
+                None
+            }
+        })
     }
 
     /// Iterates over all draw nodes in the chain.
     pub fn draw_nodes(&self) -> DrawNodes<'_> {
-        DrawNodes::new(self.entries.iter())
-    }
-
-    /// Iterates over all mutable draw nodes in the chain.
-    pub fn draw_nodes_mut(&mut self) -> DrawNodesMut<'_> {
-        DrawNodesMut::new(self.entries.iter_mut())
+        DrawNodes::new(self)
     }
 
     /// Iterates over all pointer input nodes in the chain.
     pub fn pointer_input_nodes(&self) -> PointerInputNodes<'_> {
-        PointerInputNodes::new(self.entries.iter())
-    }
-
-    /// Iterates over all mutable pointer input nodes in the chain.
-    pub fn pointer_input_nodes_mut(&mut self) -> PointerInputNodesMut<'_> {
-        PointerInputNodesMut::new(self.entries.iter_mut())
+        PointerInputNodes::new(self)
     }
 
     /// Iterates over all semantics nodes in the chain.
     pub fn semantics_nodes(&self) -> impl Iterator<Item = &dyn ModifierNode> {
-        self.entries
-            .iter()
-            .filter(|entry| entry.capabilities.contains(NodeCapabilities::SEMANTICS))
-            .map(|entry| entry.node.as_ref())
+        self.ordered_nodes.iter().filter_map(|link| {
+            let node = self.resolve_node(link);
+            if node
+                .node_state()
+                .capabilities()
+                .contains(NodeCapabilities::SEMANTICS)
+            {
+                Some(node)
+            } else {
+                None
+            }
+        })
     }
 
     /// Visits every node in insertion order together with its capability mask.
@@ -1090,8 +1190,9 @@ impl ModifierNodeChain {
     where
         F: FnMut(&dyn ModifierNode, NodeCapabilities),
     {
-        for entry in &self.entries {
-            f(entry.node.as_ref(), entry.capabilities);
+        for link in &self.ordered_nodes {
+            let node = self.resolve_node(link);
+            f(node, node.node_state().capabilities());
         }
     }
 
@@ -1100,75 +1201,67 @@ impl ModifierNodeChain {
     where
         F: FnMut(&mut dyn ModifierNode, NodeCapabilities),
     {
-        for entry in &mut self.entries {
-            f(entry.node.as_mut(), entry.capabilities);
+        for index in 0..self.ordered_nodes.len() {
+            let link = self.ordered_nodes[index].clone();
+            let node = self.resolve_node_mut_from_link(link);
+            let capabilities = node.node_state().capabilities();
+            f(node, capabilities);
         }
     }
 
-    fn make_node_ref(&self, position: ChainPosition) -> ModifierChainNodeRef<'_> {
-        ModifierChainNodeRef {
-            chain: self,
-            position,
-        }
-    }
-
-    fn head_child_position(&self) -> ChainPosition {
-        if self.entries.is_empty() {
-            ChainPosition::Tail
-        } else {
-            ChainPosition::Entry(0)
-        }
-    }
-
-    fn tail_parent_position(&self) -> ChainPosition {
-        if self.entries.is_empty() {
-            ChainPosition::Head
-        } else {
-            ChainPosition::Entry(self.entries.len() - 1)
-        }
+    fn make_node_ref(&self, link: NodeLink) -> ModifierChainNodeRef<'_> {
+        ModifierChainNodeRef { chain: self, link }
     }
 
     fn sync_chain_links(&mut self) {
-        let len = self.entries.len();
+        self.rebuild_ordered_nodes();
 
-        if len == 0 {
+        self.head_sentinel.node_state().set_parent_link(None);
+        self.tail_sentinel.node_state().set_child_link(None);
+
+        if self.ordered_nodes.is_empty() {
+            self.head_sentinel
+                .node_state()
+                .set_child_link(Some(NodeLink::Tail));
+            self.tail_sentinel
+                .node_state()
+                .set_parent_link(Some(NodeLink::Head));
+            self.aggregated_capabilities = NodeCapabilities::empty();
+            self.head_aggregate_child_capabilities = NodeCapabilities::empty();
             self.head_sentinel
                 .node_state()
                 .set_aggregate_child_capabilities(NodeCapabilities::empty());
             self.tail_sentinel
                 .node_state()
                 .set_aggregate_child_capabilities(NodeCapabilities::empty());
-            self.head_aggregate_child_capabilities = NodeCapabilities::empty();
             return;
         }
 
-        for index in 0..len {
-            let parent = if index == 0 {
-                ChainPosition::Head
-            } else {
-                ChainPosition::Entry(index - 1)
-            };
-            let child = if index + 1 == len {
-                ChainPosition::Tail
-            } else {
-                ChainPosition::Entry(index + 1)
-            };
-            let entry = &mut self.entries[index];
-            entry.links = NodeLinks { parent, child };
+        let mut previous = NodeLink::Head;
+        for link in self.ordered_nodes.iter().cloned() {
+            self.node_state_for_link(&previous)
+                .set_child_link(Some(link.clone()));
+            self.node_state_for_link(&link)
+                .set_parent_link(Some(previous.clone()));
+            previous = link;
         }
 
+        self.node_state_for_link(&previous)
+            .set_child_link(Some(NodeLink::Tail));
+        self.tail_sentinel
+            .node_state()
+            .set_parent_link(Some(previous.clone()));
+        self.tail_sentinel.node_state().set_child_link(None);
+
         let mut aggregate = NodeCapabilities::empty();
-        for index in (0..len).rev() {
-            let entry = &mut self.entries[index];
-            aggregate |= entry.capabilities;
-            entry.aggregate_child_capabilities = aggregate;
-            entry
-                .node
-                .as_ref()
-                .node_state()
+        for link in self.ordered_nodes.iter().rev() {
+            let node = self.resolve_node(link);
+            aggregate |= node.node_state().capabilities();
+            node.node_state()
                 .set_aggregate_child_capabilities(aggregate);
         }
 
+        self.aggregated_capabilities = aggregate;
         self.head_aggregate_child_capabilities = aggregate;
         self.head_sentinel
             .node_state()
@@ -1177,16 +1270,87 @@ impl ModifierNodeChain {
             .node_state()
             .set_aggregate_child_capabilities(NodeCapabilities::empty());
     }
+
+    fn rebuild_ordered_nodes(&mut self) {
+        self.ordered_nodes.clear();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let mut path = Vec::new();
+            Self::enumerate_link_order(
+                entry.node.as_ref(),
+                index,
+                &mut path,
+                &mut self.ordered_nodes,
+            );
+        }
+    }
+
+    fn enumerate_link_order(
+        node: &dyn ModifierNode,
+        entry: usize,
+        path: &mut Vec<usize>,
+        out: &mut Vec<NodeLink>,
+    ) {
+        out.push(NodeLink::Entry(NodePath::from_slice(entry, path)));
+        let mut delegate_index = 0usize;
+        node.for_each_delegate(&mut |child| {
+            path.push(delegate_index);
+            Self::enumerate_link_order(child, entry, path, out);
+            path.pop();
+            delegate_index += 1;
+        });
+    }
+
+    fn node_state_for_link(&self, link: &NodeLink) -> &NodeState {
+        match link {
+            NodeLink::Head => self.head_sentinel.node_state(),
+            NodeLink::Tail => self.tail_sentinel.node_state(),
+            NodeLink::Entry(path) => self.resolve_entry_node(path).node_state(),
+        }
+    }
+
+    fn resolve_node(&self, link: &NodeLink) -> &dyn ModifierNode {
+        match link {
+            NodeLink::Head => self.head_sentinel.as_ref(),
+            NodeLink::Tail => self.tail_sentinel.as_ref(),
+            NodeLink::Entry(path) => self.resolve_entry_node(path),
+        }
+    }
+
+    fn resolve_node_mut_from_link(&mut self, link: NodeLink) -> &mut dyn ModifierNode {
+        match link {
+            NodeLink::Head => self.head_sentinel.as_mut(),
+            NodeLink::Tail => self.tail_sentinel.as_mut(),
+            NodeLink::Entry(path) => self.resolve_entry_node_mut(path),
+        }
+    }
+
+    fn resolve_entry_node(&self, path: &NodePath) -> &dyn ModifierNode {
+        let mut node: &dyn ModifierNode = self.entries[path.entry()].node.as_ref();
+        for &delegate_index in path.delegates() {
+            node = nth_delegate(node, delegate_index).expect("invalid delegate path");
+        }
+        node
+    }
+
+    fn resolve_entry_node_mut(&mut self, path: NodePath) -> &mut dyn ModifierNode {
+        let (entry, delegates) = path.into_parts();
+        let mut node: &mut dyn ModifierNode = self.entries[entry].node.as_mut();
+        for delegate_index in delegates {
+            node = nth_delegate_mut(node, delegate_index).expect("invalid delegate path");
+        }
+        node
+    }
 }
 
 /// Iterator over draw modifier nodes stored in a [`ModifierNodeChain`].
 pub struct DrawNodes<'a> {
-    entries: Iter<'a, Box<ModifierNodeEntry>>,
+    chain: &'a ModifierNodeChain,
+    index: usize,
 }
 
 impl<'a> DrawNodes<'a> {
-    fn new(entries: Iter<'a, Box<ModifierNodeEntry>>) -> Self {
-        Self { entries }
+    fn new(chain: &'a ModifierNodeChain) -> Self {
+        Self { chain, index: 0 }
     }
 }
 
@@ -1194,33 +1358,12 @@ impl<'a> Iterator for DrawNodes<'a> {
     type Item = &'a dyn DrawModifierNode;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(entry) = self.entries.next() {
-            if let Some(node) = entry.draw_node() {
-                return Some(node);
-            }
-        }
-        None
-    }
-}
-
-/// Mutable iterator over draw modifier nodes.
-pub struct DrawNodesMut<'a> {
-    entries: IterMut<'a, Box<ModifierNodeEntry>>,
-}
-
-impl<'a> DrawNodesMut<'a> {
-    fn new(entries: IterMut<'a, Box<ModifierNodeEntry>>) -> Self {
-        Self { entries }
-    }
-}
-
-impl<'a> Iterator for DrawNodesMut<'a> {
-    type Item = &'a mut dyn DrawModifierNode;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(entry) = self.entries.next() {
-            if let Some(node) = entry.draw_node_mut() {
-                return Some(node);
+        while self.index < self.chain.ordered_nodes.len() {
+            let link = &self.chain.ordered_nodes[self.index];
+            self.index += 1;
+            let node = self.chain.resolve_node(link);
+            if let Some(draw) = node.as_draw_node() {
+                return Some(draw);
             }
         }
         None
@@ -1229,12 +1372,13 @@ impl<'a> Iterator for DrawNodesMut<'a> {
 
 /// Iterator over pointer-input modifier nodes.
 pub struct PointerInputNodes<'a> {
-    entries: Iter<'a, Box<ModifierNodeEntry>>,
+    chain: &'a ModifierNodeChain,
+    index: usize,
 }
 
 impl<'a> PointerInputNodes<'a> {
-    fn new(entries: Iter<'a, Box<ModifierNodeEntry>>) -> Self {
-        Self { entries }
+    fn new(chain: &'a ModifierNodeChain) -> Self {
+        Self { chain, index: 0 }
     }
 }
 
@@ -1242,33 +1386,12 @@ impl<'a> Iterator for PointerInputNodes<'a> {
     type Item = &'a dyn PointerInputNode;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(entry) = self.entries.next() {
-            if let Some(node) = entry.pointer_input_node() {
-                return Some(node);
-            }
-        }
-        None
-    }
-}
-
-/// Mutable iterator over pointer-input modifier nodes.
-pub struct PointerInputNodesMut<'a> {
-    entries: IterMut<'a, Box<ModifierNodeEntry>>,
-}
-
-impl<'a> PointerInputNodesMut<'a> {
-    fn new(entries: IterMut<'a, Box<ModifierNodeEntry>>) -> Self {
-        Self { entries }
-    }
-}
-
-impl<'a> Iterator for PointerInputNodesMut<'a> {
-    type Item = &'a mut dyn PointerInputNode;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(entry) = self.entries.next() {
-            if let Some(node) = entry.pointer_input_node_mut() {
-                return Some(node);
+        while self.index < self.chain.ordered_nodes.len() {
+            let link = &self.chain.ordered_nodes[self.index];
+            self.index += 1;
+            let node = self.chain.resolve_node(link);
+            if let Some(pointer) = node.as_pointer_input_node() {
+                return Some(pointer);
             }
         }
         None
@@ -1276,74 +1399,72 @@ impl<'a> Iterator for PointerInputNodesMut<'a> {
 }
 
 impl<'a> ModifierChainNodeRef<'a> {
+    fn raw_node(&self) -> &'a dyn ModifierNode {
+        self.chain.resolve_node(&self.link)
+    }
+
+    fn state(&self) -> &'a NodeState {
+        self.chain.node_state_for_link(&self.link)
+    }
+
     /// Returns the underlying modifier node when this reference targets a real entry.
-    pub fn node(self) -> Option<&'a dyn ModifierNode> {
-        match self.position {
-            ChainPosition::Entry(index) => Some(self.chain.entries[index].node.as_ref()),
-            _ => None,
+    pub fn node(&self) -> Option<&'a dyn ModifierNode> {
+        if self.state().is_sentinel() {
+            None
+        } else {
+            Some(self.raw_node())
         }
     }
 
     /// Returns the parent reference, including sentinel head when applicable.
-    pub fn parent(self) -> Option<Self> {
-        match self.position {
-            ChainPosition::Head => None,
-            ChainPosition::Tail => {
-                Some(self.chain.make_node_ref(self.chain.tail_parent_position()))
-            }
-            ChainPosition::Entry(index) => Some(
-                self.chain
-                    .make_node_ref(self.chain.entries[index].links.parent),
-            ),
-        }
+    pub fn parent(&self) -> Option<Self> {
+        self.state()
+            .parent_link()
+            .map(|link| self.chain.make_node_ref(link))
     }
 
     /// Returns the child reference, including sentinel tail for the last entry.
-    pub fn child(self) -> Option<Self> {
-        match self.position {
-            ChainPosition::Tail => None,
-            ChainPosition::Head => Some(self.chain.make_node_ref(self.chain.head_child_position())),
-            ChainPosition::Entry(index) => Some(
-                self.chain
-                    .make_node_ref(self.chain.entries[index].links.child),
-            ),
-        }
+    pub fn child(&self) -> Option<Self> {
+        self.state()
+            .child_link()
+            .map(|link| self.chain.make_node_ref(link))
     }
 
     /// Returns the capability mask for this specific node.
-    pub fn kind_set(self) -> NodeCapabilities {
-        match self.position {
-            ChainPosition::Entry(index) => self.chain.entries[index].capabilities,
-            _ => NodeCapabilities::empty(),
+    pub fn kind_set(&self) -> NodeCapabilities {
+        if self.state().is_sentinel() {
+            NodeCapabilities::empty()
+        } else {
+            self.state().capabilities()
         }
     }
 
     /// Returns the aggregated capability mask for the subtree rooted at this node.
-    pub fn aggregate_child_capabilities(self) -> NodeCapabilities {
-        match self.position {
-            ChainPosition::Head => self.chain.head_aggregate_child_capabilities,
-            ChainPosition::Entry(index) => self.chain.entries[index].aggregate_child_capabilities,
-            ChainPosition::Tail => NodeCapabilities::empty(),
+    pub fn aggregate_child_capabilities(&self) -> NodeCapabilities {
+        if self.is_tail() {
+            NodeCapabilities::empty()
+        } else {
+            self.state().aggregate_child_capabilities()
         }
     }
 
     /// Returns true if this reference targets the sentinel head.
-    pub fn is_head(self) -> bool {
-        matches!(self.position, ChainPosition::Head)
+    pub fn is_head(&self) -> bool {
+        matches!(self.link, NodeLink::Head)
     }
 
     /// Returns true if this reference targets the sentinel tail.
-    pub fn is_tail(self) -> bool {
-        matches!(self.position, ChainPosition::Tail)
+    pub fn is_tail(&self) -> bool {
+        matches!(self.link, NodeLink::Tail)
     }
 
     /// Returns true if this reference targets either sentinel.
-    pub fn is_sentinel(self) -> bool {
-        self.is_head() || self.is_tail()
+    pub fn is_sentinel(&self) -> bool {
+        self.state().is_sentinel()
     }
 
     /// Returns true if this node has any capability bits present in `mask`.
-    pub fn has_capability(self, mask: NodeCapabilities) -> bool {
+    pub fn has_capability(&self, mask: NodeCapabilities) -> bool {
         !mask.is_empty() && self.kind_set().intersects(mask)
     }
 
@@ -1361,7 +1482,9 @@ impl<'a> ModifierChainNodeRef<'a> {
             if node.is_tail() {
                 break;
             }
-            f(node);
+            if !node.is_sentinel() {
+                f(node.clone());
+            }
             current = node.child();
         }
     }
@@ -1401,7 +1524,7 @@ impl<'a> ModifierChainNodeRef<'a> {
             if node.is_head() {
                 break;
             }
-            f(node);
+            f(node.clone());
             current = node.parent();
         }
     }

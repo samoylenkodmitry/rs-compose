@@ -6,7 +6,7 @@ Goal: match Jetpack Compose’s `Modifier` API surface and `Modifier.Node` runti
 
 ## Current Gaps (Compose-RS)
 - `Modifier` is still an Rc-backed builder with cached layout/draw state for legacy APIs. Renderers now read reconciled node slices, but `ModifierState` continues to provide padding/layout caches and must be removed once every factory is node-backed.
-- `compose_foundation::ModifierNodeChain` still lacks Kotlin’s delegate-chain surface (`DelegatableNode`, `DelegatingNode`, `NodeChain#headToTail`). Entries expose capability masks, but there is no delegate stack, parent/child traversal contract, or `aggregateChildKindSet` propagation through delegates, so focus/modifier-local semantics can drift from Android.
+- Delegate plumbing exists in `compose_foundation::ModifierNodeChain`, but focus, semantics, modifier locals, and pointer input have not yet switched to the delegate-aware traversal helpers, so capability short-circuiting and ancestor lookups still rely on legacy metadata.
 - Modifier locals now register providers/consumers per chain, but their invalidations still bubble through coarse layout flags and the semantics/focus stacks continue to rely on legacy metadata instead of Kotlin’s `ModifierLocalManager` + `SemanticsOwner` pairing.
 - Semantics extraction still mixes modifier-node data with `RuntimeNodeMetadata`, so we never build the Kotlin-style `SemanticsOwner` tree or honor capability-scoped traversal/invalidations (semantics-only changes continue to trigger layout).
 - Diagnostics exist (`Modifier::fmt`, `debug::log_modifier_chain`, `COMPOSE_DEBUG_MODIFIERS`), but we still lack parity tooling such as Kotlin’s inspector strings, capability dumps with delegate depth, and targeted tracing hooks used by focus/pointer stacks.
@@ -23,6 +23,7 @@ Goal: match Jetpack Compose’s `Modifier` API surface and `Modifier.Node` runti
 - Layout nodes expose modifier-local data to ancestors without raw pointers: `ModifierChainHandle` shares a `ModifierLocalsHandle`, `LayoutNode` updates a pointer-free registry entry, and `resolve_modifier_local_from_parent_chain` now mirrors Kotlin’s `ModifierLocalManager` traversal while staying completely safe.
 - Diagnostics improved: `Modifier` implements `Display`, `compose_ui::debug::log_modifier_chain` enumerates nodes/capabilities, and DEBUG env flags print chains after reconciliation.
 - Core modifier factories (`padding`, `background`, `draw*`, `clipToBounds`, `pointerInput`, `clickable`) are node-backed, and pointer input runs on coroutine-driven scaffolding mirroring Kotlin. Renderers and pointer dispatch now operate exclusively on reconciled node slices.
+- `ModifierNodeChain` now mirrors Kotlin’s delegate semantics: every node exposes parent/child links, delegate stacks feed the traversal helpers, aggregate capability masks propagate through delegates, and tests cover ordering, sentinel wiring, and capability short-circuiting without any `unsafe`.
 
 ## Migration Plan
 1. **Mirror the `Modifier` data model (Kotlin: `Modifier.kt`)**  
@@ -30,17 +31,17 @@ Goal: match Jetpack Compose’s `Modifier` API surface and `Modifier.Node` runti
 2. **Adopt `ModifierNodeElement` / `Modifier.Node` parity (Kotlin: `ModifierNodeElement.kt`)**  
    Implement the full lifecycle contract: `onAttach`, `onDetach`, `onReset`, coroutine scope ownership, and equality/key-driven reuse.
 3. **Implement delegate traversal + capability plumbing (Kotlin: `NodeChain.kt`, `NodeKind.kt`, `DelegatableNode.kt`)**  
-   Finish delegate links, ancestor aggregation, and traversal helpers so semantics/focus/modifier locals can walk nodes exactly like Android.
+   ✅ Delegate stacks + traversal helpers now match Kotlin. **Remaining:** migrate focus, semantics, modifier locals, and pointer input to those helpers so capability-aware short-circuiting reaches every subsystem.
 4. **Wire all runtime subsystems through chains**  
    Layout/draw/pointer already read reconciled nodes; remaining work includes semantics tree extraction, modifier locals invalidation, focus chains, and removal of the residual `ModifierState` caches.
 5. **Migrate modifier factories + diagnostics**  
    Finish porting the remaining factories off `ModifierState`, add Kotlin-style inspector dumps/trace hooks, and grow the parity test matrix to compare traversal order/capabilities against the Android reference.
 
 ## Near-Term Next Steps
-1. **Delegate + ancestor traversal parity (in flight)**  
-   - ✅ `ModifierNodeChain` now exposes sentinel-safe `head_to_tail`, `tail_to_head`, and filtered visitors plus cached `aggregate_child_capabilities` on both the chain and owning `LayoutNode`.  
-   - Next: port Kotlin’s delegate APIs (`DelegatableNode`, `DelegatingNode`, `node.parent/child` contract) so every `ModifierNode` exposes the same traversal surface, propagate `aggregateChildKindSet` through delegate stacks, and route focus/modifier-local traversals through the delegate helpers provided by `androidx.compose.ui.node.NodeChain`.  
-   - Finish mirroring Kotlin’s diff helpers (`trimChain`, `padChain`, delegate reuse rules) so keyed reuse + capability recompute follow the reference semantics.
+1. **Delegate traversal everywhere (follow-up)**  
+   - ✅ `ModifierNodeChain` now owns the delegate data model, sentinel head/tail links, and capability aggregation just like `NodeChain.kt`.  
+   - **Now:** migrate `ModifierChainHandle`, modifier locals, semantics, pointer input, and focus helpers to the shared traversal APIs so capability masks short-circuit work and ancestor lookups use the delegate links.  
+   - Remove bespoke iterators (`draw_nodes`, `pointer_input_nodes`, etc.) once every subsystem consumes the new helpers, and expand diagnostics to print delegate depth + aggregate masks for debugging.
 2. **Semantics stack parity**  
    - Re-read `androidx/compose/ui/node/Semantics*` and port the Kotlin contract: build semantics trees by walking modifier nodes via capability masks, keep per-node `SemanticsConfiguration` caches, and expose a `SemanticsOwner`-equivalent that downstream renderers/tests can query.  
    - Split semantics invalidations from layout/draw flags in `LayoutNode`, and only traverse the chain sections whose `aggregate_child_capabilities` contain `SEMANTICS`.  
