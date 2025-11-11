@@ -7,7 +7,9 @@ use crate::{
     },
 };
 use compose_core::{Node, NodeId};
-use compose_foundation::{InvalidationKind, NodeCapabilities, SemanticsConfiguration};
+use compose_foundation::{
+    InvalidationKind, ModifierInvalidation, NodeCapabilities, SemanticsConfiguration,
+};
 use compose_ui_layout::{Constraints, MeasurePolicy};
 use indexmap::IndexSet;
 use std::cell::{Cell, RefCell};
@@ -158,6 +160,7 @@ pub struct LayoutNode {
     needs_measure: Cell<bool>,
     needs_layout: Cell<bool>,
     needs_semantics: Cell<bool>,
+    needs_redraw: Cell<bool>,
     // Parent tracking for dirty flag bubbling (Jetpack Compose style)
     parent: Cell<Option<NodeId>>,
     // Node's own ID (set by applier after creation)
@@ -179,6 +182,7 @@ impl LayoutNode {
             needs_measure: Cell::new(true), // New nodes need initial measure
             needs_layout: Cell::new(true),  // New nodes need initial layout
             needs_semantics: Cell::new(true), // Semantics snapshot needs initial build
+            needs_redraw: Cell::new(true),  // First render should draw the node
             parent: Cell::new(None),        // No parent initially
             id: Cell::new(None),            // ID set by applier after creation
             debug_modifiers: Cell::new(false),
@@ -217,9 +221,9 @@ impl LayoutNode {
         self.refresh_registry_state();
     }
 
-    fn dispatch_modifier_invalidations(&self, invalidations: &[InvalidationKind]) {
+    fn dispatch_modifier_invalidations(&self, invalidations: &[ModifierInvalidation]) {
         for invalidation in invalidations {
-            match invalidation {
+            match invalidation.kind() {
                 InvalidationKind::Layout => {
                     if self.has_layout_modifier_nodes() {
                         self.mark_needs_measure();
@@ -227,7 +231,7 @@ impl LayoutNode {
                 }
                 InvalidationKind::Draw => {
                     if self.has_draw_modifier_nodes() {
-                        self.mark_needs_layout();
+                        self.mark_needs_redraw();
                     }
                 }
                 InvalidationKind::PointerInput => {}
@@ -262,6 +266,14 @@ impl LayoutNode {
         self.needs_layout.set(true);
     }
 
+    /// Mark this node as needing redraw without forcing measure/layout.
+    pub fn mark_needs_redraw(&self) {
+        let already_dirty = self.needs_redraw.replace(true);
+        if !already_dirty {
+            crate::request_render_invalidation();
+        }
+    }
+
     /// Check if this node needs measure.
     pub fn needs_measure(&self) -> bool {
         self.needs_measure.get()
@@ -287,6 +299,11 @@ impl LayoutNode {
         self.needs_semantics.get()
     }
 
+    /// Returns true when this node requested a redraw since the last render pass.
+    pub fn needs_redraw(&self) -> bool {
+        self.needs_redraw.get()
+    }
+
     fn request_semantics_update(&self) {
         let already_dirty = self.needs_semantics.replace(true);
         if already_dirty {
@@ -306,6 +323,11 @@ impl LayoutNode {
     /// Clear the layout dirty flag after laying out.
     pub(crate) fn clear_needs_layout(&self) {
         self.needs_layout.set(false);
+    }
+
+    /// Clears the redraw dirty flag after rendering.
+    pub(crate) fn clear_needs_redraw(&self) {
+        self.needs_redraw.set(false);
     }
 
     /// Set this node's ID (called by applier after creation).
@@ -441,6 +463,7 @@ impl Clone for LayoutNode {
             needs_measure: Cell::new(self.needs_measure.get()),
             needs_layout: Cell::new(self.needs_layout.get()),
             needs_semantics: Cell::new(self.needs_semantics.get()),
+            needs_redraw: Cell::new(self.needs_redraw.get()),
             parent: Cell::new(self.parent.get()),
             id: Cell::new(None),
             debug_modifiers: Cell::new(self.debug_modifiers.get()),
@@ -644,6 +667,10 @@ mod tests {
         LayoutNode::new(Modifier::empty(), Rc::new(TestMeasurePolicy))
     }
 
+    fn invalidation(kind: InvalidationKind) -> ModifierInvalidation {
+        ModifierInvalidation::new(kind, NodeCapabilities::for_invalidation(kind))
+    }
+
     #[test]
     fn layout_invalidation_requires_layout_capability() {
         let mut node = fresh_node();
@@ -652,7 +679,7 @@ mod tests {
         node.modifier_capabilities = NodeCapabilities::DRAW;
         node.modifier_child_capabilities = node.modifier_capabilities;
 
-        node.dispatch_modifier_invalidations(&[InvalidationKind::Layout]);
+        node.dispatch_modifier_invalidations(&[invalidation(InvalidationKind::Layout)]);
 
         assert!(!node.needs_measure());
         assert!(!node.needs_layout());
@@ -681,7 +708,7 @@ mod tests {
         node.modifier_capabilities = NodeCapabilities::LAYOUT;
         node.modifier_child_capabilities = node.modifier_capabilities;
 
-        node.dispatch_modifier_invalidations(&[InvalidationKind::Layout]);
+        node.dispatch_modifier_invalidations(&[invalidation(InvalidationKind::Layout)]);
 
         assert!(node.needs_measure());
         assert!(node.needs_layout());
@@ -692,25 +719,29 @@ mod tests {
         let mut node = fresh_node();
         node.clear_needs_measure();
         node.clear_needs_layout();
+        node.clear_needs_redraw();
         node.modifier_capabilities = NodeCapabilities::LAYOUT;
         node.modifier_child_capabilities = node.modifier_capabilities;
 
-        node.dispatch_modifier_invalidations(&[InvalidationKind::Draw]);
+        node.dispatch_modifier_invalidations(&[invalidation(InvalidationKind::Draw)]);
 
         assert!(!node.needs_layout());
+        assert!(!node.needs_redraw());
     }
 
     #[test]
-    fn draw_invalidation_marks_layout_flag_when_capable() {
+    fn draw_invalidation_marks_redraw_flag_when_capable() {
         let mut node = fresh_node();
         node.clear_needs_measure();
         node.clear_needs_layout();
+        node.clear_needs_redraw();
         node.modifier_capabilities = NodeCapabilities::DRAW;
         node.modifier_child_capabilities = node.modifier_capabilities;
 
-        node.dispatch_modifier_invalidations(&[InvalidationKind::Draw]);
+        node.dispatch_modifier_invalidations(&[invalidation(InvalidationKind::Draw)]);
 
-        assert!(node.needs_layout());
+        assert!(node.needs_redraw());
+        assert!(!node.needs_layout());
     }
 
     #[test]
@@ -722,7 +753,7 @@ mod tests {
         node.modifier_capabilities = NodeCapabilities::SEMANTICS;
         node.modifier_child_capabilities = node.modifier_capabilities;
 
-        node.dispatch_modifier_invalidations(&[InvalidationKind::Semantics]);
+        node.dispatch_modifier_invalidations(&[invalidation(InvalidationKind::Semantics)]);
 
         assert!(node.needs_semantics());
         assert!(!node.needs_measure());

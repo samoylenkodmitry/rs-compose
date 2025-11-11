@@ -15,17 +15,34 @@ fn count_nodes_with_capability(chain: &ModifierNodeChain, capability: NodeCapabi
 
 #[derive(Clone, Default)]
 struct TestContext {
-    invalidations: Rc<RefCell<Vec<InvalidationKind>>>,
+    invalidations: Rc<RefCell<Vec<ModifierInvalidation>>>,
     updates: Rc<RefCell<usize>>,
+    active: Vec<NodeCapabilities>,
 }
 
 impl ModifierNodeContext for TestContext {
     fn invalidate(&mut self, kind: InvalidationKind) {
-        self.invalidations.borrow_mut().push(kind);
+        let mut capabilities = self
+            .active
+            .last()
+            .copied()
+            .unwrap_or_else(NodeCapabilities::empty);
+        capabilities.insert(NodeCapabilities::for_invalidation(kind));
+        self.invalidations
+            .borrow_mut()
+            .push(ModifierInvalidation::new(kind, capabilities));
     }
 
     fn request_update(&mut self) {
         *self.updates.borrow_mut() += 1;
+    }
+
+    fn push_active_capabilities(&mut self, capabilities: NodeCapabilities) {
+        self.active.push(capabilities);
+    }
+
+    fn pop_active_capabilities(&mut self) {
+        self.active.pop();
     }
 }
 
@@ -523,14 +540,20 @@ fn basic_context_records_invalidations_and_updates() {
     assert_eq!(attaches.get(), 1);
     assert_eq!(
         context.invalidations(),
-        &[InvalidationKind::Layout, InvalidationKind::Draw]
+        &[
+            ModifierInvalidation::new(InvalidationKind::Layout, NodeCapabilities::LAYOUT),
+            ModifierInvalidation::new(InvalidationKind::Draw, NodeCapabilities::DRAW)
+        ]
     );
     assert!(context.update_requested());
 
     let drained = context.take_invalidations();
     assert_eq!(
         drained,
-        vec![InvalidationKind::Layout, InvalidationKind::Draw]
+        vec![
+            ModifierInvalidation::new(InvalidationKind::Layout, NodeCapabilities::LAYOUT),
+            ModifierInvalidation::new(InvalidationKind::Draw, NodeCapabilities::DRAW)
+        ]
     );
     assert!(context.invalidations().is_empty());
     assert!(context.update_requested());
@@ -548,7 +571,10 @@ fn basic_context_records_invalidations_and_updates() {
     assert_eq!(attaches.get(), 2);
     assert_eq!(
         context.invalidations(),
-        &[InvalidationKind::Layout, InvalidationKind::Draw]
+        &[
+            ModifierInvalidation::new(InvalidationKind::Layout, NodeCapabilities::LAYOUT),
+            ModifierInvalidation::new(InvalidationKind::Draw, NodeCapabilities::DRAW)
+        ]
     );
 }
 

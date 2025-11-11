@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use compose_foundation::{
-    DelegatableNode, InvalidationKind, ModifierNode, ModifierNodeChain, ModifierNodeElement,
-    NodeCapabilities, NodeState,
+    DelegatableNode, InvalidationKind, ModifierInvalidation, ModifierNode, ModifierNodeChain,
+    ModifierNodeElement, NodeCapabilities, NodeState,
 };
 
 /// Unique identifier generator for modifier local keys.
@@ -503,7 +503,7 @@ impl ModifierLocalManager {
         &mut self,
         chain: &ModifierNodeChain,
         ancestor_lookup: &mut ModifierLocalAncestorResolver<'_>,
-    ) -> Vec<InvalidationKind> {
+    ) -> Vec<ModifierInvalidation> {
         if !chain.has_capability(NodeCapabilities::MODIFIER_LOCALS) {
             self.providers.clear();
             self.consumers.clear();
@@ -546,8 +546,14 @@ impl ModifierLocalManager {
                     consumer.notify(&mut scope);
                 }
                 self.consumers.insert(id, ConsumerState::new(dependencies));
-                if !invalidations.contains(&InvalidationKind::Layout) {
-                    invalidations.push(InvalidationKind::Layout);
+                if !invalidations
+                    .iter()
+                    .any(|entry: &ModifierInvalidation| entry.kind() == InvalidationKind::Layout)
+                {
+                    invalidations.push(ModifierInvalidation::new(
+                        InvalidationKind::Layout,
+                        NodeCapabilities::LAYOUT | NodeCapabilities::MODIFIER_LOCALS,
+                    ));
                 }
             }
         });
@@ -781,7 +787,13 @@ mod tests {
         let mut manager = ModifierLocalManager::new();
         let mut ancestor_lookup = |_token: ModifierLocalToken| None;
         let invalidations = manager.sync(&chain, &mut ancestor_lookup);
-        assert_eq!(invalidations, vec![InvalidationKind::Layout]);
+        assert_eq!(
+            invalidations,
+            vec![ModifierInvalidation::new(
+                InvalidationKind::Layout,
+                NodeCapabilities::LAYOUT | NodeCapabilities::MODIFIER_LOCALS
+            )]
+        );
         assert_eq!(observed.borrow().as_slice(), &[42]);
 
         let resolved = manager

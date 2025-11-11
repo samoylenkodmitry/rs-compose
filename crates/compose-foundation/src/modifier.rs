@@ -40,6 +40,12 @@ pub trait ModifierNodeContext {
     /// Requests that the node's `update` method run again outside of a
     /// regular composition pass.
     fn request_update(&mut self) {}
+
+    /// Signals that a node with `capabilities` is about to interact with this context.
+    fn push_active_capabilities(&mut self, _capabilities: NodeCapabilities) {}
+
+    /// Signals that the most recent node interaction has completed.
+    fn pop_active_capabilities(&mut self) {}
 }
 
 /// Lightweight [`ModifierNodeContext`] implementation that records
@@ -52,8 +58,9 @@ pub trait ModifierNodeContext {
 /// after driving a [`ModifierNodeChain`] reconciliation pass.
 #[derive(Default, Debug, Clone)]
 pub struct BasicModifierNodeContext {
-    invalidations: Vec<InvalidationKind>,
+    invalidations: Vec<ModifierInvalidation>,
     update_requested: bool,
+    active_capabilities: Vec<NodeCapabilities>,
 }
 
 impl BasicModifierNodeContext {
@@ -65,7 +72,7 @@ impl BasicModifierNodeContext {
     /// Returns the ordered list of invalidation kinds that were requested
     /// since the last call to [`clear_invalidations`]. Duplicate requests for
     /// the same kind are coalesced.
-    pub fn invalidations(&self) -> &[InvalidationKind] {
+    pub fn invalidations(&self) -> &[ModifierInvalidation] {
         &self.invalidations
     }
 
@@ -75,7 +82,7 @@ impl BasicModifierNodeContext {
     }
 
     /// Drains the recorded invalidations and returns them to the caller.
-    pub fn take_invalidations(&mut self) -> Vec<InvalidationKind> {
+    pub fn take_invalidations(&mut self) -> Vec<ModifierInvalidation> {
         std::mem::take(&mut self.invalidations)
     }
 
@@ -91,9 +98,26 @@ impl BasicModifierNodeContext {
     }
 
     fn push_invalidation(&mut self, kind: InvalidationKind) {
-        if !self.invalidations.contains(&kind) {
-            self.invalidations.push(kind);
+        let mut capabilities = self.current_capabilities();
+        capabilities.insert(NodeCapabilities::for_invalidation(kind));
+        if let Some(existing) = self
+            .invalidations
+            .iter_mut()
+            .find(|entry| entry.kind() == kind)
+        {
+            let updated = existing.capabilities() | capabilities;
+            *existing = ModifierInvalidation::new(kind, updated);
+        } else {
+            self.invalidations
+                .push(ModifierInvalidation::new(kind, capabilities));
         }
+    }
+
+    fn current_capabilities(&self) -> NodeCapabilities {
+        self.active_capabilities
+            .last()
+            .copied()
+            .unwrap_or_else(NodeCapabilities::empty)
     }
 }
 
@@ -104,6 +128,14 @@ impl ModifierNodeContext for BasicModifierNodeContext {
 
     fn request_update(&mut self) {
         self.update_requested = true;
+    }
+
+    fn push_active_capabilities(&mut self, capabilities: NodeCapabilities) {
+        self.active_capabilities.push(capabilities);
+    }
+
+    fn pop_active_capabilities(&mut self) {
+        self.active_capabilities.pop();
     }
 }
 
@@ -619,6 +651,30 @@ impl BitOrAssign for NodeCapabilities {
     }
 }
 
+/// Records an invalidation request together with the capability mask that triggered it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModifierInvalidation {
+    kind: InvalidationKind,
+    capabilities: NodeCapabilities,
+}
+
+impl ModifierInvalidation {
+    /// Creates a new modifier invalidation entry.
+    pub const fn new(kind: InvalidationKind, capabilities: NodeCapabilities) -> Self {
+        Self { kind, capabilities }
+    }
+
+    /// Returns the invalidated pipeline kind.
+    pub const fn kind(self) -> InvalidationKind {
+        self.kind
+    }
+
+    /// Returns the capability mask associated with the invalidation.
+    pub const fn capabilities(self) -> NodeCapabilities {
+        self.capabilities
+    }
+}
+
 /// Type-erased modifier element used by the runtime to reconcile chains.
 pub trait AnyModifierElement: fmt::Debug {
     fn node_type(&self) -> TypeId;
@@ -851,11 +907,25 @@ fn nth_delegate_mut<'a>(
     result
 }
 
+fn with_node_context<F, R>(
+    node: &mut dyn ModifierNode,
+    context: &mut dyn ModifierNodeContext,
+    f: F,
+) -> R
+where
+    F: FnOnce(&mut dyn ModifierNode, &mut dyn ModifierNodeContext) -> R,
+{
+    context.push_active_capabilities(node.node_state().capabilities());
+    let result = f(node, context);
+    context.pop_active_capabilities();
+    result
+}
+
 fn attach_node_tree(node: &mut dyn ModifierNode, context: &mut dyn ModifierNodeContext) {
     visit_node_tree_mut(node, &mut |n| {
         if !n.node_state().is_attached() {
             n.node_state().set_attached(true);
-            n.on_attach(context);
+            with_node_context(n, context, |node, ctx| node.on_attach(ctx));
         }
     });
 }

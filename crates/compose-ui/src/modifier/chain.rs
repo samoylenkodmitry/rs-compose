@@ -1,5 +1,6 @@
 use compose_foundation::{
-    BasicModifierNodeContext, InvalidationKind, ModifierNodeChain, NodeCapabilities,
+    BasicModifierNodeContext, InvalidationKind, ModifierInvalidation, ModifierNodeChain,
+    NodeCapabilities,
 };
 
 use super::{
@@ -68,7 +69,7 @@ impl ModifierChainHandle {
     }
 
     /// Reconciles the underlying [`ModifierNodeChain`] with the elements stored in `modifier`.
-    pub fn update(&mut self, modifier: &Modifier) -> Vec<InvalidationKind> {
+    pub fn update(&mut self, modifier: &Modifier) -> Vec<ModifierInvalidation> {
         let mut resolver = |_: ModifierLocalToken| None;
         self.update_with_resolver(modifier, &mut resolver)
     }
@@ -77,7 +78,7 @@ impl ModifierChainHandle {
         &mut self,
         modifier: &Modifier,
         resolver: &mut ModifierLocalAncestorResolver<'_>,
-    ) -> Vec<InvalidationKind> {
+    ) -> Vec<ModifierInvalidation> {
         self.chain
             .update_from_slice(modifier.elements(), &mut self.context);
         self.capabilities = self.chain.capabilities();
@@ -133,7 +134,7 @@ impl ModifierChainHandle {
     }
 
     /// Drains invalidations requested during the last update cycle.
-    pub fn take_invalidations(&mut self) -> Vec<InvalidationKind> {
+    pub fn take_invalidations(&mut self) -> Vec<ModifierInvalidation> {
         self.context.take_invalidations()
     }
 
@@ -314,7 +315,7 @@ fn global_modifier_debug_flag() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use compose_foundation::{ModifierNode, NodeCapabilities};
+    use compose_foundation::{ModifierInvalidation, ModifierNode, NodeCapabilities};
 
     use super::*;
     use crate::modifier::{Color, RoundedCornerShape};
@@ -329,7 +330,13 @@ mod tests {
         assert_eq!(handle.chain().len(), 1);
 
         let invalidations = handle.take_invalidations();
-        assert_eq!(invalidations, vec![InvalidationKind::Layout]);
+        assert_eq!(
+            invalidations,
+            vec![ModifierInvalidation::new(
+                InvalidationKind::Layout,
+                NodeCapabilities::LAYOUT
+            )]
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod layout;
 mod modifier;
 mod modifier_nodes;
 mod primitives;
+mod render_state;
 mod renderer;
 mod subcompose_layout;
 mod text;
@@ -41,6 +42,9 @@ pub use primitives::{
     Box, BoxScope, BoxSpec, BoxWithConstraints, BoxWithConstraintsScope,
     BoxWithConstraintsScopeImpl, Button, ButtonNode, Column, ColumnSpec, ForEach, Layout,
     LayoutNode, Row, RowSpec, Spacer, SpacerNode, SubcomposeLayout, Text, TextNode,
+};
+pub use render_state::{
+    peek_render_invalidation, request_render_invalidation, take_render_invalidation,
 };
 pub use renderer::{HeadlessRenderer, PaintLayer, RecordedRenderScene, RenderOp};
 pub use subcompose_layout::{

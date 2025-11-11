@@ -5,7 +5,8 @@ Goal: match Jetpack Compose’s `Modifier` API surface and `Modifier.Node` runti
 ---
 
 ## Current Gaps (Compose-RS)
-- Node capability dispatch still leans on the optional `as_*` downcasts; we need Kotlin’s mask-driven iteration and invalidation routing so DRAW-only changes stop forcing layout.
+- Runtime dispatch still leans on the optional `as_*` downcasts; Kotlin’s mask-driven visitors (`NodeChain#forEachKind` in `androidx/compose/ui/node/NodeChain.kt`) remain the model so third-party nodes can rely solely on capability masks.
+- Pointer/focus invalidations still piggyback on layout dirtiness; we need the Kotlin-style targeted bubbling so input + focus can refresh independently.
 
 ## Jetpack Compose Reference Anchors
 - `Modifier.kt`: immutable interface (`EmptyModifier`, `CombinedModifier`) plus `foldIn`, `foldOut`, `any`, `all`, `then`.
@@ -26,6 +27,7 @@ Goal: match Jetpack Compose’s `Modifier` API surface and `Modifier.Node` runti
 - **✅ Layout modifier migration complete:** `OffsetElement`/`OffsetNode` (offset.rs), `FillElement`/`FillNode` (fill.rs), and enhanced `SizeElement`/`SizeNode` now provide full 1:1 parity with Kotlin's foundation-layout modifiers. All three implement `LayoutModifierNode` with proper `measure()`, intrinsic measurement support, and `enforce_incoming` constraint handling. Code is organized into separate files (offset.rs, fill.rs, size.rs). All 118 tests pass ✅.
 - **✅ `ModifierState` removed:** `Modifier` now carries only elements + inspector metadata, all factories emit `ModifierNodeElement`s, and `ModifierChainHandle::compute_resolved()` derives padding/layout/background/graphics-layer data directly from the reconciled chain.
 - **✅ Weight/alignment/intrinsic parity:** `WeightElement`, `AlignmentElement`, `IntrinsicSizeElement`, and `GraphicsLayerElement` keep Row/Column/Box/Flex + rendering behavior node-driven, matching Jetpack Compose APIs while keeping the public builder surface unchanged.
+- **🎯 Targeted invalidations landed:** `BasicModifierNodeContext` now records `ModifierInvalidation` entries with capability masks, `LayoutNode` gained `mark_needs_redraw()`, and `compose-app-shell` only rebuilds the scene when `request_render_invalidation()` fires—mirroring how `AndroidComposeView#invalidateLayers` keeps draw dirties separate from layout. Pointer/focus routing still needs similar treatment.
 
 ## Migration Plan
 1. **(✅) Mirror the `Modifier` data model (Kotlin: `Modifier.kt`)**  
@@ -141,7 +143,7 @@ Always cross-check behavior against the Kotlin sources under `/media/huge/compos
 
 **Targets:** shortcuts 4, 5
 
-1. **Replace per-node `as_*_node` with mask-driven dispatch**
+1. **Replace per-node `as_*_node` with mask-driven dispatch** *(in progress)*
 
    * **Goal:** not every user node has to implement 4 optional methods.
    * **Actions:**
@@ -152,15 +154,17 @@ Always cross-check behavior against the Kotlin sources under `/media/huge/compos
 
      * A node with the DRAW capability but no `as_draw_node` still gets visited.
 
-2. **Make invalidation routing match the mask**
+2. **Make invalidation routing match the mask** *(partially done)*
 
    * **Goal:** stop doing “draw → mark_needs_layout.”
    * **Actions:**
 
-     * Add a `mark_needs_redraw()` or equivalent on the node/renderer path and call that for DRAW invalidations.
+     * ✅ Added `ModifierInvalidation` tracking + `LayoutNode::mark_needs_redraw()` so DRAW-only updates no longer force measure/layout and renderers receive precise dirties.
+     * 🚧 Extend the targeted path to pointer/focus so they raise their own managers without toggling layout flags.
    * **Acceptance:**
 
-     * DRAW-only updates don’t force layout.
+     * DRAW-only updates don’t force layout. *(met)*
+     * Pointer/focus invalidations bypass layout dirtiness. *(still pending)*
 
 ---
 
