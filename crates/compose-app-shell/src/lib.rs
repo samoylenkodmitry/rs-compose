@@ -124,20 +124,57 @@ where
 
     pub fn set_cursor(&mut self, x: f32, y: f32) {
         self.cursor = (x, y);
+        // Dispatch pointer move events through layout tree
+        if let Some(ref layout_tree) = self.layout_tree {
+            self.dispatch_pointer_event(layout_tree, PointerEventKind::Move, x, y);
+        }
+        // Also dispatch to renderer scene for backward compatibility
         if let Some(hit) = self.renderer.scene().hit_test(x, y) {
             hit.dispatch(PointerEventKind::Move, x, y);
         }
     }
 
     pub fn pointer_pressed(&mut self) {
-        if let Some(hit) = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1) {
-            hit.dispatch(PointerEventKind::Down, self.cursor.0, self.cursor.1);
+        let (x, y) = self.cursor;
+        // Dispatch pointer down events through layout tree
+        if let Some(ref layout_tree) = self.layout_tree {
+            self.dispatch_pointer_event(layout_tree, PointerEventKind::Down, x, y);
+        }
+        // Also dispatch to renderer scene for backward compatibility
+        if let Some(hit) = self.renderer.scene().hit_test(x, y) {
+            hit.dispatch(PointerEventKind::Down, x, y);
         }
     }
 
     pub fn pointer_released(&mut self) {
-        if let Some(hit) = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1) {
-            hit.dispatch(PointerEventKind::Up, self.cursor.0, self.cursor.1);
+        let (x, y) = self.cursor;
+        // Dispatch pointer up events through layout tree
+        if let Some(ref layout_tree) = self.layout_tree {
+            self.dispatch_pointer_event(layout_tree, PointerEventKind::Up, x, y);
+        }
+        // Also dispatch to renderer scene for backward compatibility
+        if let Some(hit) = self.renderer.scene().hit_test(x, y) {
+            hit.dispatch(PointerEventKind::Up, x, y);
+        }
+    }
+
+    fn dispatch_pointer_event(&self, layout_tree: &LayoutTree, kind: PointerEventKind, x: f32, y: f32) {
+        // Perform hit-testing to get all pointer input handlers at this position
+        let handlers = layout_tree.hit_test_pointer_handlers(x, y);
+
+        // Create the pointer event
+        let event = compose_foundation::PointerEvent::new(
+            kind,
+            compose_ui_graphics::Point { x, y },
+            compose_ui_graphics::Point { x, y },
+        );
+
+        // Dispatch to all handlers (in front-to-back order)
+        // First handler that consumes the event stops propagation
+        for handler in handlers {
+            handler(event);
+            // TODO: Support event consumption/propagation control
+            // For now, all handlers receive the event
         }
     }
 
