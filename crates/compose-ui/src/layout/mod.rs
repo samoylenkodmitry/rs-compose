@@ -121,6 +121,71 @@ impl LayoutTree {
     pub fn into_root(self) -> LayoutBox {
         self.root
     }
+
+    /// Performs hit-testing on the layout tree to find nodes that contain the given point.
+    /// Returns a vector of pointer input handlers from all hit nodes, in front-to-back order.
+    ///
+    /// This function traverses the tree depth-first, processing children before parents
+    /// to respect z-ordering (children are rendered on top of parents).
+    pub fn hit_test_pointer_handlers(&self, x: f32, y: f32) -> Vec<Rc<dyn Fn(compose_foundation::PointerEvent)>> {
+        let mut handlers = Vec::new();
+        self.hit_test_node(&self.root, x, y, &mut handlers);
+        handlers
+    }
+
+    fn hit_test_node(
+        &self,
+        node: &LayoutBox,
+        x: f32,
+        y: f32,
+        handlers: &mut Vec<Rc<dyn Fn(compose_foundation::PointerEvent)>>,
+    ) {
+        // Check if point is within this node's bounds
+        if !node.rect.contains(x, y) {
+            return;
+        }
+
+        // Process children first (they're rendered on top)
+        for child in node.children.iter().rev() {
+            self.hit_test_node(child, x, y, handlers);
+        }
+
+        // Collect pointer input handlers from this node
+        for handler in node.node_data.modifier_slices.pointer_inputs() {
+            handlers.push(handler.clone());
+        }
+    }
+
+    /// Performs hit-testing and returns click handlers specifically.
+    /// This is a convenience method for simple click handling.
+    pub fn hit_test_click_handlers(&self, x: f32, y: f32) -> Vec<Rc<dyn Fn(Point)>> {
+        let mut handlers = Vec::new();
+        self.hit_test_node_clicks(&self.root, x, y, &mut handlers);
+        handlers
+    }
+
+    fn hit_test_node_clicks(
+        &self,
+        node: &LayoutBox,
+        x: f32,
+        y: f32,
+        handlers: &mut Vec<Rc<dyn Fn(Point)>>,
+    ) {
+        // Check if point is within this node's bounds
+        if !node.rect.contains(x, y) {
+            return;
+        }
+
+        // Process children first (they're rendered on top)
+        for child in node.children.iter().rev() {
+            self.hit_test_node_clicks(child, x, y, handlers);
+        }
+
+        // Collect click handlers from this node
+        for handler in node.node_data.modifier_slices.click_handlers() {
+            handlers.push(handler.clone());
+        }
+    }
 }
 
 /// Layout information for a single node.
