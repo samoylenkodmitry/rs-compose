@@ -772,8 +772,11 @@ fn counter_app() {
     LaunchedEffect!(counter.get(), |_| println!("effect call"));
 
     let is_even = counter.get() % 2 == 0;
+    println!("Recomposing counter_app, counter={}", counter.get());
     compose_core::with_key(&is_even, || {
+        println!("Compose inside with_key, is_even={}", is_even);
         if is_even {
+            println!("Rendering even branch");
             Text(
                 "if counter % 2 == 0",
                 Modifier::padding(12.0)
@@ -788,6 +791,7 @@ fn counter_app() {
                     })),
             );
         } else {
+            println!("Rendering odd branch");
             Text(
                 "if counter % 2 != 0",
                 Modifier::padding(12.0)
@@ -1057,7 +1061,9 @@ fn counter_app() {
                                         .then(Modifier::padding(12.0)),
                                     {
                                         let counter = counter_inc.clone();
-                                        move || counter.set(counter.get() + 1)
+                                        move || {
+                                            println!("Incrementing counter to {}", counter.get() + 1);
+                                            counter.set(counter.get() + 1)}
                                     },
                                     || {
                                         Text("Increment", Modifier::padding(6.0));

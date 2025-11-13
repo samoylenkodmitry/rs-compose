@@ -90,10 +90,6 @@ pub fn collect_modifier_slices(chain: &ModifierNodeChain) -> ModifierNodeSlices 
         {
             slices.pointer_inputs.push(handler);
         }
-
-        if let Some(clickable) = node.as_any().downcast_ref::<ClickableNode>() {
-            slices.click_handlers.push(clickable.handler());
-        }
     });
 
     chain.for_each_node_with_capability(NodeCapabilities::DRAW, |_ref, node| {

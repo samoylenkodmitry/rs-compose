@@ -519,7 +519,25 @@ impl InspectableModifier for Modifier {
 
 impl PartialEq for Modifier {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.elements, &other.elements) && Rc::ptr_eq(&self.inspector, &other.inspector)
+        // Fast path: if they share the same Rc, they're definitely equal
+        if Rc::ptr_eq(&self.elements, &other.elements) && Rc::ptr_eq(&self.inspector, &other.inspector) {
+            return true;
+        }
+
+        // Slow path: compare elements by value
+        if self.elements.len() != other.elements.len() {
+            return false;
+        }
+
+        for (a, b) in self.elements.iter().zip(other.elements.iter()) {
+            if !a.equals_element(&**b) {
+                return false;
+            }
+        }
+
+        // Inspector comparison is less critical for behavior, so we can skip it
+        // (or do a shallow comparison if needed for debugging)
+        true
     }
 }
 

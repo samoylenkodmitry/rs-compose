@@ -1503,7 +1503,8 @@ fn runtime_metadata_for(
             modifier_slices: collect_slices_from_modifier(&button.modifier),
             role: SemanticsRole::Unknown,
             actions: Vec::new(),
-            button_handler: Some(button.on_click.clone()),
+            // TODO: The legacy ButtonNode.on_click field should not be used.
+            button_handler: None,
         });
     }
     if let Some(text) = try_clone::<TextNode>(applier, node_id)? {

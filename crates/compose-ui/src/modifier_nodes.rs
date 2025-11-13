@@ -920,6 +920,7 @@ impl PointerInputNode for ClickableNode {
                 x: event.position.x,
                 y: event.position.y,
             };
+            println!("ClickableNode received click at: {:?}", point);
             (self.on_click)(point);
             true
         } else {
@@ -936,6 +937,7 @@ impl PointerInputNode for ClickableNode {
         let handler = self.on_click.clone();
         Some(Rc::new(move |event: PointerEvent| {
             if matches!(event.kind, PointerEventKind::Down) {
+                println!("ClickableNode handler received click at: {:?}", event.position);
                 handler(Point {
                     x: event.position.x,
                     y: event.position.y,

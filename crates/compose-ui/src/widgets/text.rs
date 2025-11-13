@@ -105,9 +105,11 @@ where
 {
     let current = value.into_text_source().resolve();
     let id = compose_core::with_current_composer(|composer| {
+        println!("Emitting Text node with text: {}", current);
         composer.emit_node(|| {
             let mut node = TextNode::default();
             node.modifier = modifier.clone();
+            println!("Creating Text node with text: {}", current);
             node.text = current.clone();
             node
         })

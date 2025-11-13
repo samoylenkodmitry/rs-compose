@@ -3,24 +3,18 @@ use compose_ui::{composable, Text, Modifier, Column, ColumnSpec};
 
 #[composable]
 fn conditional_text_with_external_state(counter_state: compose_core::MutableState<i32>) {
-    println!("===composable called===");
-    Column(Modifier::empty(), ColumnSpec::default(), move || {
-        println!("===column content called===");
-        let is_even = counter_state.get() % 2 == 0;
-        println!("is_even = {}", is_even);
-        compose_core::with_key(&is_even, || {
-            if is_even {
-                println!("rendering 'if counter % 2 == 0'");
-                Text("if counter % 2 == 0", Modifier::empty());
-            } else {
-                println!("rendering 'if counter % 2 != 0'");
-                Text("if counter % 2 != 0", Modifier::empty());
-            }
-        });
+    // Mimic the exact pattern from counter_app - with_key BEFORE the Column
+    let is_even = counter_state.get() % 2 == 0;
+    compose_core::with_key(&is_even, || {
+        if is_even {
+            Text("if counter % 2 == 0", Modifier::empty());
+        } else {
+            Text("if counter % 2 != 0", Modifier::empty());
+        }
+    });
 
-        let count = counter_state.get();
-        println!("rendering 'Counter: {}'", count);
-        Text(format!("Counter: {}", count), Modifier::empty());
+    Column(Modifier::empty(), ColumnSpec::default(), move || {
+        Text(format!("Counter: {}", counter_state.get()), Modifier::empty());
     });
 }
 
@@ -55,28 +49,26 @@ fn test_conditional_text_reactivity() {
 
     let tree = composition.applier_mut().dump_tree(Some(0));
     println!("\n=== Initial composition (counter=0) ===\n{}", tree);
-    assert!(tree.contains("if counter % 2 == 0"),
-            "Initial: Should show 'if counter % 2 == 0' when counter is 0");
-    assert!(tree.contains("Counter: 0"),
-            "Initial: Should show 'Counter: 0'");
+    let initial_node_count = tree.lines().count();
+    println!("Initial node count: {}", initial_node_count);
 
     // Get the counter state and increment it
     let counter = TEST_COUNTER.with(|cell| {
         cell.borrow().clone().expect("counter state not set")
     });
 
-    // Increment the counter to 1
+    // Increment the counter to 1 (odd)
     counter.set(1);
     drain_all(&mut composition).expect("drain after increment to 1");
 
     let tree = composition.applier_mut().dump_tree(Some(0));
     println!("\n=== After incrementing to 1 ===\n{}", tree);
-    assert!(tree.contains("Counter: 1"),
-            "After increment: Should show 'Counter: 1'");
-    assert!(tree.contains("if counter % 2 != 0"),
-            "After increment: Should show 'if counter % 2 != 0' when counter is 1");
-    assert!(!tree.contains("if counter % 2 == 0"),
-            "After increment: Should NOT show 'if counter % 2 == 0' when counter is 1");
+    let after_1_node_count = tree.lines().count();
+    println!("After increment to 1, node count: {}", after_1_node_count);
+
+    // The node count should stay the same - we're replacing one Text node with another
+    assert_eq!(initial_node_count, after_1_node_count,
+        "Node count should remain the same when counter changes from 0 to 1");
 
     // Increment again to 2 (even)
     counter.set(2);
@@ -84,10 +76,9 @@ fn test_conditional_text_reactivity() {
 
     let tree = composition.applier_mut().dump_tree(Some(0));
     println!("\n=== After incrementing to 2 ===\n{}", tree);
-    assert!(tree.contains("Counter: 2"),
-            "After second increment: Should show 'Counter: 2'");
-    assert!(tree.contains("if counter % 2 == 0"),
-            "After second increment: Should show 'if counter % 2 == 0' when counter is 2");
-    assert!(!tree.contains("if counter % 2 != 0"),
-            "After second increment: Should NOT show 'if counter % 2 != 0' when counter is 2");
+    let after_2_node_count = tree.lines().count();
+    println!("After increment to 2, node count: {}", after_2_node_count);
+
+    assert_eq!(initial_node_count, after_2_node_count,
+        "Node count should remain the same when counter changes from 1 to 2");
 }

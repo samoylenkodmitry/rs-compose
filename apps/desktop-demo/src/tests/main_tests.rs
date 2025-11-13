@@ -2,6 +2,7 @@ use super::*;
 use compose_core::{location_key, Composition, MemoryApplier, MutableState, NodeError};
 
 mod conditional_text_test;
+mod counter_app_test;
 
 #[composable]
 fn async_runtime_test_content(
