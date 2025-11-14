@@ -733,7 +733,7 @@ fn counter_app() {
     } else {
         pointer_wave * 0.6
     };
-    let wave = animateFloatAsState(target_wave, "wave").value();
+    let wave_state = animateFloatAsState(target_wave, "wave");
     let fetch_key = fetch_request.get();
     {
         let async_message = async_message.clone();
@@ -814,7 +814,7 @@ fn counter_app() {
         Modifier::padding(32.0)
             .then(Modifier::rounded_corners(24.0))
             .then(Modifier::draw_behind({
-                let phase = wave;
+                let phase = wave_state.value();
                 move |scope| {
                     scope.draw_round_rect(
                         Brush::linear_gradient(vec![
@@ -831,12 +831,12 @@ fn counter_app() {
             let counter_main = counter.clone();
             let pointer_position_main = pointer_position.clone();
             let pointer_down_main = pointer_down.clone();
-            let wave_main = wave;
+            let wave_main = wave_state;
             move || {
                 let counter = counter_main.clone();
                 let pointer_position = pointer_position_main.clone();
                 let pointer_down = pointer_down_main.clone();
-                let wave = wave_main;
+                let wave = wave_main.clone();
                 Text(
                     "Compose-RS Playground",
                     Modifier::padding(12.0)
@@ -865,6 +865,7 @@ fn counter_app() {
                         let counter_display = counter.clone();
                         let wave_value = wave;
                         move || {
+                            let wave_value = wave_value.value();
                             Text(
                                 format!("Counter: {}", counter_display.get()),
                                 Modifier::padding(8.0)
@@ -933,6 +934,10 @@ fn counter_app() {
                                         .await_pointer_event_scope(|await_scope| async move {
                                             loop {
                                                 let event = await_scope.await_pointer_event().await;
+                                                println!(
+                                                    "Pointer event: kind={:?} pos=({:.1}, {:.1})",
+                                                    event.kind, event.position.x, event.position.y
+                                                );
                                                 match event.kind {
                                                     PointerEventKind::Down => {
                                                         pointer_down.set(true)

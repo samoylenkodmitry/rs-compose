@@ -24,12 +24,13 @@ impl NodeStyle {
         let resolved = data.resolved_modifiers;
         let slices: &ModifierNodeSlices = data.modifier_slices();
         let resolved_background = resolved.background();
+        let pointer_inputs = slices.pointer_inputs().to_vec();
         Self {
             padding: resolved.padding(),
             background: resolved_background.map(|background| background.color()),
             click_actions: slices.click_handlers().iter().cloned().collect(),
             shape: resolved.corner_shape(),
-            pointer_inputs: slices.pointer_inputs().to_vec(),
+            pointer_inputs,
             draw_commands: slices.draw_commands().to_vec(),
             graphics_layer: resolved.graphics_layer(),
             clip_to_bounds: slices.clip_to_bounds(),

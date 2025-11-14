@@ -50,7 +50,7 @@ type PointerInputFuture = Pin<Box<dyn Future<Output = ()>>>;
 type PointerInputHandler = Rc<dyn Fn(PointerInputScope) -> PointerInputFuture>;
 
 thread_local! {
-    static POINTER_INPUT_TASKS: RefCell<HashMap<u64, Weak<PointerInputTaskInner>>> = RefCell::new(HashMap::new());
+    static POINTER_INPUT_TASKS: RefCell<HashMap<u64, Rc<PointerInputTaskInner>>> = RefCell::new(HashMap::new());
 }
 
 #[derive(Clone)]
@@ -273,7 +273,7 @@ impl PointerInputTask {
         let id = NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed);
         let inner = Rc::new(PointerInputTaskInner::new(future));
         POINTER_INPUT_TASKS.with(|registry| {
-            registry.borrow_mut().insert(id, Rc::downgrade(&inner));
+            registry.borrow_mut().insert(id, inner.clone());
         });
         Self { id, inner }
     }
@@ -292,9 +292,12 @@ impl PointerInputTask {
 
 impl Drop for PointerInputTask {
     fn drop(&mut self) {
-        POINTER_INPUT_TASKS.with(|registry| {
-            registry.borrow_mut().remove(&self.id);
-        });
+        // Don't remove from registry here! The registry holds a strong Rc<PointerInputTaskInner>,
+        // so the inner will stay alive even if this PointerInputTask wrapper is dropped.
+        // This is intentional - tasks created by temporary modifier chains (used for slice collection)
+        // will have their PointerInputTask dropped, but the inner task needs to stay alive in the
+        // registry so that wakers can still find and wake it.
+        // Tasks are only removed from the registry when explicitly cancelled via cancel().
     }
 }
 
@@ -356,11 +359,7 @@ struct PointerInputTaskWaker {
 impl ArcWake for PointerInputTaskWaker {
     fn wake_by_ref(arc_self: &Arc<Self>) {
         POINTER_INPUT_TASKS.with(|registry| {
-            if let Some(task) = registry
-                .borrow()
-                .get(&arc_self.task_id)
-                .and_then(|weak| weak.upgrade())
-            {
+            if let Some(task) = registry.borrow().get(&arc_self.task_id).cloned() {
                 task.request_poll(arc_self.task_id);
             }
         });
