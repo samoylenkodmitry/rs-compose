@@ -197,6 +197,14 @@ fn recursive_layout_node(depth: usize, horizontal: bool, index: usize) {
 ## Roadmap
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for detailed progress tracking, implementation status, and upcoming milestones.
+
+### Modifier Migration Status
+
+The fluent modifier builders have landed, but the end-to-end migration is still underway. Pointer
+and focus invalidation queues are not yet wired into the runtime, and legacy widget nodes are still
+present in `crates/compose-ui/src/widgets/nodes`. Check [`NEXT_TASK.md`](NEXT_TASK.md) and
+[`modifier_match_with_jc.md`](modifier_match_with_jc.md) for an up-to-date list of outstanding
+work before claiming parity with Jetpack Compose.
 ## Contributing
 
 This repository is currently a design playground; issues and pull requests are welcome for discussions, experiments, and early prototypes that move the Jetpack Compose–style experience forward in Rust.

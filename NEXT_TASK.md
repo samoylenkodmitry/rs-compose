@@ -1,96 +1,40 @@
-# ✅ Modifier System Parity Complete
+# Modifier System Migration Tracker
 
-## Status: 100% Parity Achieved 🎉
+## Status: Still In Progress
 
-The Compose-RS modifier system has achieved **complete 1:1 parity** with Jetpack Compose's modifier architecture.
+Recent work modernised many modifier builder helpers so they chain via `self.then(...)`, but
+core runtime parity with Jetpack Compose is not complete yet. The codebase still contains
+legacy widget nodes (`ButtonNode`, `TextNode`, `SpacerNode`) and manual semantics fallbacks,
+and the new pointer/focus invalidation managers are never invoked outside of unit tests.
 
----
+## High-Priority Gaps
 
-## What Was Accomplished
+1. **Wire the new dispatch queues into the host/runtime.** `schedule_pointer_repass` and
+   `schedule_focus_invalidation` are exported from `compose_ui`, but `process_pointer_repasses`
+   / `process_focus_invalidations` are never called by the app shell. Nodes mark
+   `needs_pointer_pass` / `needs_focus_sync` yet nothing clears those flags, so the queues never
+   drain.
+2. **Remove the legacy widget-specific nodes.** Layout/runtime metadata paths still special-case
+   `ButtonNode`, `TextNode`, and `SpacerNode`, pulling modifier information directly from those
+   structs instead of the reconciled `LayoutNode` chain. Migrating those widgets onto standard
+   layout nodes will let us delete a large amount of duplicate logic.
+3. **Stop rebuilding modifier snapshots ad-hoc.** Functions such as
+   `measure_spacer` in `layout/mod.rs` still call `Modifier::empty().resolved_modifiers()` which
+   spins up a temporary chain every time. Resolved modifiers should come exclusively from the
+   layout node data that already owns the reconciled chain.
+4. **Tests/examples only validate structure.** Pointer integration tests currently just check
+   node counts; they never synthesize pointer events through `HitTestTarget`. We still need
+   proper integration coverage before claiming parity.
 
-### Core Implementation ✅
-- **Element-based modifiers** — Immutable chains matching Kotlin's `Modifier.kt`
-- **Node lifecycle** — `ModifierNodeElement` with create/update/key/equals/hash
-- **Sentinel chains** — Safe head/tail sentinels, deterministic traversal
-- **Capability masks** — LAYOUT/DRAW/POINTER_INPUT/SEMANTICS/FOCUS/MODIFIER_LOCALS
-- **Delegate semantics** — Parent/child links, aggregate capability propagation
+## Next Steps
 
-### Invalidation System ✅
-- **Targeted invalidations** — Each kind (LAYOUT/DRAW/POINTER/FOCUS/SEMANTICS) operates independently
-- **Pointer dispatch** — `PointerDispatchManager` schedules repasses without forcing layout
-- **Focus dispatch** — `FocusInvalidationManager` manages focus invalidations independently
-- **Zero unsafe code** — Complete implementation using safe Rust
-
-### Developer Experience ✅
-- **Helper macros** — `impl_modifier_node!(draw, pointer_input, ...)` eliminates boilerplate
-- **15 production modifier nodes** — All built-in modifiers are node-based
-- **474+ tests passing** — Full regression coverage
-- **Comprehensive documentation** — Inline examples and guides
-
----
-
-## Next Steps: Testing & Examples
-
-### ✅ Critical Blocker RESOLVED
-
-**Mouse/Pointer Input Now Working**
-- ✅ Fixed `Button` widget to internally use `Modifier.clickable()`
-- ✅ All 476 tests passing (added 2 new button integration tests)
-- ✅ Complete pointer input flow operational
-- ✅ Hit-testing, event dispatch, and invalidation system all functional
-- **Details:** See [POINTER_INPUT_FIX.md](./POINTER_INPUT_FIX.md) for complete fix documentation
-
----
-
-See [modifier_match_with_jc.md](./modifier_match_with_jc.md#testing--examples-roadmap) for the complete testing roadmap:
-
-### Quick Start 
-1. **Run existing tests**  — Verify baseline: `cargo test`
-2. **Create first integration test**  — Node reuse and targeted invalidation tests
-3. **Create simple example**  — Basic modifier demonstration
-
-### Comprehensive Plan
-- ** 1:** Core integration testing + benchmarks
-- ** 2-3:** Example app development (6 example categories)
-- ** 4:** Documentation polish + CI setup
-
-**Full details:** [modifier_match_with_jc.md § Testing & Examples Roadmap](./modifier_match_with_jc.md#testing--examples-roadmap)
-
----
-
-## Files Changed Summary
-
-### New Files Created
-1. `crates/compose-ui/src/pointer_dispatch.rs` — Pointer invalidation servicing
-2. `crates/compose-ui/src/focus_dispatch.rs` — Focus invalidation servicing
-3. `crates/compose-foundation/src/modifier_helpers.rs` — Helper macros
-
-### Modified Files
-- `crates/compose-ui/src/lib.rs` — Export dispatch APIs
-- `crates/compose-foundation/src/lib.rs` — Export helper macros
-- `crates/compose-ui/src/widgets/nodes/layout_node.rs` — Auto-schedule repasses
-- `crates/compose-ui/src/modifier/pointer_input.rs` — Use `impl_pointer_input_node!()` macro
-- `crates/compose-ui/src/modifier/focus.rs` — Use `impl_focus_node!()` macro
-- `crates/compose-foundation/src/modifier.rs` — Enhanced documentation
-
----
-
-## Verification
-
-✅ **All 474+ tests passing**
-✅ **Zero unsafe code** in modifier system
-✅ **100% node-based** implementation (no legacy code)
-✅ **Behavioral parity** verified against Kotlin sources:
-- `/media/huge/composerepo/.../Modifier.kt`
-- `/media/huge/composerepo/.../ModifierNodeElement.kt`
-- `/media/huge/composerepo/.../NodeChain.kt`
-- `/media/huge/composerepo/.../FocusInvalidationManager.kt`
-
----
-
-## 🎉 Mission Accomplished
-
-**No further core modifier work required** — the foundation is solid and ready for:
-1. Application development
-2. Advanced features
-3. Testing & examples (see roadmap above)
+- Teach `crates/compose-app-shell` to drain pointer/focus queues each frame and to call the
+  appropriate `LayoutNode` methods so `needs_pointer_pass` / `needs_focus_sync` are cleared.
+- Convert the remaining widget nodes to emit layout/subcompose nodes with modifier-driven
+  behaviour, then delete the `ButtonNode`, `TextNode`, and `SpacerNode` code paths along with
+  the metadata fallbacks in `layout/mod.rs`.
+- Audit `LayoutNodeData` creation so every code path uses `LayoutNodeData::new(...)` with
+  `modifier_slices`, and remove the places that call `Modifier::empty().resolved_modifiers()`
+  as a stand-in.
+- Expand the pointer/focus integration tests to drive events through a render scene so we can
+  verify the async pointer handlers and focus callbacks actually fire.
