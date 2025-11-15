@@ -16,6 +16,7 @@ mod render_state;
 mod renderer;
 mod subcompose_layout;
 mod text;
+mod text_modifier_node;
 pub mod widgets;
 
 pub use compose_ui_graphics::Dp;
@@ -46,6 +47,7 @@ pub use modifier_nodes::{
     CornerShapeElement, CornerShapeNode, FillDirection, FillElement, FillNode, OffsetElement,
     OffsetNode, PaddingElement, PaddingNode, SizeElement, SizeNode,
 };
+pub use text_modifier_node::{TextModifierElement, TextModifierNode};
 pub use pointer_dispatch::{
     clear_pointer_repasses, has_pending_pointer_repasses, process_pointer_repasses,
     schedule_pointer_repass,

@@ -1434,14 +1434,28 @@ fn collect_runtime_metadata_inner(
     Ok(())
 }
 
+/// Extracts text content from a LayoutNode's modifier chain.
+///
+/// Searches the modifier chain for a TextModifierNode and returns its text content.
+/// This replaces the old approach of checking measure_policy.text_content().
+///
+/// We extract text from the semantics configuration, which TextModifierNode
+/// populates via its SemanticsNode implementation.
+fn extract_text_from_layout_node(layout: &LayoutNode) -> Option<String> {
+    // Use the semantics configuration which collects data from all SemanticsNode instances
+    // in the modifier chain, including TextModifierNode
+    layout.semantics_configuration()
+        .and_then(|config| config.content_description)
+}
+
 fn runtime_metadata_for(
     applier: &mut MemoryApplier,
     node_id: NodeId,
 ) -> Result<RuntimeNodeMetadata, NodeError> {
     // Try LayoutNode (the primary modern path)
     if let Some(layout) = try_clone::<LayoutNode>(applier, node_id)? {
-        // Check if this is a Text widget by checking if the measure policy has text content
-        let role = if let Some(text) = layout.measure_policy.text_content() {
+        // Extract text content from the modifier chain instead of measure policy
+        let role = if let Some(text) = extract_text_from_layout_node(&layout) {
             SemanticsRole::Text { value: text }
         } else {
             SemanticsRole::Layout

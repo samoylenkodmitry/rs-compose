@@ -4,8 +4,16 @@
 
 The modifier system migration has made significant progress. All widgets (`Button`, `Text`, `Spacer`)
 now use `LayoutNode` and the modifier chain reconciliation system is functional with capability-based
-invalidation. However, **the Text implementation takes an architectural shortcut** that deviates from
-Jetpack Compose's design. See "Known Shortcuts" section below for details.
+invalidation. However, several shortcuts keep us from real Jetpack Compose parity:
+
+- `Modifier::then` still clones the entire element vector every time, so modifier composition is
+  `O(n²)` instead of the persistent `CombinedModifier` structure Kotlin uses.
+- The reconciled modifier node chain is only consulted to build `ResolvedModifiers`; the layout/draw
+  pipeline never invokes `LayoutModifierNode::measure` or `DrawModifierNode::draw`.
+- **Text still relies on `TextMeasurePolicy`** rather than a modifier node, so content, rendering,
+  and semantics live outside the node architecture.
+
+See "Known Shortcuts" for the outstanding work.
 
 ## Completed Work
 
@@ -42,10 +50,30 @@ The codebase mostly follows Jetpack Compose's modifier system design:
   - `LeafMeasurePolicy` - for leaf nodes with fixed intrinsic size
   - `FlexMeasurePolicy` - for row/column layouts (used by Button)
   - `BoxMeasurePolicy` - for box layouts
-- **Modifier Chain**: All modifiers are reconciled through `ModifierNodeChain`
+- **Modifier Chain**:
+  - Modifiers reconcile through `ModifierNodeChain`
+  - ⚠️ `Modifier::then` clones both the element list and inspector metadata every call instead of
+    composing persistently
+  - ⚠️ Layout/draw code reads `ResolvedModifiers` snapshots rather than executing the reconciled nodes
 - **Invalidation**: Capability-based invalidation (layout, draw, pointer, focus, semantics)
 
 ## Known Shortcuts
+
+### Modifier::then Copies the Chain
+- `Modifier::then` allocates new `Vec`s for both elements and inspector data each time we append.
+- Building a chain like `Modifier.padding().background().clickable()` repeatedly clones previous
+  entries, making recomposition slower than Kotlin's `CombinedModifier` structure.
+- **Fix:** Mirror Jetpack Compose's persistent composition so `then` is `O(1)` and sharing is
+  preserved.
+
+### Modifier Nodes Never Participate in Layout/Draw
+- `ModifierChainHandle::compute_resolved` downcasts a shortlist of node types and copies their data
+  into `ResolvedModifiers`. The layout pipeline then reads padding/size/background from that struct
+  and never calls `LayoutModifierNode::measure`, `DrawModifierNode::draw`, etc.
+- Custom modifiers (or even built-in ones outside the shortlist) cannot affect measurement, drawing,
+  pointer input, or semantics.
+- **Fix:** Thread the reconciled node chain through layout/draw/pointer dispatch so capability
+  interfaces actually run, then delete the `ResolvedModifiers` shadow copy.
 
 ### Text Implementation (Architecture Mismatch with Jetpack Compose)
 
@@ -74,18 +102,38 @@ Text content lives in `TextStringSimpleNode` which implements:
 - `DrawModifierNode` (draw)
 - `SemanticsModifierNode` (semantics)
 
+**Additional Gaps:**
+- `TextModifierElement::update` cannot request invalidations, so text/style changes rely on
+  rebuilding the entire LayoutNode to refresh layout/draw/semantics.
+- `TextModifierNode::draw` is empty and measurement uses a monospaced fake; Kotlin uses
+  `ParagraphLayoutCache` and exposes `getTextLayoutResult`.
+- Semantics only set `content_description = text` rather than the richer properties provided by
+  `TextStringSimpleNode`.
+
 **Proper Fix:**
 1. Create `TextModifierNode: LayoutModifierNode + DrawModifierNode + SemanticsModifierNode`
-2. Create `TextModifierElement` that produces `TextModifierNode`
+2. Create `TextModifierElement` that produces `TextModifierNode` and can request invalidations when
+   text/style change
 3. Update `Text()` to use modifier-based text: `Layout(modifier.textModifier(text), EmptyMeasurePolicy, || {})`
 4. Remove `text_content()` from `MeasurePolicy` trait
 5. Delete `TextMeasurePolicy`
+6. Implement a real text measurer/drawer (ParagraphLayoutCache analogue) and semantics contract
 
 **Reference:**
 - See [modifier_match_with_jc.md](modifier_match_with_jc.md) for detailed architecture comparison
 - JC source: `/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/modifiers/TextStringSimpleNode.kt`
 
 ## Remaining Work
+
+### Make Modifier Composition Persistent
+- Introduce a `CombinedModifier`-style representation so `Modifier::then` is `O(1)` and retains
+  sharing between recompositions.
+- Ensure `fold_in`, `fold_out`, `any`, and `all` traverse the combined structure correctly.
+
+### Execute Modifier Nodes During Layout/Draw
+- Run `LayoutModifierNode::measure`, `DrawModifierNode::draw`, pointer, semantics, and focus
+  callbacks in the reconciled order instead of mirroring data into `ResolvedModifiers`.
+- Delete the ad-hoc padding/size/background accumulation once the real nodes power layout.
 
 ### Critical: Fix Text Implementation
 **Priority: High** - Required for true Jetpack Compose parity
@@ -96,8 +144,10 @@ The text implementation needs to be refactored to match JC's architecture:
 3. Add `.textModifier(text, style, ...)` extension to `Modifier`
 4. Update `Text()` widget to use modifier-based approach instead of `TextMeasurePolicy`
 5. Remove `text_content()` from `MeasurePolicy` trait
-6. Update rendering/semantics system to extract text from modifier chain
-7. Delete `TextMeasurePolicy` once migration is complete
+6. Update rendering/semantics system to extract text from modifier chain and expose the same
+   semantics contract (`text`, `getTextLayoutResult`, translation toggles)
+7. Wire invalidation hooks so `TextModifierElement::update` can request layout/draw/semantics updates
+8. Delete `TextMeasurePolicy` once migration is complete
 
 This will properly separate concerns and align with Jetpack Compose's design where content lives
 in modifier nodes, not measure policies.
@@ -109,7 +159,7 @@ in modifier nodes, not measure policies.
 
 ### Future Enhancements
 - Additional measure policies for more complex layouts
-- Performance optimization of modifier chain reconciliation
+- Performance optimization of modifier chain reconciliation (goes away once `then` is persistent)
 - More comprehensive integration tests
 
 ## References

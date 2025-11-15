@@ -444,7 +444,7 @@ impl Modifier {
         Self::from_parts(vec![dyn_element])
     }
 
-    fn from_parts(elements: Vec<DynModifierElement>) -> Self {
+    pub(crate) fn from_parts(elements: Vec<DynModifierElement>) -> Self {
         Self {
             elements: Rc::new(elements),
             inspector: Rc::new(Vec::new()),

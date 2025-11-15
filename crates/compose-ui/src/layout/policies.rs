@@ -578,66 +578,6 @@ impl MeasurePolicy for FlexMeasurePolicy {
     }
 }
 
-/// MeasurePolicy for Text - measures text content and respects constraints.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextMeasurePolicy {
-    pub text: String,
-}
-
-impl TextMeasurePolicy {
-    pub fn new(text: String) -> Self {
-        Self { text }
-    }
-}
-
-impl MeasurePolicy for TextMeasurePolicy {
-    fn measure(
-        &self,
-        _measurables: &[Box<dyn Measurable>],
-        constraints: Constraints,
-    ) -> MeasureResult {
-        // Measure the text content
-        let text_size = measure_text_content(&self.text);
-
-        // Constrain the size to the provided constraints
-        let (width, height) = constraints.constrain(text_size.width, text_size.height);
-
-        MeasureResult::new(
-            crate::modifier::Size { width, height },
-            vec![], // Text has no children
-        )
-    }
-
-    fn min_intrinsic_width(&self, _measurables: &[Box<dyn Measurable>], _height: f32) -> f32 {
-        measure_text_content(&self.text).width
-    }
-
-    fn max_intrinsic_width(&self, _measurables: &[Box<dyn Measurable>], _height: f32) -> f32 {
-        measure_text_content(&self.text).width
-    }
-
-    fn min_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
-        measure_text_content(&self.text).height
-    }
-
-    fn max_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
-        measure_text_content(&self.text).height
-    }
-
-    fn text_content(&self) -> Option<String> {
-        Some(self.text.clone())
-    }
-}
-
-/// Helper function to measure text content size.
-fn measure_text_content(text: &str) -> crate::modifier::Size {
-    let metrics = crate::text::measure_text(text);
-    crate::modifier::Size {
-        width: metrics.width,
-        height: metrics.height,
-    }
-}
-
 /// MeasurePolicy for leaf nodes with fixed intrinsic size (like Spacer).
 /// This policy respects the provided constraints but has a preferred intrinsic size.
 #[derive(Clone, Debug, PartialEq)]
@@ -680,6 +620,133 @@ impl MeasurePolicy for LeafMeasurePolicy {
 
     fn max_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
         self.intrinsic_size.height
+    }
+}
+
+/// EmptyMeasurePolicy that delegates all measurement to modifier nodes.
+///
+/// This is used when a Layout has no child layout logic - all measurement
+/// is handled by modifier nodes (e.g., TextModifierNode for Text widgets).
+/// Matches Jetpack Compose's EmptyMeasurePolicy pattern used in BasicText.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmptyMeasurePolicy;
+
+impl EmptyMeasurePolicy {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for EmptyMeasurePolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MeasurePolicy for EmptyMeasurePolicy {
+    fn measure(
+        &self,
+        _measurables: &[Box<dyn Measurable>],
+        constraints: Constraints,
+    ) -> MeasureResult {
+        // Empty policy returns the maximum available space
+        // The actual measurement is handled by modifier nodes in the chain
+        let (width, height) = constraints.constrain(0.0, 0.0);
+
+        MeasureResult::new(
+            crate::modifier::Size { width, height },
+            vec![], // No children
+        )
+    }
+
+    fn min_intrinsic_width(&self, _measurables: &[Box<dyn Measurable>], _height: f32) -> f32 {
+        0.0
+    }
+
+    fn max_intrinsic_width(&self, _measurables: &[Box<dyn Measurable>], _height: f32) -> f32 {
+        0.0
+    }
+
+    fn min_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
+        0.0
+    }
+
+    fn max_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
+        0.0
+    }
+}
+
+/// Text-aware measure policy that extracts text from the modifier chain.
+///
+/// This is a bridge implementation until the layout system fully supports
+/// LayoutModifierNode measurement. It measures text by extracting the text
+/// content from TextModifierNode via the semantics system.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextAwareMeasurePolicy {
+    /// Cached text content extracted from modifier chain
+    text: Option<String>,
+}
+
+impl TextAwareMeasurePolicy {
+    pub fn new() -> Self {
+        Self { text: None }
+    }
+
+    pub fn with_text(text: String) -> Self {
+        Self { text: Some(text) }
+    }
+
+    fn measure_text_size(&self) -> crate::modifier::Size {
+        if let Some(ref text) = self.text {
+            let metrics = crate::text::measure_text(text);
+            crate::modifier::Size {
+                width: metrics.width,
+                height: metrics.height,
+            }
+        } else {
+            crate::modifier::Size {
+                width: 0.0,
+                height: 0.0,
+            }
+        }
+    }
+}
+
+impl Default for TextAwareMeasurePolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MeasurePolicy for TextAwareMeasurePolicy {
+    fn measure(
+        &self,
+        _measurables: &[Box<dyn Measurable>],
+        constraints: Constraints,
+    ) -> MeasureResult {
+        let text_size = self.measure_text_size();
+        let (width, height) = constraints.constrain(text_size.width, text_size.height);
+
+        MeasureResult::new(
+            crate::modifier::Size { width, height },
+            vec![], // Text has no children
+        )
+    }
+
+    fn min_intrinsic_width(&self, _measurables: &[Box<dyn Measurable>], _height: f32) -> f32 {
+        self.measure_text_size().width
+    }
+
+    fn max_intrinsic_width(&self, _measurables: &[Box<dyn Measurable>], _height: f32) -> f32 {
+        self.measure_text_size().width
+    }
+
+    fn min_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
+        self.measure_text_size().height
+    }
+
+    fn max_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
+        self.measure_text_size().height
     }
 }
 

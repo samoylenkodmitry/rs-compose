@@ -26,15 +26,66 @@ gaps before we can claim full parity with Jetpack Compose.
   been removed. All measurement goes through the unified `measure_layout_node` path.
 - ✅ **Metadata fallbacks removed.** `runtime_metadata_for` and `compute_semantics_for_node` only
   handle `LayoutNode` and `SubcomposeLayoutNode`, ensuring consistent modifier chain traversal.
+- ⚠️ **Modifier::then copies chains eagerly.** Each call to `Modifier::then` clones both element and
+  inspector vectors (`crates/compose-ui/src/modifier/mod.rs:333-347`), so building long chains is
+  `O(n²)` and loses the structural sharing provided by Jetpack Compose's `CombinedModifier`.
+- ⚠️ **Modifier nodes never execute.** `ModifierChainHandle::compute_resolved` simply downcasts known
+  node types and copies their fields into `ResolvedModifiers`
+  (`crates/compose-ui/src/modifier/chain.rs:160-205`); the measure/draw pipeline never calls
+  `LayoutModifierNode::measure` or `DrawModifierNode::draw`, so only hard-coded nodes affect layout.
 - ⚠️ **Text implementation shortcut.** Text content is currently stored in `TextMeasurePolicy` with
   a `text_content()` method added to the `MeasurePolicy` trait. This violates separation of concerns
   and doesn't match Jetpack Compose's architecture (see "Known Shortcuts" section below).
+- ⚠️ **Text modifier node is skeletal.** `TextModifierElement::update` cannot request invalidations,
+  `TextModifierNode::draw` is empty, and semantics are reduced to `content_description =
+  text` (`crates/compose-ui/src/text_modifier_node.rs:117-205`). Kotlin's `TextStringSimpleNode`
+  drives real measurement/drawing/semantics via `ParagraphLayoutCache`.
 - ⚠️ Tests under `crates/compose-ui/src/tests/pointer_input_integration_test.rs` simply assert node
   counts; no integration test actually drives pointer events through `HitTestTarget`.
 
 ---
 
 ## Known Shortcuts
+
+### Modifier Chain Efficiency
+
+**Current Behavior:**
+- `Modifier::then` clones the entire element vector on every call.
+- Inspector metadata `Vec` is cloned alongside, forcing new allocations even when two modifiers are
+  already shared.
+
+**Problem:**
+- Building a modifier like `Modifier.padding().background().clickable()...` copies the entire chain
+  each time, which is far more expensive than Jetpack Compose's persistent `CombinedModifier`.
+- Structural sharing is lost, so equality checks fall back to pointer equality and large allocations
+  surface during recomposition.
+
+**Reference:** `crates/compose-ui/src/modifier/mod.rs:333-347`.
+
+**Desired Fix:**
+- Mirror Kotlin's `CombinedModifier` tree: keep a lightweight node that references an outer and inner
+  modifier rather than rebuilding vectors.
+- Preserve sharing so `Modifier.then` stays `O(1)` and fold/any/all traversals work against a stable
+  structure.
+
+### Modifier Nodes Bypassed
+
+**Current Behavior:**
+- `ModifierChainHandle::update` reconciles nodes but the layout/rendering pipeline immediately
+  collapses them into `ResolvedModifiers` by downcasting known types.
+- Measuring a `LayoutNode` only reads the resolved padding/size/offset fields
+  (`crates/compose-ui/src/layout/mod.rs:677-811`); it never asks modifier nodes to measure/draw.
+
+**Problem:**
+- Custom modifier nodes (and even built-in ones) cannot influence measurement or drawing unless they
+  are explicitly mirrored inside `compute_resolved`, which defeats the purpose of the node system.
+- Pointer/focus/semantics nodes that declare capabilities never run, so the architecture still
+  behaves like the pre-node "resolved property bag" system.
+
+**Desired Fix:**
+1. Thread the reconciled `ModifierNodeChain` through measurement/draw so `LayoutModifierNode::measure`
+   and `DrawModifierNode::draw` are invoked in order.
+2. Remove the `ResolvedModifiers` downcasting shortcut once the real pipeline is in place.
 
 ### Text Implementation Architecture Mismatch
 
@@ -70,6 +121,10 @@ Text content lives in the **modifier node**, not in MeasurePolicy!
 3. Update `Text()` to: `Layout(modifier.textModifier(text, style, ...), EmptyMeasurePolicy, || {})`
 4. Remove `text_content()` from `MeasurePolicy` trait
 5. Delete `TextMeasurePolicy` (use empty/simple policy instead)
+6. Add real invalidation hooks so `TextModifierElement::update` can signal layout/draw/semantics
+   changes when text/style mutate.
+7. Replace the placeholder measurer/drawer with `ParagraphLayoutCache`-style behavior and expose the
+   same semantics contract (`text`, `getTextLayoutResult`, translation toggles).
 
 **Reference Files:**
 - `/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/BasicText.kt`
@@ -82,11 +137,19 @@ Text content lives in the **modifier node**, not in MeasurePolicy!
 1. ✅ **COMPLETED: Hook up the dispatch queues.**
 2. ✅ **COMPLETED: Delete the widget-specific node types.**
 3. ✅ **COMPLETED: Centralize resolved modifier data.**
-4. ⚠️ **Fix Text implementation to use modifier nodes.**
+4. ⚠️ **Make `Modifier` composition persistent.**
+   - Reintroduce a `CombinedModifier`-style structure so `then` is `O(1)`.
+   - Ensure fold/any/all traverse the structure without cloning vectors.
+5. ⚠️ **Drive layout/draw/pointer work through modifier nodes.**
+   - Invoke `LayoutModifierNode::measure`, `DrawModifierNode::draw`, and other capability-specific
+     hooks instead of relying on the `ResolvedModifiers` snapshot.
+   - Remove the hard-coded padding/size/background aggregation once nodes run the pipeline.
+6. ⚠️ **Fix Text implementation to use modifier nodes.**
    - Implement `TextModifierNode` following JC's `TextStringSimpleNode` pattern
    - Move text content from `TextMeasurePolicy` to the modifier node
-   - Update rendering/semantics to extract text from modifier chain
-5. **Add real integration coverage.**
+   - Update rendering/semantics to extract text from modifier chain, including invalidation hooks
+   - Replace the placeholder measurement/draw infrastructure with real typography support
+7. **Add real integration coverage.**
    - Extend the pointer/focus tests to synthesize events through `HitTestTarget` so we can verify
      suspending pointer handlers, `Modifier.clickable`, and focus callbacks operate end-to-end.
 
