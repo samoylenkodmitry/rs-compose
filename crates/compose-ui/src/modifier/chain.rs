@@ -79,8 +79,9 @@ impl ModifierChainHandle {
         modifier: &Modifier,
         resolver: &mut ModifierLocalAncestorResolver<'_>,
     ) -> Vec<ModifierInvalidation> {
+        let elements = modifier.elements();
         self.chain
-            .update_from_slice(modifier.elements(), &mut self.context);
+            .update_from_slice(&elements, &mut self.context);
         self.capabilities = self.chain.capabilities();
         self.aggregate_child_capabilities = self.chain.head().aggregate_child_capabilities();
         let modifier_local_invalidations = self

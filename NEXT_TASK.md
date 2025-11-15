@@ -1,162 +1,106 @@
 # Modifier System Migration Tracker
 
-## Status: ⚠️ MOSTLY COMPLETE (with known shortcuts)
+## Status: ⚠️ Persistent modifiers landed, node pipeline still bypassed
 
-The modifier system migration has made significant progress. All widgets (`Button`, `Text`, `Spacer`)
-now use `LayoutNode` and the modifier chain reconciliation system is functional with capability-based
-invalidation. However, several shortcuts keep us from real Jetpack Compose parity:
-
-- `Modifier::then` still clones the entire element vector every time, so modifier composition is
-  `O(n²)` instead of the persistent `CombinedModifier` structure Kotlin uses.
-- The reconciled modifier node chain is only consulted to build `ResolvedModifiers`; the layout/draw
-  pipeline never invokes `LayoutModifierNode::measure` or `DrawModifierNode::draw` (Text works only
-  because we special-case its modifier node).
-- **Text modifier nodes remain skeletal.** `Text()` now uses `EmptyMeasurePolicy` + `TextModifierElement`,
-  but measurement/draw/semantics rely on a GPU renderer shortcut, the node cannot invalidate itself,
-  and layout still has to special-case Text instead of running modifier nodes in order.
-
-See "Known Shortcuts" for the outstanding work.
+The workspace now exposes `ModifierKind`-backed persistent composition and every widget goes through
+`LayoutNode` + `MeasurePolicy`. However, modifier nodes are still collapsed into `ResolvedModifiers`
+and the layout/draw pipeline never executes them. Text relies on a monospaced stub and semantics
+still hinge on `content_description`. The next iteration must focus on wiring the node pipeline and
+bringing `Text` closer to Jetpack Compose’s `BasicText`.
 
 ## Completed Work
 
-1. ✅ **Wire the new dispatch queues into the host/runtime.** The app shell now
-   calls `process_pointer_repasses` and `process_focus_invalidations` during frame processing
-   (see [AppShell::run_dispatch_queues](crates/compose-app-shell/src/lib.rs#L237-L275)). Nodes
-   that mark `needs_pointer_pass` / `needs_focus_sync` now have those flags cleared by the
-   runtime, completing the invalidation cycle similar to Jetpack Compose's FocusInvalidationManager.
-
-2. ✅ **Remove the legacy widget-specific nodes.** All widgets now use `LayoutNode`:
-   - **Spacer** → `LayoutNode` with `LeafMeasurePolicy`
-   - **Text** → `LayoutNode` with `EmptyMeasurePolicy` + `TextModifierElement` (GPU renderer still
-     handles the real glyph rendering/measuring)
-   - **Button** → `LayoutNode` with `FlexMeasurePolicy::column`
-
-   Legacy `ButtonNode`, `TextNode`, and `SpacerNode` types have been deleted.
-
-3. ✅ **Stop rebuilding modifier snapshots ad-hoc.** All modifier resolution now happens through
-   the reconciled `ModifierNodeChain`. The legacy `measure_spacer`, `measure_text`, and
-   `measure_button` functions that called `Modifier::empty().resolved_modifiers()` have been
-   removed. All measurement goes through the unified `measure_layout_node` path.
-
-4. ✅ **Remove metadata fallbacks.** The `runtime_metadata_for` and `compute_semantics_for_node`
-   functions no longer special-case legacy node types. They only handle `LayoutNode` and
-   `SubcomposeLayoutNode`, ensuring consistent modifier chain traversal.
+1. ✅ **Dispatch queues integrated.** `AppShell::run_dispatch_queues`
+   (`crates/compose-app-shell/src/lib.rs#L237-L275`) now drains pointer/focus invalidations so the
+   capability flags on `LayoutNode` match Jetpack Compose’s lifecycle.
+2. ✅ **Legacy widget nodes deleted.** `Button`, `Text`, and `Spacer` all emit `LayoutNode` +
+   `MeasurePolicy`. The bespoke `measure_text`/`measure_button` helpers were removed.
+3. ✅ **Centralized modifier reconciliation.** `ModifierNodeChain` and `ModifierChainHandle`
+   reconcile node instances with capability tracking and modifier locals.
+4. ✅ **Persistent `Modifier::then`.** `ModifierKind::Combined` provides the same persistent tree as
+   Kotlin’s `CombinedModifier` (`crates/compose-ui/src/modifier/mod.rs:235-382`).
 
 ## Architecture Overview
 
-The codebase mostly follows Jetpack Compose's modifier system design:
-
-- **Widgets as Composables**: `Button`, `Text`, `Spacer` are pure composable functions
-- **LayoutNode-based**: All widgets emit `LayoutNode` with appropriate `MeasurePolicy`
-- **Measure Policies**:
-  - `EmptyMeasurePolicy` - used by Text; relies on `TextModifierNode` + the GPU renderer for real text
-    measurement/drawing (still missing invalidation + semantics parity)
-  - `LeafMeasurePolicy` - for leaf nodes with fixed intrinsic size
-  - `FlexMeasurePolicy` - for row/column layouts (used by Button)
-  - `BoxMeasurePolicy` - for box layouts
-- **Modifier Chain**:
-  - Modifiers reconcile through `ModifierNodeChain`
-  - ⚠️ `Modifier::then` clones both the element list and inspector metadata every call instead of
-    composing persistently
-  - ⚠️ Layout/draw code reads `ResolvedModifiers` snapshots rather than executing the reconciled nodes
-- **Invalidation**: Capability-based invalidation (layout, draw, pointer, focus, semantics)
+- **Widgets**: Pure composables that emit `LayoutNode`s with policies such as `EmptyMeasurePolicy`,
+  `LeafMeasurePolicy`, `FlexMeasurePolicy`, etc.
+- **Modifier chain**: Public builders now chain via `self.then(...)`, but the runtime still flattens
+  the tree into `Vec<DynModifierElement>` each update (`crates/compose-ui/src/modifier/chain.rs:72-95`)
+  and collapses nodes into `ResolvedModifiers`.
+- **Measure pipeline**: `measure_layout_node()` reads padding/size/offset from
+  `resolved_modifiers` (`crates/compose-ui/src/layout/mod.rs:725-880`) and falls back to a
+  `try_measure_with_layout_modifiers()` hack that only recognizes `TextModifierNode`.
+- **Text**: `Text()` adds `TextModifierElement` + `EmptyMeasurePolicy`, but the element only stores a
+  `String` and the node delegates to the monospaced fallback in `crates/compose-ui/src/text.rs`.
+- **Invalidation**: Capability-based invalidations exist, yet modifier nodes rarely trigger them
+  because we never call into nodes during layout/draw.
 
 ## Known Shortcuts
 
-### Modifier::then Copies the Chain
-- `Modifier::then` allocates new `Vec`s for both elements and inspector data each time we append.
-- Building a chain like `Modifier.padding().background().clickable()` repeatedly clones previous
-  entries, making recomposition slower than Kotlin's `CombinedModifier` structure.
-- **Fix:** Mirror Jetpack Compose's persistent composition so `then` is `O(1)` and sharing is
-  preserved.
+### Modifier chain still flattened each recomposition
+- `ModifierChainHandle::update()` allocates fresh element/inspector vectors and rebuilds
+  `ResolvedModifiers` on every pass (`crates/compose-ui/src/modifier/chain.rs:72-231`), so the
+  persistent tree never reaches the runtime.
+- Jetpack Compose walks the `CombinedModifier` tree directly and never materializes a snapshot struct.
 
-### Modifier Nodes Never Participate in Layout/Draw
-- `ModifierChainHandle::compute_resolved` downcasts a shortlist of node types and copies their data
-  into `ResolvedModifiers`. The layout pipeline then reads padding/size/background from that struct
-  and never calls `LayoutModifierNode::measure`, `DrawModifierNode::draw`, etc.
-- Custom modifiers (or even built-in ones outside the shortlist) cannot affect measurement, drawing,
-  pointer input, or semantics.
-- **Fix:** Thread the reconciled node chain through layout/draw/pointer dispatch so capability
-  interfaces actually run, then delete the `ResolvedModifiers` shadow copy.
+### Layout/draw/pointer pipelines bypass nodes
+- `measure_layout_node()` manipulates constraints strictly via `ResolvedModifiers`, while the new
+  `ModifierNodeMeasurable` wrapper (`crates/compose-ui/src/layout/modifier_measurable.rs`) is unused.
+- `try_measure_with_layout_modifiers()` special-cases `TextModifierNode` and ignores every other
+  `LayoutModifierNode`.
+- Padding/background/offset logic still lives in `ResolvedModifiers`, so modifier nodes cannot own
+  those behaviors.
 
-### Text Modifier Pipeline (Architecture Mismatch)
-
-**Current Implementation:**
-- `Text()` composes `Layout(modifier_then_text_element, EmptyMeasurePolicy, || {})`.
-- `measure_layout_node` looks for `TextModifierNode` and calls its `measure` directly instead of
-  executing every `LayoutModifierNode` in the chain.
-- `TextModifierNode` stores the string and asks the shared text-metrics service (currently backed by
-  a monospaced fallback) for width/height. Actual glyph measurement/drawing happens inside the GPU
-  renderer crates, not inside the modifier node.
-- `draw()` and semantics remain placeholders (content description only).
-
-**Problem:**
-- The modifier node cannot request layout/draw/semantics invalidations, forcing us to rebuild the
-  layout node when text changes.
-- Layout/draw still bypass the reconciled chain, so Text remains a one-off in the engine.
-- Without exposing the GPU renderer's paragraph cache to `TextModifierNode`, we cannot report
-  baselines, selection info, or accurate typography metrics like Jetpack Compose's
-  `ParagraphLayoutCache`.
-
-**How Jetpack Compose Does It:**
-```kotlin
-Layout(modifier.then(TextStringSimpleElement(...)), EmptyMeasurePolicy)
-```
-`TextStringSimpleNode` implements `LayoutModifierNode`, `DrawModifierNode`, and
-`SemanticsModifierNode` and talks directly to `ParagraphLayoutCache`.
-
-**Proper Fix:**
-1. Execute modifier nodes generically so Text no longer needs a special path in `measure_layout_node`.
-2. Let `TextModifierElement::update` schedule invalidations when text/style changes.
-3. Integrate the GPU renderer's paragraph measurement + draw commands so the modifier node produces
-   real metrics (and forwards draw instructions) instead of using a monospaced stub.
-4. Implement Jetpack Compose–style semantics hooks (`text`, `getTextLayoutResult`, translation
-   toggles) and baselines.
-
-**Reference:**
-- See [modifier_match_with_jc.md](modifier_match_with_jc.md) for detailed architecture comparison.
-- JC source: `/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/modifiers/TextStringSimpleNode.kt`.
-- GPU renderer text paths: `crates/compose-render/*`.
+### Text modifier pipeline gap
+- `TextModifierElement` only takes a `String`
+  (`crates/compose-ui/src/text_modifier_node.rs:167-205`), so style/overflow/font resolver/minLines/
+  maxLines cannot flow to the node.
+- `TextModifierNode::measure()` delegates to the monospaced stub in `crates/compose-ui/src/text.rs`
+  and never talks to the GPU paragraph cache. `draw()` is empty and semantics only set
+  `content_description`, which is later scraped in `runtime_metadata_for()`.
+- The widget signature (`crates/compose-ui/src/widgets/text.rs:125-143`) exposes neither style nor
+  callbacks like `onTextLayout`, so parity with Jetpack Compose’s `BasicText` isn’t possible yet.
 
 ## Remaining Work
 
-### Make Modifier Composition Persistent
-- Introduce a `CombinedModifier`-style representation so `Modifier::then` is `O(1)` and retains
-  sharing between recompositions.
-- Ensure `fold_in`, `fold_out`, `any`, and `all` traverse the combined structure correctly.
+### 1. Build the layout modifier coordinator chain
+- In `measure_layout_node()` (`crates/compose-ui/src/layout/mod.rs:725-880`), walk the reconciled
+  modifier chain (`layout_node.modifier_chain()`) to collect every `LayoutModifierNode`.
+- Create a `ContentMeasurable` that wraps the `MeasurePolicy` + child measurables. Then wrap it in
+  `ModifierNodeMeasurable` instances (outermost → innermost) so each node can call
+  `measure()`/intrinsics on the wrapped measurable, mirroring
+  `androidx/compose/ui/node/LayoutModifierNodeCoordinator.kt`.
+- Replace `try_measure_with_layout_modifiers()` with this chain. Once the chain works, delete the
+  text-only special case and feed placement data back into `MeasureResult`.
 
-### Execute Modifier Nodes During Layout/Draw
-- Run `LayoutModifierNode::measure`, `DrawModifierNode::draw`, pointer, semantics, and focus
-  callbacks in the reconciled order instead of mirroring data into `ResolvedModifiers`.
-- Delete the ad-hoc padding/size/background accumulation once the real nodes power layout.
+### 2. Remove `ResolvedModifiers` from layout/draw
+- Move padding/size/offset/background behavior into modifier nodes (PaddingNode, SizeNode, etc.)
+  instead of aggregating them in `ModifierChainHandle::compute_resolved()`.
+- Update layout/draw/pointer pipelines to inspect the reconciled node chain directly so there is no
+  shadow snapshot to keep in sync. `ResolvedModifiers` should eventually disappear.
 
-### Critical: Finish the Text Modifier Pipeline
-**Priority: High** - Required for true Jetpack Compose parity
+### 3. Finish the Text modifier pipeline
+- Expand `TextModifierElement` to carry the same arguments as Kotlin’s `TextStringSimpleElement`
+  (string vs annotated string, `TextStyle`, `FontFamily.Resolver`, `TextOverflow`, softWrap,
+  minLines/maxLines, `ColorProducer`, auto-size hooks, placeholders, selection controller).
+- Store a paragraph cache / GPU renderer handle inside `TextModifierNode`, call into the GPU
+  renderer crates for measurement + draw, and issue `invalidateMeasurement`/`invalidateDraw`/
+  `invalidateSemantics` whenever text/style/metrics change.
+- Implement real semantics (`text`, `getTextLayoutResult`, text substitution toggles) instead of the
+  `content_description` placeholder, then remove the metadata hack in
+  `crates/compose-ui/src/layout/mod.rs:1633-1655`.
+- Update `Text` (and later `BasicText`) to expose Jetpack Compose’s API surface and plumb arguments
+  through the modifier element.
 
-We now have a modifier-based Text, but it still relies on shortcuts:
-1. Remove the layout special-case by executing modifier chains so `LayoutModifierNode::measure`
-   runs for every node (Text included).
-2. Teach `TextModifierElement::update` how to request layout/draw/semantics invalidations when
-   text/style/metrics change.
-3. Hook `TextModifierNode` up to the GPU renderer's paragraph measurement + draw APIs so it can
-   deliver real metrics (baselines, multi-line sizes) and enqueue draw commands instead of the
-   monospaced fallback.
-4. Flesh out semantics: expose `text`, `getTextLayoutResult`, translation toggles, and selection
-   hooks just like `TextStringSimpleNode`.
-5. Add regression tests that validate modifier-driven measurement/draw once the GPU-backed pipeline
-   is wired up.
-
-### Testing
-- ✅ Legacy node tests marked as `#[ignore]` and stubbed (need rewrite using semantics/layout tree)
-- Integration tests for pointer/focus events should be expanded to verify end-to-end behavior
-- Add tests for text modifier node once implemented
-
-### Future Enhancements
-- Additional measure policies for more complex layouts
-- Performance optimization of modifier chain reconciliation (goes away once `then` is persistent)
-- More comprehensive integration tests
+### 4. Testing & integration cleanup
+- Expand pointer/focus integration tests so they dispatch events through `HitTestTarget` and observe
+  modifier-driven behavior instead of counting nodes.
+- After each major change, run `cargo test > 1.tmp 2>&1` and inspect the log before iterating.
 
 ## References
 
-See [modifier_match_with_jc.md](modifier_match_with_jc.md) for the original migration plan
-and Jetpack Compose behavioral parity requirements.
+- Kotlin modifier pipeline: `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/Modifier.kt`
+- Node coordinator chain: `/media/huge/composerepo/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/node/LayoutModifierNodeCoordinator.kt`
+- Text reference: `/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/BasicText.kt`
+  and `.../text/modifiers/TextStringSimpleNode.kt`
+- Detailed parity checklist: [`modifier_match_with_jc.md`](modifier_match_with_jc.md)

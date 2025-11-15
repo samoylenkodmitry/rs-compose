@@ -1,5 +1,6 @@
 pub mod core;
 pub mod policies;
+mod modifier_measurable;
 
 use compose_core::collections::map::Entry;
 use compose_core::collections::map::HashMap;

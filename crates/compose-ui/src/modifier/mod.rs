@@ -228,10 +228,39 @@ pub trait InspectableModifier {
     fn inspect(&self, _info: &mut InspectorInfo) {}
 }
 
-#[derive(Clone, Default)]
+/// Internal representation of modifier composition structure.
+/// This mirrors Jetpack Compose's CombinedModifier pattern where modifiers
+/// form a persistent tree structure instead of eagerly flattening into vectors.
+#[derive(Clone)]
+enum ModifierKind {
+    /// Empty modifier (like Modifier.companion in Kotlin)
+    Empty,
+    /// Single modifier with elements and inspector metadata
+    Single {
+        elements: Rc<Vec<DynModifierElement>>,
+        inspector: Rc<Vec<InspectorMetadata>>,
+    },
+    /// Combined modifier tree node (like CombinedModifier in Kotlin)
+    Combined {
+        outer: Rc<Modifier>,
+        inner: Rc<Modifier>,
+    },
+}
+
+/// A modifier chain that can be applied to composable elements.
+/// Modifiers form a persistent tree structure (via CombinedModifier pattern)
+/// to enable O(1) composition and structural sharing during recomposition.
+#[derive(Clone)]
 pub struct Modifier {
-    elements: Rc<Vec<DynModifierElement>>,
-    inspector: Rc<Vec<InspectorMetadata>>,
+    kind: ModifierKind,
+}
+
+impl Default for Modifier {
+    fn default() -> Self {
+        Self {
+            kind: ModifierKind::Empty,
+        }
+    }
 }
 
 impl Modifier {
@@ -330,6 +359,13 @@ impl Modifier {
         self.then(modifier)
     }
 
+    /// Concatenates this modifier with another.
+    ///
+    /// This creates a persistent tree structure (CombinedModifier pattern) rather than
+    /// eagerly flattening into a vector, enabling O(1) composition and structural sharing.
+    ///
+    /// Mirrors Jetpack Compose: `infix fun then(other: Modifier): Modifier =
+    ///     if (other === Modifier) this else CombinedModifier(this, other)`
     pub fn then(&self, next: Modifier) -> Modifier {
         if self.is_trivially_empty() {
             return next;
@@ -337,24 +373,42 @@ impl Modifier {
         if next.is_trivially_empty() {
             return self.clone();
         }
-        let mut elements = Vec::with_capacity(self.elements.len() + next.elements.len());
-        elements.extend(self.elements.iter().cloned());
-        elements.extend(next.elements.iter().cloned());
-        let mut inspector = Vec::with_capacity(self.inspector.len() + next.inspector.len());
-        inspector.extend(self.inspector.iter().cloned());
-        inspector.extend(next.inspector.iter().cloned());
         Modifier {
-            elements: Rc::new(elements),
-            inspector: Rc::new(inspector),
+            kind: ModifierKind::Combined {
+                outer: Rc::new(self.clone()),
+                inner: Rc::new(next),
+            },
         }
     }
 
-    pub(crate) fn elements(&self) -> &[DynModifierElement] {
-        &self.elements
+    /// Returns the flattened list of elements in this modifier chain.
+    /// For backward compatibility, this flattens the tree structure on-demand.
+    /// Note: This allocates a new Vec for Combined modifiers.
+    pub(crate) fn elements(&self) -> Vec<DynModifierElement> {
+        match &self.kind {
+            ModifierKind::Empty => Vec::new(),
+            ModifierKind::Single { elements, .. } => elements.as_ref().clone(),
+            ModifierKind::Combined { outer, inner } => {
+                let mut result = outer.elements();
+                result.extend(inner.elements());
+                result
+            }
+        }
     }
 
-    pub(crate) fn inspector_metadata(&self) -> &[InspectorMetadata] {
-        &self.inspector
+    /// Returns the flattened list of inspector metadata in this modifier chain.
+    /// For backward compatibility, this flattens the tree structure on-demand.
+    /// Note: This allocates a new Vec for Combined modifiers.
+    pub(crate) fn inspector_metadata(&self) -> Vec<InspectorMetadata> {
+        match &self.kind {
+            ModifierKind::Empty => Vec::new(),
+            ModifierKind::Single { inspector, .. } => inspector.as_ref().clone(),
+            ModifierKind::Combined { outer, inner } => {
+                let mut result = outer.inspector_metadata();
+                result.extend(inner.inspector_metadata());
+                result
+            }
+        }
     }
 
     pub fn total_padding(&self) -> f32 {
@@ -424,7 +478,7 @@ impl Modifier {
 
     /// Returns structured inspector records for each modifier element.
     pub fn collect_inspector_records(&self) -> Vec<ModifierInspectorRecord> {
-        self.inspector
+        self.inspector_metadata()
             .iter()
             .map(|metadata| metadata.to_record())
             .collect()
@@ -445,102 +499,242 @@ impl Modifier {
     }
 
     pub(crate) fn from_parts(elements: Vec<DynModifierElement>) -> Self {
-        Self {
-            elements: Rc::new(elements),
-            inspector: Rc::new(Vec::new()),
+        if elements.is_empty() {
+            Self {
+                kind: ModifierKind::Empty,
+            }
+        } else {
+            Self {
+                kind: ModifierKind::Single {
+                    elements: Rc::new(elements),
+                    inspector: Rc::new(Vec::new()),
+                },
+            }
         }
     }
 
     fn is_trivially_empty(&self) -> bool {
-        self.elements.is_empty() && self.inspector.is_empty()
+        matches!(self.kind, ModifierKind::Empty)
     }
 
-    pub(crate) fn with_inspector_metadata(mut self, metadata: InspectorMetadata) -> Self {
+    pub(crate) fn with_inspector_metadata(self, metadata: InspectorMetadata) -> Self {
         if metadata.is_empty() {
             return self;
         }
-        Rc::make_mut(&mut self.inspector).push(metadata);
-        self
+        match self.kind {
+            ModifierKind::Empty => self,
+            ModifierKind::Single { elements, inspector } => {
+                let mut new_inspector = inspector.as_ref().clone();
+                new_inspector.push(metadata);
+                Self {
+                    kind: ModifierKind::Single {
+                        elements,
+                        inspector: Rc::new(new_inspector),
+                    },
+                }
+            }
+            ModifierKind::Combined { .. } => {
+                // Combined modifiers shouldn't have inspector metadata added directly
+                // This should only be called on freshly created modifiers
+                panic!("Cannot add inspector metadata to a combined modifier")
+            }
+        }
     }
 }
 
 impl ComposeModifier for Modifier {
-    fn fold_in<R, F>(&self, mut initial: R, mut operation: F) -> R
+    /// Accumulates a value by visiting modifier elements in insertion order (left to right).
+    /// Mirrors Jetpack Compose CombinedModifier:
+    /// `inner.foldIn(outer.foldIn(initial, operation), operation)`
+    fn fold_in<R, F>(&self, initial: R, operation: F) -> R
     where
         F: FnMut(R, &dyn AnyModifierElement) -> R,
     {
-        for element in self.elements.iter() {
-            let erased: &dyn AnyModifierElement = element.as_ref();
-            initial = operation(initial, erased);
-        }
-        initial
+        self.fold_in_impl(initial, &mut {operation})
     }
 
-    fn fold_out<R, F>(&self, mut initial: R, mut operation: F) -> R
+    /// Accumulates a value by visiting modifier elements in reverse order (right to left).
+    /// Mirrors Jetpack Compose CombinedModifier:
+    /// `outer.foldOut(inner.foldOut(initial, operation), operation)`
+    fn fold_out<R, F>(&self, initial: R, operation: F) -> R
     where
         F: FnMut(R, &dyn AnyModifierElement) -> R,
     {
-        for element in self.elements.iter().rev() {
-            let erased: &dyn AnyModifierElement = element.as_ref();
-            initial = operation(initial, erased);
-        }
-        initial
+        self.fold_out_impl(initial, &mut {operation})
     }
 
-    fn any<F>(&self, mut predicate: F) -> bool
+    /// Returns true if any element in the chain satisfies the predicate.
+    /// Mirrors Jetpack Compose CombinedModifier:
+    /// `outer.any(predicate) || inner.any(predicate)`
+    fn any<F>(&self, predicate: F) -> bool
     where
         F: FnMut(&dyn AnyModifierElement) -> bool,
     {
-        for element in self.elements.iter() {
-            if predicate(element.as_ref()) {
-                return true;
-            }
-        }
-        false
+        self.any_impl(&mut {predicate})
     }
 
-    fn all<F>(&self, mut predicate: F) -> bool
+    /// Returns true only if all elements in the chain satisfy the predicate.
+    /// Mirrors Jetpack Compose CombinedModifier:
+    /// `outer.all(predicate) && inner.all(predicate)`
+    fn all<F>(&self, predicate: F) -> bool
     where
         F: FnMut(&dyn AnyModifierElement) -> bool,
     {
-        for element in self.elements.iter() {
-            if !predicate(element.as_ref()) {
-                return false;
+        self.all_impl(&mut {predicate})
+    }
+}
+
+impl Modifier {
+    /// Internal implementation of `fold_in` that can be called recursively.
+    fn fold_in_impl<R>(
+        &self,
+        mut initial: R,
+        operation: &mut dyn FnMut(R, &dyn AnyModifierElement) -> R,
+    ) -> R {
+        match &self.kind {
+            ModifierKind::Empty => initial,
+            ModifierKind::Single { elements, .. } => {
+                for element in elements.iter() {
+                    let erased: &dyn AnyModifierElement = element.as_ref();
+                    initial = operation(initial, erased);
+                }
+                initial
+            }
+            ModifierKind::Combined { outer, inner } => {
+                // Process outer first, then inner (like Kotlin's CombinedModifier)
+                let after_outer = outer.fold_in_impl(initial, operation);
+                inner.fold_in_impl(after_outer, operation)
             }
         }
-        true
+    }
+
+    /// Internal implementation of `fold_out` that can be called recursively.
+    fn fold_out_impl<R>(
+        &self,
+        mut initial: R,
+        operation: &mut dyn FnMut(R, &dyn AnyModifierElement) -> R,
+    ) -> R {
+        match &self.kind {
+            ModifierKind::Empty => initial,
+            ModifierKind::Single { elements, .. } => {
+                for element in elements.iter().rev() {
+                    let erased: &dyn AnyModifierElement = element.as_ref();
+                    initial = operation(initial, erased);
+                }
+                initial
+            }
+            ModifierKind::Combined { outer, inner } => {
+                // Process inner first (in reverse), then outer (in reverse)
+                let after_inner = inner.fold_out_impl(initial, operation);
+                outer.fold_out_impl(after_inner, operation)
+            }
+        }
+    }
+
+    /// Internal implementation of `any` that can be called recursively.
+    fn any_impl(&self, predicate: &mut dyn FnMut(&dyn AnyModifierElement) -> bool) -> bool {
+        match &self.kind {
+            ModifierKind::Empty => false,
+            ModifierKind::Single { elements, .. } => {
+                for element in elements.iter() {
+                    if predicate(element.as_ref()) {
+                        return true;
+                    }
+                }
+                false
+            }
+            ModifierKind::Combined { outer, inner } => {
+                outer.any_impl(predicate) || inner.any_impl(predicate)
+            }
+        }
+    }
+
+    /// Internal implementation of `all` that can be called recursively.
+    fn all_impl(&self, predicate: &mut dyn FnMut(&dyn AnyModifierElement) -> bool) -> bool {
+        match &self.kind {
+            ModifierKind::Empty => true,
+            ModifierKind::Single { elements, .. } => {
+                for element in elements.iter() {
+                    if !predicate(element.as_ref()) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ModifierKind::Combined { outer, inner } => {
+                outer.all_impl(predicate) && inner.all_impl(predicate)
+            }
+        }
     }
 }
 
 impl InspectableModifier for Modifier {
     fn inspect(&self, info: &mut InspectorInfo) {
-        for metadata in self.inspector.iter() {
-            metadata.append_to(info);
+        match &self.kind {
+            ModifierKind::Empty => {}
+            ModifierKind::Single { inspector, .. } => {
+                for metadata in inspector.iter() {
+                    metadata.append_to(info);
+                }
+            }
+            ModifierKind::Combined { outer, inner } => {
+                outer.inspect(info);
+                inner.inspect(info);
+            }
         }
     }
 }
 
 impl PartialEq for Modifier {
     fn eq(&self, other: &Self) -> bool {
-        // Fast path: if they share the same Rc, they're definitely equal
-        if Rc::ptr_eq(&self.elements, &other.elements) && Rc::ptr_eq(&self.inspector, &other.inspector) {
-            return true;
-        }
+        match (&self.kind, &other.kind) {
+            (ModifierKind::Empty, ModifierKind::Empty) => true,
+            (
+                ModifierKind::Single {
+                    elements: e1,
+                    inspector: _,
+                },
+                ModifierKind::Single {
+                    elements: e2,
+                    inspector: _,
+                },
+            ) => {
+                // Fast path: if they share the same Rc, they're definitely equal
+                if Rc::ptr_eq(e1, e2) {
+                    return true;
+                }
 
-        // Slow path: compare elements by value
-        if self.elements.len() != other.elements.len() {
-            return false;
-        }
+                // Slow path: compare elements by value
+                if e1.len() != e2.len() {
+                    return false;
+                }
 
-        for (a, b) in self.elements.iter().zip(other.elements.iter()) {
-            if !a.equals_element(&**b) {
-                return false;
+                for (a, b) in e1.iter().zip(e2.iter()) {
+                    if !a.equals_element(&**b) {
+                        return false;
+                    }
+                }
+                true
             }
+            (
+                ModifierKind::Combined {
+                    outer: o1,
+                    inner: i1,
+                },
+                ModifierKind::Combined {
+                    outer: o2,
+                    inner: i2,
+                },
+            ) => {
+                // Fast path: if they share the same Rc pointers, they're definitely equal
+                if Rc::ptr_eq(o1, o2) && Rc::ptr_eq(i1, i2) {
+                    return true;
+                }
+                // Recursive comparison
+                o1 == o2 && i1 == i2
+            }
+            _ => false,
         }
-
-        // Inspector comparison is less critical for behavior, so we can skip it
-        // (or do a shallow comparison if needed for debugging)
-        true
     }
 }
 
@@ -548,26 +742,53 @@ impl Eq for Modifier {}
 
 impl fmt::Display for Modifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.elements.is_empty() {
-            return write!(f, "Modifier.empty");
-        }
-        write!(f, "Modifier[")?;
-        for (index, element) in self.elements.iter().enumerate() {
-            if index > 0 {
-                write!(f, ", ")?;
+        match &self.kind {
+            ModifierKind::Empty => write!(f, "Modifier.empty"),
+            ModifierKind::Single { elements, .. } => {
+                if elements.is_empty() {
+                    return write!(f, "Modifier.empty");
+                }
+                write!(f, "Modifier[")?;
+                for (index, element) in elements.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    let name = element.inspector_name();
+                    let mut properties = Vec::new();
+                    element.record_inspector_properties(&mut |prop, value| {
+                        properties.push(format!("{prop}={value}"));
+                    });
+                    if properties.is_empty() {
+                        write!(f, "{name}")?;
+                    } else {
+                        write!(f, "{name}({})", properties.join(", "))?;
+                    }
+                }
+                write!(f, "]")
             }
-            let name = element.inspector_name();
-            let mut properties = Vec::new();
-            element.record_inspector_properties(&mut |prop, value| {
-                properties.push(format!("{prop}={value}"));
-            });
-            if properties.is_empty() {
-                write!(f, "{name}")?;
-            } else {
-                write!(f, "{name}({})", properties.join(", "))?;
+            ModifierKind::Combined { outer, inner } => {
+                // Flatten the representation for display
+                // This matches Kotlin's CombinedModifier toString behavior
+                write!(f, "[")?;
+                let elements = self.elements();
+                for (index, element) in elements.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    let name = element.inspector_name();
+                    let mut properties = Vec::new();
+                    element.record_inspector_properties(&mut |prop, value| {
+                        properties.push(format!("{prop}={value}"));
+                    });
+                    if properties.is_empty() {
+                        write!(f, "{name}")?;
+                    } else {
+                        write!(f, "{name}({})", properties.join(", "))?;
+                    }
+                }
+                write!(f, "]")
             }
         }
-        write!(f, "]")
     }
 }
 

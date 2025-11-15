@@ -391,7 +391,8 @@ fn pointer_input_coroutine_receives_events() {
         }
     });
 
-    chain.update_from_slice(modifier.elements(), &mut context);
+    let elements = modifier.elements();
+    chain.update_from_slice(&elements, &mut context);
     let slices = collect_slices_from_modifier(&modifier);
     assert_eq!(slices.pointer_inputs().len(), 1);
     let handler = slices.pointer_inputs()[0].clone();
@@ -428,7 +429,8 @@ fn pointer_input_restarts_on_key_change() {
         }
     });
 
-    chain.update_from_slice(modifier.elements(), &mut context);
+    let elements = modifier.elements();
+    chain.update_from_slice(&elements, &mut context);
     assert_eq!(starts.get(), 1);
 
     let modifier_updated = Modifier::empty().pointer_input(1u32, {
@@ -442,7 +444,8 @@ fn pointer_input_restarts_on_key_change() {
         }
     });
 
-    chain.update_from_slice(modifier_updated.elements(), &mut context);
+    let elements_updated = modifier_updated.elements();
+    chain.update_from_slice(&elements_updated, &mut context);
     assert_eq!(starts.get(), 2);
 }
 
