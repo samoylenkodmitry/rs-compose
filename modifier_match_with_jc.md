@@ -33,13 +33,13 @@ gaps before we can claim full parity with Jetpack Compose.
   node types and copies their fields into `ResolvedModifiers`
   (`crates/compose-ui/src/modifier/chain.rs:160-205`); the measure/draw pipeline never calls
   `LayoutModifierNode::measure` or `DrawModifierNode::draw`, so only hard-coded nodes affect layout.
-- ⚠️ **Text implementation shortcut.** Text content is currently stored in `TextMeasurePolicy` with
-  a `text_content()` method added to the `MeasurePolicy` trait. This violates separation of concerns
-  and doesn't match Jetpack Compose's architecture (see "Known Shortcuts" section below).
-- ⚠️ **Text modifier node is skeletal.** `TextModifierElement::update` cannot request invalidations,
-  `TextModifierNode::draw` is empty, and semantics are reduced to `content_description =
-  text` (`crates/compose-ui/src/text_modifier_node.rs:117-205`). Kotlin's `TextStringSimpleNode`
-  drives real measurement/drawing/semantics via `ParagraphLayoutCache`.
+  Text currently works only because `measure_layout_node` special-cases `TextModifierNode` and bypasses
+  the rest of the chain.
+- ⚠️ **Text modifier node still skeletal.** `Text()` now installs `TextModifierElement` +
+  `EmptyMeasurePolicy`, but `TextModifierElement::update` still cannot request invalidations,
+  `TextModifierNode::draw` is empty, semantics only populate `content_description`, and real glyph
+  measurement/drawing is delegated to the GPU renderer crates. Until modifier nodes can talk to that
+  external paragraph measurer/cache we cannot match Jetpack Compose's behavior.
 - ⚠️ Tests under `crates/compose-ui/src/tests/pointer_input_integration_test.rs` simply assert node
   counts; no integration test actually drives pointer events through `HitTestTarget`.
 
@@ -90,14 +90,21 @@ gaps before we can claim full parity with Jetpack Compose.
 ### Text Implementation Architecture Mismatch
 
 **Current (Shortcut) Implementation:**
-- Text content stored in `TextMeasurePolicy`
-- Added `text_content()` method to `MeasurePolicy` trait for extracting text
-- `Text()` widget: `Layout(modifier, TextMeasurePolicy::new(text), || {})`
+- `Text()` installs a modifier node (`TextModifierElement`) and uses `EmptyMeasurePolicy`.
+- `measure_layout_node` searches for `TextModifierNode` and calls its `measure` implementation instead
+  of executing the whole chain.
+- `TextModifierNode` stores only the string, measures it through the shared text metrics service, and
+  leaves `draw()`/semantics mostly empty.
+- Actual glyph measurement + drawing live in the GPU renderer crates (`compose-render/*`). The text
+  modifier does not yet push structured instructions to that renderer, so measurement/draw/semantics
+  rely on a monospaced fallback rather than the GPU library.
 
 **Problem:**
-- Violates separation of concerns - `MeasurePolicy` shouldn't store rendering/semantic content
-- Pollutes `MeasurePolicy` trait with domain-specific methods
-- Doesn't match Jetpack Compose architecture
+- The modifier node can’t request invalidations, baselines, or semantics beyond
+  `content_description`, so recomposition must rebuild the layout node to reflect text changes.
+- The layout pipeline still has to special-case Text because no generic modifier-node execution exists.
+- We do not expose the GPU paragraph cache to modifier nodes, so we can neither match Kotlin’s
+  `ParagraphLayoutCache` behavior nor report accurate typography metrics.
 
 **Jetpack Compose Architecture:**
 ```kotlin
@@ -113,22 +120,21 @@ TextStringSimpleElement(text, style, ...) // Creates TextStringSimpleNode
 - `DrawModifierNode` - for drawing
 - `SemanticsModifierNode` - for semantics
 
-Text content lives in the **modifier node**, not in MeasurePolicy!
+Text content lives in the **modifier node** which talks to `ParagraphLayoutCache`.
 
 **Proper Fix Required:**
-1. Create `TextModifierNode: LayoutModifierNode + DrawModifierNode + SemanticsModifierNode`
-2. Create `TextModifierElement` that produces `TextModifierNode`
-3. Update `Text()` to: `Layout(modifier.textModifier(text, style, ...), EmptyMeasurePolicy, || {})`
-4. Remove `text_content()` from `MeasurePolicy` trait
-5. Delete `TextMeasurePolicy` (use empty/simple policy instead)
-6. Add real invalidation hooks so `TextModifierElement::update` can signal layout/draw/semantics
-   changes when text/style mutate.
-7. Replace the placeholder measurer/drawer with `ParagraphLayoutCache`-style behavior and expose the
-   same semantics contract (`text`, `getTextLayoutResult`, translation toggles).
+1. Keep `Text()` modifier-based but run modifier nodes generically so Text no longer needs bespoke
+   handling inside `measure_layout_node`.
+2. Let `TextModifierElement::update` request layout/draw/semantics invalidations.
+3. Integrate the GPU paragraph measurer/renderer with `TextModifierNode` so measurement and draw
+   reuse the external cache instead of a stub.
+4. Implement baselines + full semantics (`text`, `getTextLayoutResult`, translation toggles).
+5. Remove any leftover MeasurePolicy shortcuts once modifier nodes own the content pipeline.
 
 **Reference Files:**
 - `/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/BasicText.kt`
 - `/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/modifiers/TextStringSimpleNode.kt`
+- GPU renderer text paths under `crates/compose-render/*` (metrics + draw submitted from Rust side)
 
 ---
 
@@ -144,11 +150,12 @@ Text content lives in the **modifier node**, not in MeasurePolicy!
    - Invoke `LayoutModifierNode::measure`, `DrawModifierNode::draw`, and other capability-specific
      hooks instead of relying on the `ResolvedModifiers` snapshot.
    - Remove the hard-coded padding/size/background aggregation once nodes run the pipeline.
-6. ⚠️ **Fix Text implementation to use modifier nodes.**
-   - Implement `TextModifierNode` following JC's `TextStringSimpleNode` pattern
-   - Move text content from `TextMeasurePolicy` to the modifier node
-   - Update rendering/semantics to extract text from modifier chain, including invalidation hooks
-   - Replace the placeholder measurement/draw infrastructure with real typography support
+6. ⚠️ **Finish the Text modifier pipeline.**
+   - Remove the layout special-case by executing modifier chains directly.
+   - Allow `TextModifierElement::update` to trigger invalidations so text/style changes flow without
+     rebuilding layout nodes.
+   - Bridge the GPU renderer’s paragraph measurement/draw APIs into `TextModifierNode` so we expose
+     accurate metrics/semantics similar to `ParagraphLayoutCache`.
 7. **Add real integration coverage.**
    - Extend the pointer/focus tests to synthesize events through `HitTestTarget` so we can verify
      suspending pointer handlers, `Modifier.clickable`, and focus callbacks operate end-to-end.
@@ -163,7 +170,7 @@ Use these upstream files while implementing the remaining pieces:
 | --- | --- | --- |
 | Modifier API | `androidx/compose/ui/Modifier.kt` | `crates/compose-ui/src/modifier/mod.rs` |
 | Node lifecycle | `ModifierNodeElement.kt`, `DelegatableNode.kt` | `crates/compose-foundation/src/modifier.rs` |
-| Text modifier nodes | `foundation/text/modifiers/TextStringSimpleNode.kt` | *TODO: create `TextModifierNode`* |
+| Text modifier nodes | `foundation/text/modifiers/TextStringSimpleNode.kt` | `crates/compose-ui/src/text_modifier_node.rs` |
 | Text widget | `foundation/text/BasicText.kt` | `crates/compose-ui/src/widgets/text.rs` |
 | Layout modifier | `ui/layout/LayoutModifier.kt` | `crates/compose-foundation/src/modifier.rs` (LayoutModifierNode) |
 | Pointer input | `ui/input/pointer/*` | `crates/compose-ui/src/modifier/pointer_input.rs` |
