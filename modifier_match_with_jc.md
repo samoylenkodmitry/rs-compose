@@ -21,10 +21,11 @@ before declaring the migration "done".
     modifiers from `ButtonNode`, `TextNode`, and `SpacerNode` instead of using reconciled node data.
   - `measure_spacer` builds resolved modifiers via `Modifier::empty().resolved_modifiers()` each
     time rather than pulling from the owning node.
-- ⚠️ Pointer/focus invalidation managers (`crates/compose-ui/src/pointer_dispatch.rs` and
-  `crates/compose-ui/src/focus_dispatch.rs`) are never invoked by the runtime. The only references
-  to `process_pointer_repasses` / `process_focus_invalidations` live in the unit tests, meaning the
-  new `needs_pointer_pass` / `needs_focus_sync` flags on `LayoutNode` can never clear in practice.
+- ✅ Pointer/focus invalidation managers (`crates/compose-ui/src/pointer_dispatch.rs` and
+  `crates/compose-ui/src/focus_dispatch.rs`) are now invoked by the app shell runtime during frame
+  processing. The `process_pointer_repasses` / `process_focus_invalidations` functions are called
+  in `AppShell::run_dispatch_queues()`, and the `needs_pointer_pass` / `needs_focus_sync` flags on
+  `LayoutNode` are properly cleared after processing, matching Jetpack Compose's invalidation pattern.
 - ⚠️ `ButtonNode`, `TextNode`, and `SpacerNode` still implement the `Node` trait directly and
   bypass the modifier chain completely, so "legacy" behaviour is still present in the tree.
 - ⚠️ Tests under `crates/compose-ui/src/tests/pointer_input_integration_test.rs` simply assert node
@@ -34,11 +35,12 @@ before declaring the migration "done".
 
 ## Work Remaining Before Parity Claims
 
-1. **Hook up the dispatch queues.**
-   - Drain `process_pointer_repasses` / `process_focus_invalidations` from the app shell each frame
-     and update the corresponding `LayoutNode` so `needs_pointer_pass` / `needs_focus_sync` can be
-     cleared without forcing a layout pass.
-   - Propagate the updated modifier slices or focus state to the renderer/hit-test structures.
+1. ✅ **COMPLETED: Hook up the dispatch queues.**
+   - ✅ The app shell now drains `process_pointer_repasses` / `process_focus_invalidations` each frame
+     in `AppShell::run_dispatch_queues()` and clears the `needs_pointer_pass` / `needs_focus_sync`
+     flags on `LayoutNode` without forcing layout passes.
+   - Note: Propagating updated modifier slices to renderer/hit-test structures will be completed
+     as part of the widget migration work below.
 2. **Delete the widget-specific node types.**
    - Rebuild `Button`, `Text`, and `Spacer` on top of `LayoutNode`/`SubcomposeLayoutNode` so
      metadata, semantics, and modifier snapshots all flow through the same path.

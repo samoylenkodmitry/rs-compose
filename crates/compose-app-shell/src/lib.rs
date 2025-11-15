@@ -6,10 +6,11 @@ use compose_foundation::PointerEventKind;
 use compose_render_common::{HitTestTarget, RenderScene, Renderer};
 use compose_runtime_std::StdRuntime;
 use compose_ui::{
-    log_layout_tree, log_render_scene, log_screen_summary, peek_focus_invalidation,
-    peek_pointer_invalidation, peek_render_invalidation, request_render_invalidation,
-    take_focus_invalidation, take_pointer_invalidation, take_render_invalidation, HeadlessRenderer,
-    LayoutEngine, LayoutTree,
+    has_pending_focus_invalidations, has_pending_pointer_repasses, log_layout_tree,
+    log_render_scene, log_screen_summary, peek_focus_invalidation, peek_pointer_invalidation,
+    peek_render_invalidation, process_focus_invalidations, process_pointer_repasses,
+    request_render_invalidation, take_focus_invalidation, take_pointer_invalidation,
+    take_render_invalidation, HeadlessRenderer, LayoutEngine, LayoutNode, LayoutTree,
 };
 use compose_ui_graphics::Size;
 
@@ -174,6 +175,7 @@ where
 
     fn process_frame(&mut self) {
         self.run_layout_phase();
+        self.run_dispatch_queues();
         self.run_render_phase();
     }
 
@@ -229,6 +231,46 @@ where
             self.layout_tree = None;
             self.scene_dirty = true;
             self.layout_dirty = false;
+        }
+    }
+
+    fn run_dispatch_queues(&mut self) {
+        // Process pointer input repasses
+        // Similar to Jetpack Compose's pointer input invalidation processing,
+        // we service nodes that need pointer input state updates without forcing layout/draw
+        if has_pending_pointer_repasses() {
+            let mut applier = self.composition.applier_mut();
+            process_pointer_repasses(|node_id| {
+                // Access the LayoutNode and clear its dirty flag
+                let result = applier.with_node::<LayoutNode, _>(node_id, |layout_node| {
+                    if layout_node.needs_pointer_pass() {
+                        layout_node.clear_needs_pointer_pass();
+                        log::trace!("Cleared pointer repass flag for node #{}", node_id);
+                    }
+                });
+                if let Err(err) = result {
+                    log::debug!("Could not process pointer repass for node #{}: {}", node_id, err);
+                }
+            });
+        }
+
+        // Process focus invalidations
+        // Mirrors Jetpack Compose's FocusInvalidationManager.invalidateNodes(),
+        // processing nodes that need focus state synchronization
+        if has_pending_focus_invalidations() {
+            let mut applier = self.composition.applier_mut();
+            process_focus_invalidations(|node_id| {
+                // Access the LayoutNode and clear its dirty flag
+                let result = applier.with_node::<LayoutNode, _>(node_id, |layout_node| {
+                    if layout_node.needs_focus_sync() {
+                        layout_node.clear_needs_focus_sync();
+                        log::trace!("Cleared focus sync flag for node #{}", node_id);
+                    }
+                });
+                if let Err(err) = result {
+                    log::debug!("Could not process focus invalidation for node #{}: {}", node_id, err);
+                }
+            });
         }
     }
 

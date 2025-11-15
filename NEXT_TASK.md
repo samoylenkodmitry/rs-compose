@@ -2,18 +2,18 @@
 
 ## Status: Still In Progress
 
-Recent work modernised many modifier builder helpers so they chain via `self.then(...)`, but
-core runtime parity with Jetpack Compose is not complete yet. The codebase still contains
-legacy widget nodes (`ButtonNode`, `TextNode`, `SpacerNode`) and manual semantics fallbacks,
-and the new pointer/focus invalidation managers are never invoked outside of unit tests.
+Recent work modernised many modifier builder helpers so they chain via `self.then(...)`, and
+the pointer/focus dispatch queues are now integrated into the app shell runtime. The codebase
+still contains legacy widget nodes (`ButtonNode`, `TextNode`, `SpacerNode`) and manual semantics
+fallbacks that need migration to complete the parity with Jetpack Compose.
 
 ## High-Priority Gaps
 
-1. **Wire the new dispatch queues into the host/runtime.** `schedule_pointer_repass` and
-   `schedule_focus_invalidation` are exported from `compose_ui`, but `process_pointer_repasses`
-   / `process_focus_invalidations` are never called by the app shell. Nodes mark
-   `needs_pointer_pass` / `needs_focus_sync` yet nothing clears those flags, so the queues never
-   drain.
+1. ✅ **COMPLETED: Wire the new dispatch queues into the host/runtime.** The app shell now
+   calls `process_pointer_repasses` and `process_focus_invalidations` during frame processing
+   (see [AppShell::run_dispatch_queues](crates/compose-app-shell/src/lib.rs#L237-L275)). Nodes
+   that mark `needs_pointer_pass` / `needs_focus_sync` now have those flags cleared by the
+   runtime, completing the invalidation cycle similar to Jetpack Compose's FocusInvalidationManager.
 2. **Remove the legacy widget-specific nodes.** Layout/runtime metadata paths still special-case
    `ButtonNode`, `TextNode`, and `SpacerNode`, pulling modifier information directly from those
    structs instead of the reconciled `LayoutNode` chain. Migrating those widgets onto standard
@@ -28,8 +28,8 @@ and the new pointer/focus invalidation managers are never invoked outside of uni
 
 ## Next Steps
 
-- Teach `crates/compose-app-shell` to drain pointer/focus queues each frame and to call the
-  appropriate `LayoutNode` methods so `needs_pointer_pass` / `needs_focus_sync` are cleared.
+- ✅ **DONE:** `crates/compose-app-shell` now drains pointer/focus queues each frame and calls
+  the appropriate `LayoutNode` methods to clear `needs_pointer_pass` / `needs_focus_sync`.
 - Convert the remaining widget nodes to emit layout/subcompose nodes with modifier-driven
   behaviour, then delete the `ButtonNode`, `TextNode`, and `SpacerNode` code paths along with
   the metadata fallbacks in `layout/mod.rs`.

@@ -360,7 +360,7 @@ impl LayoutNode {
     }
 
     /// Clears the pointer-input dirty flag after hosts service it.
-    pub(crate) fn clear_needs_pointer_pass(&self) {
+    pub fn clear_needs_pointer_pass(&self) {
         self.needs_pointer_pass.set(false);
     }
 
@@ -375,7 +375,7 @@ impl LayoutNode {
     }
 
     /// Clears the focus dirty flag after the focus manager processes it.
-    pub(crate) fn clear_needs_focus_sync(&self) {
+    pub fn clear_needs_focus_sync(&self) {
         self.needs_focus_sync.set(false);
     }
 
