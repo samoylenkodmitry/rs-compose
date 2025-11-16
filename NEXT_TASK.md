@@ -1,39 +1,43 @@
 # Modifier System Migration Tracker
 
-## Status: ⚠️ Persistent modifiers landed, node pipeline still bypassed
+## Status: ⚠️ Coordinator chain foundation in place, modifier nodes need measure() implementations
 
-The workspace now exposes `ModifierKind`-backed persistent composition and every widget goes through
-`LayoutNode` + `MeasurePolicy`. However, modifier nodes are still collapsed into `ResolvedModifiers`
-and the layout/draw pipeline never executes them. Text relies on a monospaced stub and semantics
-still hinge on `content_description`. The next iteration must focus on wiring the node pipeline and
-bringing `Text` closer to Jetpack Compose’s `BasicText`.
+The workspace now has `measure_through_modifier_chain()` that properly accesses the reconciled modifier
+chain and calls `TextModifierNode::measure()`. However, the existing modifier nodes (PaddingNode,
+SizeNode, OffsetNode) do NOT implement `LayoutModifierNode::measure()` - they only aggregate data into
+`ResolvedModifiers`. The next step is to make these nodes participate directly in measurement, then
+remove the `ResolvedModifiers` fallback.
 
 ## Completed Work
 
 1. ✅ **Dispatch queues integrated.** `AppShell::run_dispatch_queues`
    (`crates/compose-app-shell/src/lib.rs#L237-L275`) now drains pointer/focus invalidations so the
-   capability flags on `LayoutNode` match Jetpack Compose’s lifecycle.
+   capability flags on `LayoutNode` match Jetpack Compose's lifecycle.
 2. ✅ **Legacy widget nodes deleted.** `Button`, `Text`, and `Spacer` all emit `LayoutNode` +
    `MeasurePolicy`. The bespoke `measure_text`/`measure_button` helpers were removed.
 3. ✅ **Centralized modifier reconciliation.** `ModifierNodeChain` and `ModifierChainHandle`
    reconcile node instances with capability tracking and modifier locals.
 4. ✅ **Persistent `Modifier::then`.** `ModifierKind::Combined` provides the same persistent tree as
-   Kotlin’s `CombinedModifier` (`crates/compose-ui/src/modifier/mod.rs:235-382`).
+   Kotlin's `CombinedModifier` (`crates/compose-ui/src/modifier/mod.rs:235-382`).
+5. ✅ **Coordinator chain foundation.** `measure_through_modifier_chain()`
+   (`crates/compose-ui/src/layout/mod.rs:640-705`) properly accesses the modifier chain via
+   `ModifierChainHandle`, iterates through layout modifier nodes, and calls `TextModifierNode::measure()`.
 
 ## Architecture Overview
 
 - **Widgets**: Pure composables that emit `LayoutNode`s with policies such as `EmptyMeasurePolicy`,
   `LeafMeasurePolicy`, `FlexMeasurePolicy`, etc.
-- **Modifier chain**: Public builders now chain via `self.then(...)`, but the runtime still flattens
-  the tree into `Vec<DynModifierElement>` each update (`crates/compose-ui/src/modifier/chain.rs:72-95`)
-  and collapses nodes into `ResolvedModifiers`.
-- **Measure pipeline**: `measure_layout_node()` reads padding/size/offset from
-  `resolved_modifiers` (`crates/compose-ui/src/layout/mod.rs:725-880`) and falls back to a
-  `try_measure_with_layout_modifiers()` hack that only recognizes `TextModifierNode`.
-- **Text**: `Text()` adds `TextModifierElement` + `EmptyMeasurePolicy`, but the element only stores a
+- **Modifier chain**: Public builders now chain via `self.then(...)`, the runtime flattens into
+  `Vec<DynModifierElement>` and reconciles into `ModifierNodeChain`, but also collapses nodes into
+  `ResolvedModifiers` for legacy layout code.
+- **Measure pipeline**: `measure_layout_node()` calls `measure_through_modifier_chain()` which
+  iterates the reconciled chain and measures `TextModifierNode` directly. Other layout modifiers
+  (padding/size/offset) still fall back to `ResolvedModifiers` because PaddingNode/SizeNode/etc.
+  don't implement `LayoutModifierNode::measure()` yet.
+- **Text**: `Text()` adds `TextModifierElement` + `EmptyMeasurePolicy`, the element only stores a
   `String` and the node delegates to the monospaced fallback in `crates/compose-ui/src/text.rs`.
-- **Invalidation**: Capability-based invalidations exist, yet modifier nodes rarely trigger them
-  because we never call into nodes during layout/draw.
+- **Invalidation**: Capability-based invalidations exist, but modifier nodes rarely trigger them
+  because only TextModifierNode participates in measurement currently.
 
 ## Known Shortcuts
 
@@ -43,13 +47,16 @@ bringing `Text` closer to Jetpack Compose’s `BasicText`.
   persistent tree never reaches the runtime.
 - Jetpack Compose walks the `CombinedModifier` tree directly and never materializes a snapshot struct.
 
-### Layout/draw/pointer pipelines bypass nodes
-- `measure_layout_node()` manipulates constraints strictly via `ResolvedModifiers`, while the new
-  `ModifierNodeMeasurable` wrapper (`crates/compose-ui/src/layout/modifier_measurable.rs`) is unused.
-- `try_measure_with_layout_modifiers()` special-cases `TextModifierNode` and ignores every other
-  `LayoutModifierNode`.
-- Padding/background/offset logic still lives in `ResolvedModifiers`, so modifier nodes cannot own
-  those behaviors.
+### Layout modifiers don't implement measure()
+- `measure_through_modifier_chain()` properly iterates the chain and calls node `measure()` methods,
+  BUT the existing modifier nodes (PaddingNode, SizeNode, OffsetNode, FillNode, etc. in
+  `crates/compose-ui/src/modifier_nodes.rs`) do NOT implement `LayoutModifierNode::measure()`.
+- These nodes only store data fields that get aggregated into `ResolvedModifiers` via
+  `ModifierChainHandle::compute_resolved()` (`modifier/chain.rs:173-231`).
+- This means the data exists in TWO places: in the modifier nodes (unused during measurement) and
+  in `ResolvedModifiers` (actually used by `measure_layout_node`).
+- To fix: each node type needs a `measure()` implementation that manipulates constraints/size,
+  then `measure_through_modifier_chain()` needs to downcast and call them.
 
 ### Text modifier pipeline gap
 - `TextModifierElement` only takes a `String`
@@ -63,21 +70,75 @@ bringing `Text` closer to Jetpack Compose’s `BasicText`.
 
 ## Remaining Work
 
-### 1. Build the layout modifier coordinator chain
-- In `measure_layout_node()` (`crates/compose-ui/src/layout/mod.rs:725-880`), walk the reconciled
-  modifier chain (`layout_node.modifier_chain()`) to collect every `LayoutModifierNode`.
-- Create a `ContentMeasurable` that wraps the `MeasurePolicy` + child measurables. Then wrap it in
-  `ModifierNodeMeasurable` instances (outermost → innermost) so each node can call
-  `measure()`/intrinsics on the wrapped measurable, mirroring
-  `androidx/compose/ui/node/LayoutModifierNodeCoordinator.kt`.
-- Replace `try_measure_with_layout_modifiers()` with this chain. Once the chain works, delete the
-  text-only special case and feed placement data back into `MeasureResult`.
+### 1. Implement LayoutModifierNode::measure() for existing modifier nodes
 
-### 2. Remove `ResolvedModifiers` from layout/draw
-- Move padding/size/offset/background behavior into modifier nodes (PaddingNode, SizeNode, etc.)
-  instead of aggregating them in `ModifierChainHandle::compute_resolved()`.
-- Update layout/draw/pointer pipelines to inspect the reconciled node chain directly so there is no
-  shadow snapshot to keep in sync. `ResolvedModifiers` should eventually disappear.
+**Current State:**
+- ✅ `measure_through_modifier_chain()` exists and works (lines 640-705)
+- ✅ `TextModifierNode::measure()` is called correctly
+- ❌ PaddingNode, SizeNode, OffsetNode, FillNode don't implement `LayoutModifierNode::measure()`
+
+**What to do:**
+In `crates/compose-ui/src/modifier_nodes.rs`, make these nodes implement `LayoutModifierNode`:
+
+a) **PaddingNode** (already marked as LAYOUT capability):
+   ```rust
+   impl LayoutModifierNode for PaddingNode {
+       fn measure(&mut self, _context: &mut dyn ModifierNodeContext,
+                  measurable: &dyn Measurable, constraints: Constraints) -> Size {
+           // Subtract padding from constraints
+           let padding = self.padding();
+           let inner_constraints = Constraints {
+               min_width: (constraints.min_width - padding.horizontal_sum()).max(0.0),
+               max_width: (constraints.max_width - padding.horizontal_sum()).max(0.0),
+               min_height: (constraints.min_height - padding.vertical_sum()).max(0.0),
+               max_height: (constraints.max_height - padding.vertical_sum()).max(0.0),
+           };
+
+           // Measure wrapped content
+           let placeable = measurable.measure(inner_constraints);
+
+           // Add padding back to size
+           Size {
+               width: placeable.width() + padding.horizontal_sum(),
+               height: placeable.height() + padding.vertical_sum(),
+           }
+       }
+   }
+   ```
+
+b) **SizeNode** (already marked as LAYOUT capability):
+   - Similar pattern: constrain the max/min dimensions, measure wrapped content, apply size constraints
+
+c) **OffsetNode** (already marked as LAYOUT capability):
+   - Pass through to wrapped content (offset affects placement, not measurement)
+
+d) **Update `measure_through_modifier_chain()`** to handle these nodes:
+   ```rust
+   // After the TextModifierNode check, add:
+   else if let Some(padding_node) = node.as_any_mut().downcast_mut::<PaddingNode>() {
+       current_size = padding_node.measure(&mut context, &wrapped, current_constraints);
+   }
+   else if let Some(size_node) = node.as_any_mut().downcast_mut::<SizeNode>() {
+       current_size = size_node.measure(&mut context, &wrapped, current_constraints);
+   }
+   // ... etc for other node types
+   ```
+
+### 2. Remove `ResolvedModifiers` from layout pipeline
+
+Once step 1 is complete and all layout modifiers measure through their nodes:
+
+a) **Remove padding/size/offset logic from `measure_layout_node()`**:
+   - Delete the code that reads `resolved_modifiers.padding()` (lines ~760-770)
+   - Delete the code that reads `resolved_modifiers.layout_properties()` for size/offset
+   - Delete the constraint manipulation based on `ResolvedModifiers`
+
+b) **Stop computing layout-related ResolvedModifiers**:
+   - In `ModifierChainHandle::compute_resolved()` (`modifier/chain.rs:173-231`), remove the code
+     that aggregates PaddingNode, SizeNode, OffsetNode data
+   - Keep background/corner_shape/graphics_layer for now (used by draw pipeline)
+
+c) **Verify all tests still pass** after the migration
 
 ### 3. Finish the Text modifier pipeline
 - Expand `TextModifierElement` to carry the same arguments as Kotlin’s `TextStringSimpleElement`
