@@ -31,7 +31,7 @@ that still prevent us from matching Jetpack Compose’s behavior.
 - ⚠️ Layout modifier nodes now implement `LayoutModifierNode::measure()` (padding/size/offset/fill in
   `crates/compose-ui/src/modifier_nodes.rs`), but `measure_through_modifier_chain()` downcasts to a
   hardcoded list and re-instantiates fresh nodes/adapters each measure
-  (`crates/compose-ui/src/layout/mod.rs:953-1062`, `layout/mod.rs:214-305`). Any unknown
+  (`crates/compose-ui/src/layout/mod.rs:1243-1314`, `layout/mod.rs:170-239`). Any unknown
   `LayoutModifierNode` (including user-defined ones) forces a fallback to `ResolvedModifiers`, and
   the recreated nodes never reuse their `NodeState` or invalidation behavior.
 - ⚠️ `ResolvedModifiers` still drives draw/layout/semantics snapshots. Padding/offset/background and
@@ -39,10 +39,13 @@ that still prevent us from matching Jetpack Compose’s behavior.
   so modifier ordering and per-node state are lost.
 - ⚠️ `TextModifierElement` still only stores a raw `String` (`crates/compose-ui/src/text_modifier_node.rs:167-205`);
   `TextModifierNode::measure()` delegates to a monospaced fallback
-  (`text_modifier_node.rs:97-135` + `crates/compose-ui/src/text.rs:4-34`), `draw()` is empty, and
+  (`text_modifier_node.rs:105-143` + `crates/compose-ui/src/text.rs:1-44`), `draw()` is empty, and
   semantics expose only `content_description` while `update()` cannot invalidate on text changes
-  (`text_modifier_node.rs:183-198`). The widget itself (`crates/compose-ui/src/widgets/text.rs:125-143`)
-  lacks style/overflow/minLines/maxLines parameters, so parity with `BasicText` is far away.
+  (`text_modifier_node.rs:191-205`). Kotlin’s `TextStringSimpleNode` keeps a `ParagraphLayoutCache`
+  and manually calls `invalidateMeasurement` / `invalidateDraw` / `invalidateSemantics` because
+  `shouldAutoInvalidate` is false (`/media/huge/composerepo/compose/foundation/foundation/src/commonMain/kotlin/androidx/compose/foundation/text/modifiers/TextStringSimpleNode.kt:71-226`).
+  The widget itself (`crates/compose-ui/src/widgets/text.rs:125-143`) lacks
+  style/overflow/minLines/maxLines parameters, so parity with `BasicText` is far away.
 - ⚠️ Tests under `crates/compose-ui/src/tests/pointer_input_integration_test.rs` still only assert
   node counts—no integration test actually drives pointer events through `HitTestTarget`.
 
@@ -80,18 +83,18 @@ that still prevent us from matching Jetpack Compose’s behavior.
 **Current Behavior:**
 - `measure_through_modifier_chain()` walks the reconciled chain but only recognizes the built-in
   `PaddingNode`/`SizeNode`/`FillNode`/`OffsetNode`/`TextModifierNode`
-  (`crates/compose-ui/src/layout/mod.rs:953-1062`). Any other `LayoutModifierNode` sets an
+  (`crates/compose-ui/src/layout/mod.rs:1243-1314`). Any other `LayoutModifierNode` sets an
   `unsupported_layout_node` flag that forces a fallback to `ResolvedModifiers`.
-- Even for supported nodes, the pipeline rebuilds brand-new adapters every measure using
-  `BasicModifierNodeContext::new()` and temporary nodes
-  (`crates/compose-ui/src/layout/mod.rs:214-305`), so NodeState/invalidations are discarded, and
-  text caches/draw hooks never run on the reconciled node instances. Any invalidations requested
-  inside a layout node disappear because the throwaway context is not wired to the `LayoutNode`.
+- Even for supported nodes, `ModifierNodeMeasurable` clones node data into temporary structs with a
+  brand-new `BasicModifierNodeContext` every measure
+  (`crates/compose-ui/src/layout/mod.rs:170-239`), so NodeState/invalidations/caches are discarded,
+  and text draw hooks never run on the reconciled node instances. Any invalidations requested inside
+  a layout node disappear because the throwaway context is not wired to the `LayoutNode`.
 - `ModifierChainHandle::compute_resolved()` aggregates padding/size/fill/offset/background into a
   single `ResolvedModifiers` snapshot (`crates/compose-ui/src/modifier/chain.rs:173-219`) that still
   feeds draw/semantics and layout fallbacks, summing padding and overwriting later fields.
 - `measure_layout_node()` mutates constraints/offsets from that snapshot
-  (`crates/compose-ui/src/layout/mod.rs:1181-1308`) whenever the adapter walk bails out, so custom
+  (`crates/compose-ui/src/layout/mod.rs:1472-1666`) whenever the adapter walk bails out, so custom
   modifiers and ordering-sensitive stacks revert to the “last write wins” flattening path.
 - There is no `LayoutModifierNodeCoordinator`/`NodeCoordinator` equivalent to thread layout results
   into draw/pointer/semantics or to support lookahead/approach measurement; Kotlin’s chain shares
@@ -128,7 +131,7 @@ that still prevent us from matching Jetpack Compose’s behavior.
   (`crates/compose-ui/src/text_modifier_node.rs:167-205`), so style/overflow/minLines/maxLines are
   lost before they reach the node.
 - `TextModifierNode::measure()` delegates to a global monospaced stub
-  (`crates/compose-ui/src/text.rs:4-34`), ignores constraints like softWrap/maxLines, never caches
+  (`crates/compose-ui/src/text.rs:1-44`), ignores constraints like softWrap/maxLines, never caches
   paragraphs, and cannot invalidate itself when data changes.
 - `draw()` is empty and no GPU paragraph commands are emitted, so rendering happens elsewhere via
   ad-hoc inspection of the modifier chain.

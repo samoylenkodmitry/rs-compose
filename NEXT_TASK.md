@@ -29,8 +29,9 @@ monospaced measurement, empty draw, and placeholder semantics.
 - **Widgets**: Pure composables emitting `LayoutNode`s with policies (Empty/Flex/etc.).
 - **Modifier chain**: Builders chain via `self.then(...)`, flatten into `Vec<DynModifierElement>`
   for reconciliation, and also collapse into a `ResolvedModifiers` snapshot for layout/draw.
-- **Measure pipeline**: `measure_through_modifier_chain()` downcasts to built-in layout nodes and
-  builds new adapters each pass (`crates/compose-ui/src/layout/mod.rs:953-1062`). Any unknown/custom
+- **Measure pipeline**: `measure_through_modifier_chain()` downcasts to built-in layout nodes
+  (`crates/compose-ui/src/layout/mod.rs:1243-1314`) and wraps them in fresh adapters using a new
+  `BasicModifierNodeContext` each pass (`layout/mod.rs:170-239`). Any unknown/custom
   `LayoutModifierNode` triggers a fallback to `ResolvedModifiers`, and the adapters never reuse
   `ModifierNode` state or invalidations.
 - **Text**: `Text()` adds `TextModifierElement` + `EmptyMeasurePolicy`; the element stores only a
@@ -47,16 +48,17 @@ monospaced measurement, empty draw, and placeholder semantics.
   persistent tree never reaches the runtime. Kotlin walks the `CombinedModifier` tree directly.
 
 ### Layout modifier nodes bypassed
-- `measure_through_modifier_chain()` only recognizes built-in nodes and rebuilds temporary adapters
-  (`crates/compose-ui/src/layout/mod.rs:953-1062`); custom layout modifiers fall back to
-  `ResolvedModifiers` and reconciled nodes never receive real `ModifierNodeContext` calls. Any
+- `measure_through_modifier_chain()` only recognizes built-in nodes
+  (`crates/compose-ui/src/layout/mod.rs:1243-1314`) and rebuilds temporary adapters with a fresh
+  `BasicModifierNodeContext` (`layout/mod.rs:170-239`); custom layout modifiers fall back to
+  `ResolvedModifiers`, reconciled nodes never receive real `ModifierNodeContext` calls, and any
   invalidations during adapter measurement are lost because the context is throwaway.
 - `ModifierChainHandle::compute_resolved()` sums padding and overwrites later properties into a
   `ResolvedModifiers` snapshot (`crates/compose-ui/src/modifier/chain.rs:173-219`); stacked
   modifiers lose ordering and “last background wins.”
 - `measure_layout_node()` still mutates constraints/offsets from that snapshot when the adapter walk
-  bails out, there is no NodeCoordinator to share layout results with draw/pointer/semantics, and
-  there is no lookahead/approach measurement hook.
+  bails out (`crates/compose-ui/src/layout/mod.rs:1472-1666`), there is no NodeCoordinator to share
+  layout results with draw/pointer/semantics, and there is no lookahead/approach measurement hook.
 
 ### Text modifier pipeline gap
 - `TextModifierElement` captures only a `String`
