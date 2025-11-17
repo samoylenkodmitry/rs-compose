@@ -85,18 +85,25 @@ that still prevent us from matching Jetpack Compose’s behavior.
 - Even for supported nodes, the pipeline rebuilds brand-new adapters every measure using
   `BasicModifierNodeContext::new()` and temporary nodes
   (`crates/compose-ui/src/layout/mod.rs:214-305`), so NodeState/invalidations are discarded, and
-  text caches/draw hooks never run on the reconciled node instances.
+  text caches/draw hooks never run on the reconciled node instances. Any invalidations requested
+  inside a layout node disappear because the throwaway context is not wired to the `LayoutNode`.
 - `ModifierChainHandle::compute_resolved()` aggregates padding/size/fill/offset/background into a
   single `ResolvedModifiers` snapshot (`crates/compose-ui/src/modifier/chain.rs:173-219`) that still
   feeds draw/semantics and layout fallbacks, summing padding and overwriting later fields.
 - `measure_layout_node()` mutates constraints/offsets from that snapshot
   (`crates/compose-ui/src/layout/mod.rs:1181-1308`) whenever the adapter walk bails out, so custom
   modifiers and ordering-sensitive stacks revert to the “last write wins” flattening path.
+- There is no `LayoutModifierNodeCoordinator`/`NodeCoordinator` equivalent to thread layout results
+  into draw/pointer/semantics or to support lookahead/approach measurement; Kotlin’s chain shares
+  coordinates/layers with draw and hit-testing (`.../ui/node/LayoutModifierNodeCoordinator.kt`).
 
 **Problem:**
 - Layout modifier nodes still cannot wrap child measurables generically or preserve ordering—custom
   layout modifiers opt out entirely, and built-ins lose their state/invalidations every pass because
   we never invoke the reconciled nodes. Draw/pointer/semantics likewise ignore the node chain.
+- Missing coordinator/linkage also means graphics layers, clipping, and hit testing are still driven
+  by the flattened snapshot instead of the modifier nodes that declared them in order, and lookahead
+  support cannot be layered in the way Jetpack Compose does.
 
 **Remaining Work:**
 1. Build a coordinator-style walk over `ModifierNodeChain` that invokes each `LayoutModifierNode`
@@ -107,6 +114,9 @@ that still prevent us from matching Jetpack Compose’s behavior.
 3. Remove padding/size/offset/fill constraint munging from `measure_layout_node()` once the node
    chain drives measurement, and drop `compute_resolved()` (or keep only draw/semantics data
    temporarily) after the pipelines read directly from modifier nodes.
+4. Recreate the NodeCoordinator responsibilities (sharing measured size with draw/hit test,
+   applying graphics layers/clipping, and leaving room for lookahead) instead of mutating
+   `ResolvedModifiers`.
 
 **Reference:** See `androidx/compose/ui/node/LayoutModifierNodeCoordinator.kt` and
 `androidx/compose/ui/node/NodeCoordinator.kt` for the Kotlin reference chain.
@@ -128,6 +138,10 @@ that still prevent us from matching Jetpack Compose’s behavior.
 - The widget itself only exposes `(value, modifier)` (`crates/compose-ui/src/widgets/text.rs:125-143`),
   so there is no way to pass the parameters that Jetpack Compose’s `BasicText` accepts
   (style/font resolver/overflow/minLines/maxLines/autoSize/etc.).
+- Kotlin’s `TextStringSimpleNode` keeps a `ParagraphLayoutCache`, toggles text substitution, and
+  manually calls `invalidateMeasurement`/`invalidateDraw`/`invalidateSemantics` because
+  `shouldAutoInvalidate` is false; our `update()` cannot reach a real context, so invalidations and
+  caches never survive.
 
 **Problem:**
 - Without style/resolver parameters the modifier node cannot delegate to the external text renderer
@@ -144,7 +158,8 @@ that still prevent us from matching Jetpack Compose’s behavior.
    optional `ColorProducer`, auto-size, placeholders).
 2. Store a paragraph cache/renderer handle inside `TextModifierNode`, route measurement and drawing
    through the existing external text renderer/paragraph library, and call
-   `invalidateMeasurement()` / `invalidateDraw()` / `invalidateSemantics()` when properties change.
+   `invalidateMeasurement()` / `invalidateDraw()` / `invalidateSemantics()` when properties change,
+   matching Kotlin’s manual invalidation pattern when `shouldAutoInvalidate` is false.
 3. Replace the `content_description` fallback with real semantics properties (`text`,
    `getTextLayoutResult`, `isShowingTextSubstitution`, etc.).
 4. Expand `Text` (and future `BasicText`) to expose the Kotlin API surface and pass those arguments

@@ -1,12 +1,13 @@
 # Modifier System Migration Tracker
 
-## Status: ⚠️ Adapter walk exists, but layout/draw still flatten into `ResolvedModifiers`
+## Status: ⚠️ Adapter walk exists, but NodeCoordinator-style chaining is missing
 
 `measure_through_modifier_chain()` now collects built-in layout nodes (padding/size/fill/offset/text)
 and wraps the `MeasurePolicy` with temporary adapters, yet any unknown `LayoutModifierNode` forces a
-fallback to `ResolvedModifiers`. The adapters re-instantiate fresh nodes each measure, so
-invalidation/state is ignored, draw/semantics still read the flattened snapshot, and Text remains a
-string-only stub with monospaced measurement, empty draw, and placeholder semantics.
+fallback to `ResolvedModifiers`. The adapters re-instantiate fresh nodes each measure with a fresh
+`BasicModifierNodeContext`, so invalidations/caches never reach `LayoutNode`, there is no
+NodeCoordinator equivalent for draw/pointer/lookahead, and Text remains a string-only stub with
+monospaced measurement, empty draw, and placeholder semantics.
 
 ## Completed Work
 
@@ -48,12 +49,14 @@ string-only stub with monospaced measurement, empty draw, and placeholder semant
 ### Layout modifier nodes bypassed
 - `measure_through_modifier_chain()` only recognizes built-in nodes and rebuilds temporary adapters
   (`crates/compose-ui/src/layout/mod.rs:953-1062`); custom layout modifiers fall back to
-  `ResolvedModifiers` and reconciled nodes never receive real `ModifierNodeContext` calls.
+  `ResolvedModifiers` and reconciled nodes never receive real `ModifierNodeContext` calls. Any
+  invalidations during adapter measurement are lost because the context is throwaway.
 - `ModifierChainHandle::compute_resolved()` sums padding and overwrites later properties into a
   `ResolvedModifiers` snapshot (`crates/compose-ui/src/modifier/chain.rs:173-219`); stacked
   modifiers lose ordering and “last background wins.”
 - `measure_layout_node()` still mutates constraints/offsets from that snapshot when the adapter walk
-  bails out, so draw/pointer/semantics pipelines also ignore modifier nodes.
+  bails out, there is no NodeCoordinator to share layout results with draw/pointer/semantics, and
+  there is no lookahead/approach measurement hook.
 
 ### Text modifier pipeline gap
 - `TextModifierElement` captures only a `String`
@@ -63,6 +66,9 @@ string-only stub with monospaced measurement, empty draw, and placeholder semant
 - `TextModifierNode` uses monospaced measurement, has an empty `draw()`, and only sets
   `content_description` semantics; Kotlin’s `TextStringSimpleNode` manages paragraph caches,
   baselines, text substitution, and `SemanticsPropertyReceiver.text` (`.../text/modifiers/TextStringSimpleNode.kt`).
+- `TextStringSimpleNode` manually invalidates layout/draw/semantics around a `ParagraphLayoutCache`
+  while `shouldAutoInvalidate` is false; our `update()` cannot issue invalidations because it never
+  sees a live `ModifierNodeContext`.
 - The widget API (`crates/compose-ui/src/widgets/text.rs:125-143`) exposes neither style nor
   callbacks like `onTextLayout`, so parity with `BasicText` isn’t possible.
 
@@ -71,9 +77,11 @@ string-only stub with monospaced measurement, empty draw, and placeholder semant
 ### 1. Drive layout/draw/pointer through modifier nodes
 - Build a `LayoutModifierNodeCoordinator`-style walk over `ModifierNodeChain`, wrapping measurables
   and invoking each reconciled `LayoutModifierNode` (not fresh adapters) in order, with placements
-  and intrinsic queries.
-- Surface draw/pointer/semantics nodes from the same chain and honor ordering; stop mutating
-  constraints/offsets from `ResolvedModifiers` once nodes drive the pipeline.
+  and intrinsic queries, and wire those nodes to a real `ModifierNodeContext`.
+- Surface draw/pointer/semantics nodes from the same chain, preserve modifier ordering for layers/
+  clipping, and leave room for lookahead/approach measurement.
+- Stop mutating constraints/offsets from `ResolvedModifiers` once nodes drive the pipeline and draw
+  can consume the coordinator chain.
 
 ### 2. Preserve the persistent modifier tree during reconciliation
 - Stop cloning intermediate element/inspector vectors; walk the `ModifierKind::Combined` tree
@@ -84,9 +92,9 @@ string-only stub with monospaced measurement, empty draw, and placeholder semant
   softWrap, minLines/maxLines, `ColorProducer`, auto-size, placeholders/selection hooks).
 - Store a paragraph cache/renderer handle inside `TextModifierNode`, call into the existing external
   text renderer/paragraph library for measurement + draw, issue
-  `invalidateMeasurement`/`invalidateDraw`/`invalidateSemantics` on updates, and expose real semantics
-  (`text`, `getTextLayoutResult`, substitution toggles). Remove the runtime metadata fallback once
-  semantics provide `SemanticsRole::Text`.
+  `invalidateMeasurement`/`invalidateDraw`/`invalidateSemantics` on updates (no auto invalidate), and
+  expose real semantics (`text`, `getTextLayoutResult`, substitution toggles). Remove the runtime
+  metadata fallback once semantics provide `SemanticsRole::Text`.
 - Expand `Text`/`BasicText` to pass the full parameter set through the modifier element.
 
 ### 4. Testing & integration cleanup
