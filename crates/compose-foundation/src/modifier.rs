@@ -395,12 +395,24 @@ pub trait ModifierNode: Any + DelegatableNode {
 /// pipeline. They can intercept and modify the measurement and placement of
 /// their wrapped content.
 pub trait LayoutModifierNode: ModifierNode {
-    /// Measures the wrapped content and returns the size this modifier
-    /// occupies. The node receives a measurable representing the wrapped
-    /// content and the incoming constraints from the parent.
+    /// Measures the wrapped content and returns both the size this modifier
+    /// occupies and where the wrapped content should be placed.
+    ///
+    /// The node receives a measurable representing the wrapped content and
+    /// the incoming constraints from the parent.
+    ///
+    /// Returns a `LayoutModifierMeasureResult` containing:
+    /// - `size`: The final size this modifier will occupy
+    /// - `placement_offset_x/y`: Where to place the wrapped content relative
+    ///   to this modifier's top-left corner
+    ///
+    /// For example, a padding modifier would:
+    /// - Measure child with deflated constraints
+    /// - Return size = child size + padding
+    /// - Return placement offset = (padding.left, padding.top)
     ///
     /// The default implementation delegates to the wrapped content without
-    /// modification.
+    /// modification (size = child size, offset = 0).
     ///
     /// NOTE: This takes `&self` not `&mut self` to match Jetpack Compose semantics.
     /// Nodes that need mutable state should use interior mutability (Cell/RefCell).
@@ -409,13 +421,13 @@ pub trait LayoutModifierNode: ModifierNode {
         _context: &mut dyn ModifierNodeContext,
         measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Default: pass through to wrapped content by measuring the child.
         let placeable = measurable.measure(constraints);
-        Size {
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: placeable.width(),
             height: placeable.height(),
-        }
+        })
     }
 
     /// Returns the minimum intrinsic width of this modifier node.

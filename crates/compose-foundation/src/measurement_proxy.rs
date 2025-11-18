@@ -15,7 +15,8 @@
 //! configuration that can perform measurement without holding a borrow to the
 //! modifier chain.
 
-use crate::{Constraints, Measurable, ModifierNodeContext, Size};
+use crate::{Constraints, Measurable, ModifierNodeContext};
+use compose_ui_layout::LayoutModifierMeasureResult;
 
 /// Trait for measurement proxies that can perform measurement operations
 /// without holding a borrow to the modifier chain.
@@ -27,12 +28,16 @@ pub trait MeasurementProxy {
     ///
     /// This method is equivalent to `LayoutModifierNode::measure()` but operates
     /// on a snapshot of the node's configuration.
+    ///
+    /// Returns a `LayoutModifierMeasureResult` containing:
+    /// - The size this modifier will occupy
+    /// - The offset at which to place the wrapped content
     fn measure_proxy(
         &self,
         context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size;
+    ) -> LayoutModifierMeasureResult;
 
     /// Returns the minimum intrinsic width of the wrapped content.
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32;

@@ -132,3 +132,39 @@ impl Placement {
         }
     }
 }
+
+/// Result of a layout modifier measurement operation.
+///
+/// Unlike `MeasureResult` which is for `MeasurePolicy` (multiple children),
+/// this type is specifically for layout modifiers which wrap a single piece
+/// of content and need to specify where that wrapped content should be placed.
+#[derive(Clone, Copy, Debug)]
+pub struct LayoutModifierMeasureResult {
+    /// The size this modifier will occupy.
+    pub size: Size,
+    /// The offset at which to place the wrapped content relative to
+    /// the top-left corner of this modifier's bounds.
+    /// For example, PaddingNode returns (padding.left, padding.top) here
+    /// to offset the child by the padding amount.
+    pub placement_offset_x: f32,
+    pub placement_offset_y: f32,
+}
+
+impl LayoutModifierMeasureResult {
+    pub fn new(size: Size, placement_offset_x: f32, placement_offset_y: f32) -> Self {
+        Self {
+            size,
+            placement_offset_x,
+            placement_offset_y,
+        }
+    }
+
+    /// Creates a result with zero placement offset (wrapped content placed at 0,0).
+    pub fn with_size(size: Size) -> Self {
+        Self {
+            size,
+            placement_offset_x: 0.0,
+            placement_offset_y: 0.0,
+        }
+    }
+}

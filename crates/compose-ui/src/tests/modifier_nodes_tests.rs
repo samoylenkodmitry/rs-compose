@@ -90,8 +90,8 @@ fn padding_node_adds_space_to_content() {
 
     let result = node.measure(&mut context, &measurable, constraints);
     // Content is 50x50, padding is 10 on each side, so total is 70x70
-    assert_eq!(result.width, 70.0);
-    assert_eq!(result.height, 70.0);
+    assert_eq!(result.size.width, 70.0);
+    assert_eq!(result.size.height, 70.0);
 }
 
 #[test]
@@ -187,8 +187,8 @@ fn size_node_enforces_dimensions() {
     };
 
     let result = node.measure(&mut context, &measurable, constraints);
-    assert_eq!(result.width, 100.0);
-    assert_eq!(result.height, 200.0);
+    assert_eq!(result.size.width, 100.0);
+    assert_eq!(result.size.height, 200.0);
 }
 
 #[test]
@@ -668,12 +668,12 @@ fn custom_layout_modifier_works_via_proxy() {
             _context: &mut dyn ModifierNodeContext,
             measurable: &dyn Measurable,
             constraints: Constraints,
-        ) -> Size {
+        ) -> compose_ui_layout::LayoutModifierMeasureResult {
             let placeable = measurable.measure(constraints);
-            Size {
+            compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
                 width: placeable.width() + self.extra_width,
                 height: placeable.height(),
-            }
+            })
         }
 
         fn min_intrinsic_width(&self, measurable: &dyn Measurable, height: f32) -> f32 {
@@ -711,7 +711,7 @@ fn custom_layout_modifier_works_via_proxy() {
             context: &mut dyn ModifierNodeContext,
             wrapped: &dyn Measurable,
             constraints: Constraints,
-        ) -> Size {
+        ) -> compose_ui_layout::LayoutModifierMeasureResult {
             let node = CustomWidthNode::new(self.extra_width);
             node.measure(context, wrapped, constraints)
         }
@@ -792,8 +792,8 @@ fn custom_layout_modifier_works_via_proxy() {
 
     let result = node.measure(&mut context, &measurable, constraints);
     // Content is 100x50, we add 20 to width, so result is 120x50
-    assert_eq!(result.width, 120.0);
-    assert_eq!(result.height, 50.0);
+    assert_eq!(result.size.width, 120.0);
+    assert_eq!(result.size.height, 50.0);
 
     // Test intrinsics
     let intrinsic_width = node.min_intrinsic_width(&measurable, 100.0);
@@ -859,17 +859,17 @@ fn stateful_measure_exposes_proxy_reconstruction_issue() {
             _context: &mut dyn ModifierNodeContext,
             measurable: &dyn Measurable,
             constraints: Constraints,
-        ) -> Size {
+        ) -> compose_ui_layout::LayoutModifierMeasureResult {
             // Increment the measure count - this is the state we want to preserve
             let count = self.measure_count.get();
             self.measure_count.set(count + 1);
 
             // Measure wrapped content and add initial_value to demonstrate state capture
             let placeable = measurable.measure(constraints);
-            Size {
+            compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
                 width: placeable.width() + self.initial_value as f32,
                 height: placeable.height(),
-            }
+            })
         }
 
         fn create_measurement_proxy(&self) -> Option<Box<dyn MeasurementProxy>> {
@@ -891,7 +891,7 @@ fn stateful_measure_exposes_proxy_reconstruction_issue() {
             context: &mut dyn ModifierNodeContext,
             wrapped: &dyn Measurable,
             constraints: Constraints,
-        ) -> Size {
+        ) -> compose_ui_layout::LayoutModifierMeasureResult {
             // Phase 1: Reconstruct the node (simulates current implementation pattern)
             // This creates a fresh node, losing measure_count state from the original
             let node = StatefulMeasureNode::new(self.initial_value);
@@ -966,8 +966,8 @@ fn stateful_measure_exposes_proxy_reconstruction_issue() {
     };
 
     let size1 = node.measure(&mut context, &measurable, constraints);
-    assert_eq!(size1.width, 110.0); // 100 + 10
-    assert_eq!(size1.height, 50.0);
+    assert_eq!(size1.size.width, 110.0); // 100 + 10
+    assert_eq!(size1.size.height, 50.0);
 
     // Check that measure_count was incremented
     let count_after_first = node.measure_count.get();
@@ -977,8 +977,8 @@ fn stateful_measure_exposes_proxy_reconstruction_issue() {
     // Phase 1's proxy will reconstruct the node, resetting measure_count to 0
     let proxy = node.create_measurement_proxy().expect("Should have proxy");
     let size2 = proxy.measure_proxy(&mut context, &measurable, constraints);
-    assert_eq!(size2.width, 110.0); // Still 100 + 10 (initial_value preserved)
-    assert_eq!(size2.height, 50.0);
+    assert_eq!(size2.size.width, 110.0); // Still 100 + 10 (initial_value preserved)
+    assert_eq!(size2.size.height, 50.0);
 
     // The original node's count should still be 1 (proxy didn't touch it)
     let count_after_proxy = node.measure_count.get();

@@ -60,6 +60,9 @@ pub struct LayoutModifierCoordinator<'a> {
     wrapped: Box<dyn NodeCoordinator + 'a>,
     /// The measured size from the last measure pass.
     measured_size: Cell<Size>,
+    /// The placement offset from the last measure pass.
+    /// This tells us where to place the wrapped content relative to this coordinator's position.
+    placement_offset: Cell<Point>,
     /// Position relative to parent.
     position: Cell<Point>,
     /// Shared context for invalidation tracking.
@@ -81,6 +84,7 @@ impl<'a> LayoutModifierCoordinator<'a> {
             node_index,
             wrapped,
             measured_size: Cell::new(Size::ZERO),
+            placement_offset: Cell::new(Point::default()),
             position: Cell::new(Point::default()),
             context,
         }
@@ -111,8 +115,10 @@ impl<'a> NodeCoordinator for LayoutModifierCoordinator<'a> {
 
     fn place(&mut self, x: f32, y: f32) {
         self.set_position(Point { x, y });
-        // Propagate placement through the coordinator chain
-        self.wrapped.place(x, y);
+        // Apply the placement offset from the measure result when placing the wrapped content.
+        // This allows modifiers like Padding to offset their children appropriately.
+        let offset = self.placement_offset.get();
+        self.wrapped.place(x + offset.x, y + offset.y);
     }
 }
 
@@ -144,14 +150,14 @@ impl<'a> Measurable for LayoutModifierCoordinator<'a> {
                 .unwrap_or(None)
         };
 
-        let size = if let Some(proxy) = proxy {
+        let result = if let Some(proxy) = proxy {
             // Use the proxy to measure with the applier borrow released
             match self.context.try_borrow_mut() {
                 Ok(mut ctx) => proxy.measure_proxy(&mut *ctx, self.wrapped.as_ref(), constraints),
                 Err(_) => {
                     // Context already borrowed - use a temporary context
                     let mut temp = LayoutNodeContext::new();
-                    let size = proxy.measure_proxy(&mut temp, self.wrapped.as_ref(), constraints);
+                    let result = proxy.measure_proxy(&mut temp, self.wrapped.as_ref(), constraints);
 
                     // Merge invalidations from temp context to shared
                     if let Ok(mut shared) = self.context.try_borrow_mut() {
@@ -160,20 +166,25 @@ impl<'a> Measurable for LayoutModifierCoordinator<'a> {
                         }
                     }
 
-                    size
+                    result
                 }
             }
         } else {
             // Node doesn't provide a proxy - pass through to wrapped coordinator
             let placeable = self.wrapped.measure(constraints);
-            Size {
+            compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
                 width: placeable.width(),
                 height: placeable.height(),
-            }
+            })
         };
 
-        self.measured_size.set(size);
-        Box::new(CoordinatorPlaceable { size })
+        // Store both the size and the placement offset for use during placement
+        self.measured_size.set(result.size);
+        self.placement_offset.set(Point {
+            x: result.placement_offset_x,
+            y: result.placement_offset_y,
+        });
+        Box::new(CoordinatorPlaceable { size: result.size })
     }
 
     fn min_intrinsic_width(&self, height: f32) -> f32 {

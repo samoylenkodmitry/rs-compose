@@ -616,12 +616,12 @@ impl LayoutModifierNode for TestLayoutNode {
         _context: &mut dyn ModifierNodeContext,
         _measurable: &dyn Measurable,
         _constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         self.measure_count.set(self.measure_count.get() + 1);
-        Size {
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: 100.0,
             height: 100.0,
-        }
+        })
     }
 
     fn min_intrinsic_width(&self, _measurable: &dyn Measurable, _height: f32) -> f32 {

@@ -108,7 +108,7 @@ impl LayoutModifierNode for TextModifierNode {
         _context: &mut dyn ModifierNodeContext,
         _measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Measure the text content
         let text_size = self.measure_text_content();
 
@@ -120,10 +120,10 @@ impl LayoutModifierNode for TextModifierNode {
             .height
             .clamp(constraints.min_height, constraints.max_height);
 
-        // Text is a leaf node - return the text size directly
+        // Text is a leaf node - return the text size directly with no offset
         // We don't call measurable.measure() because there's no wrapped content
         // (Text uses EmptyMeasurePolicy which has no children)
-        Size { width, height }
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size { width, height })
     }
 
     fn min_intrinsic_width(&self, _measurable: &dyn Measurable, _height: f32) -> f32 {
@@ -175,7 +175,7 @@ impl MeasurementProxy for TextMeasurementProxy {
         _context: &mut dyn ModifierNodeContext,
         _measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Directly implement text measurement logic (no node reconstruction)
         let text_size = self.measure_text_content();
 
@@ -187,8 +187,8 @@ impl MeasurementProxy for TextMeasurementProxy {
             .height
             .clamp(constraints.min_height, constraints.max_height);
 
-        // Text is a leaf node - return the text size directly
-        Size { width, height }
+        // Text is a leaf node - return the text size directly with no offset
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size { width, height })
     }
 
     fn min_intrinsic_width_proxy(&self, _measurable: &dyn Measurable, _height: f32) -> f32 {
