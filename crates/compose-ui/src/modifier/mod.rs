@@ -454,22 +454,8 @@ impl Modifier {
         self.layout_properties().row_alignment()
     }
 
-    pub fn background_color(&self) -> Option<Color> {
-        self.resolved_modifiers()
-            .background()
-            .map(|background| background.color())
-    }
-
-    pub fn corner_shape(&self) -> Option<RoundedCornerShape> {
-        self.resolved_modifiers().corner_shape()
-    }
-
     pub fn draw_commands(&self) -> Vec<DrawCommand> {
         collect_slices_from_modifier(self).draw_commands().to_vec()
-    }
-
-    pub fn graphics_layer_values(&self) -> Option<GraphicsLayer> {
-        self.resolved_modifiers().graphics_layer()
     }
 
     pub fn clips_to_bounds(&self) -> bool {
@@ -828,22 +814,16 @@ impl ResolvedBackground {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResolvedModifiers {
     padding: EdgeInsets,
-    background: Option<ResolvedBackground>,
-    corner_shape: Option<RoundedCornerShape>,
     layout: LayoutProperties,
     offset: Point,
-    graphics_layer: Option<GraphicsLayer>,
 }
 
 impl Default for ResolvedModifiers {
     fn default() -> Self {
         Self {
             padding: EdgeInsets::default(),
-            background: None,
-            corner_shape: None,
             layout: LayoutProperties::default(),
             offset: Point::default(),
-            graphics_layer: None,
         }
     }
 }
@@ -853,24 +833,12 @@ impl ResolvedModifiers {
         self.padding
     }
 
-    pub fn background(&self) -> Option<ResolvedBackground> {
-        self.background
-    }
-
-    pub fn corner_shape(&self) -> Option<RoundedCornerShape> {
-        self.corner_shape
-    }
-
     pub fn layout_properties(&self) -> LayoutProperties {
         self.layout
     }
 
     pub fn offset(&self) -> Point {
         self.offset
-    }
-
-    pub fn graphics_layer(&self) -> Option<GraphicsLayer> {
-        self.graphics_layer
     }
 
     pub(crate) fn set_padding(&mut self, padding: EdgeInsets) {
@@ -887,25 +855,6 @@ impl ResolvedModifiers {
 
     pub(crate) fn set_offset(&mut self, offset: Point) {
         self.offset = offset;
-    }
-
-    pub(crate) fn set_graphics_layer(&mut self, layer: Option<GraphicsLayer>) {
-        self.graphics_layer = layer;
-    }
-
-    pub(crate) fn set_background_color(&mut self, color: Color) {
-        self.background = Some(ResolvedBackground::new(color, self.corner_shape));
-    }
-
-    pub(crate) fn clear_background(&mut self) {
-        self.background = None;
-    }
-
-    pub(crate) fn set_corner_shape(&mut self, shape: Option<RoundedCornerShape>) {
-        self.corner_shape = shape;
-        if let Some(background) = &mut self.background {
-            background.set_shape(shape);
-        }
     }
 }
 

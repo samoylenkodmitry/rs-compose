@@ -228,13 +228,29 @@ fn alignment_modifiers_record_values() {
 }
 
 #[test]
-fn graphics_layer_modifier_updates_resolved_layer() {
+fn graphics_layer_modifier_creates_node() {
+    use crate::modifier_nodes::GraphicsLayerNode;
+    use crate::modifier::ModifierChainHandle;
+
     let layer = GraphicsLayer {
         alpha: 0.5,
         ..Default::default()
     };
     let modifier = Modifier::empty().graphics_layer(layer);
-    assert_eq!(modifier.graphics_layer_values(), Some(layer));
+
+    // Graphics layer is now tracked in the modifier node chain, not ResolvedModifiers
+    let mut handle = ModifierChainHandle::new();
+    let _ = handle.update(&modifier);
+
+    // Verify the node exists in the chain by checking for DRAW capability
+    let chain = handle.chain();
+    let mut has_graphics_layer = false;
+    chain.for_each_node_with_capability(compose_foundation::NodeCapabilities::DRAW, |_ref, node| {
+        if node.as_any().downcast_ref::<GraphicsLayerNode>().is_some() {
+            has_graphics_layer = true;
+        }
+    });
+    assert!(has_graphics_layer, "Expected GraphicsLayerNode in chain");
 }
 
 #[test]
