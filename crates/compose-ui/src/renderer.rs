@@ -82,21 +82,14 @@ impl HeadlessRenderer {
 
         operations.append(&mut behind);
 
-        // Render text content if present in modifier slices
+        // Render text content if present in modifier slices.
         // This follows Jetpack Compose's pattern where text is a modifier node capability
+        // (TextModifierNode implements LayoutModifierNode + DrawModifierNode + SemanticsNode)
         if let Some(text) = layout.node_data.modifier_slices().text_content() {
             operations.push(RenderOp::Text {
                 node_id: layout.node_id,
                 rect,
                 value: text.to_string(),
-            });
-        } else if let LayoutNodeKind::Text { value } = &layout.node_data.kind {
-            // Fallback to LayoutNodeKind::Text for backward compatibility
-            // TODO: Remove this fallback once all text goes through modifier slices
-            operations.push(RenderOp::Text {
-                node_id: layout.node_id,
-                rect,
-                value: value.clone(),
             });
         }
 

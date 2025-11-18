@@ -27,16 +27,6 @@ fn render_layout_node(
         layout.node_id
     );
     match &layout.node_data.kind {
-        LayoutNodeKind::Text { value } => {
-            render_text(
-                layout,
-                value,
-                parent_layer,
-                parent_visual_clip,
-                parent_hit_clip,
-                scene,
-            );
-        }
         LayoutNodeKind::Spacer => {
             render_spacer(
                 layout,
@@ -130,6 +120,27 @@ fn render_container(
     if let Some(color) = style.background {
         let brush = apply_layer_to_brush(Brush::solid(color), node_layer);
         scene.push_shape(transformed_rect, brush, scaled_shape.clone(), visual_clip);
+    }
+
+    // Render text content if present in modifier slices.
+    // Text is now handled via TextModifierNode in the modifier chain.
+    if let Some(value) = layout.node_data.modifier_slices().text_content() {
+        let metrics = measure_text(value);
+        let padding = style.padding;
+        let text_rect = Rect {
+            x: rect.x + padding.left,
+            y: rect.y + padding.top,
+            width: metrics.width,
+            height: metrics.height,
+        };
+        let transformed_text_rect = apply_layer_to_rect(text_rect, origin, node_layer);
+        scene.push_text(
+            transformed_text_rect,
+            value.to_string(),
+            apply_layer_to_color(Color(1.0, 1.0, 1.0, 1.0), node_layer),
+            node_layer.scale,
+            visual_clip,
+        );
     }
 
     for handler in &style.click_actions {

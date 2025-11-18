@@ -10,17 +10,26 @@ thread_local! {
 
 fn expected_layout_counts(depth: usize, horizontal: bool) -> (usize, usize) {
     if depth <= 1 {
+        // At depth 1: Column contains only Text (no inner container).
+        // Text is now LayoutNodeKind::Layout, so it's 1 layout child.
+        // Column has 1 child, not 2, so two_child_count = 0.
         return (1, 0);
     }
     let (left_total, left_two) = expected_layout_counts(depth - 1, !horizontal);
     let (right_total, right_two) = expected_layout_counts(depth - 1, !horizontal);
     if horizontal {
+        // Structure: Column { Text, Row { child, child } }
+        // Column has 2 layout children: Text + Row
+        // Row has 2 layout children: 2 recursive children
         let total = 1 + 1 + left_total + right_total; // column + row + children
-        let two = 1 + left_two + right_two; // row has two layout children
+        let two = 1 + 1 + left_two + right_two; // column has 2 children, row has 2 children
         (total, two)
     } else {
-        let total = 1 + left_total + right_total; // column only
-        let two = 1 + left_two + right_two; // column has two layout children
+        // Structure: Column { Text, Column { child, child } }
+        // Outer Column has 2 layout children: Text + inner Column
+        // Inner Column has 2 layout children: 2 recursive children
+        let total = 1 + left_total + right_total; // outer column only (inner column counted in children)
+        let two = 1 + 1 + left_two + right_two; // outer column has 2 children, inner column has 2 children
         (total, two)
     }
 }
@@ -386,8 +395,7 @@ fn recursive_layout_nodes_preserve_extent() {
                     box_node.node_id
                 );
             }
-            LayoutNodeKind::Text { .. }
-            | LayoutNodeKind::Spacer
+            LayoutNodeKind::Spacer
             | LayoutNodeKind::Button { .. }
             | LayoutNodeKind::Unknown => {}
         }
