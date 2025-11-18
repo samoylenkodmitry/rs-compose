@@ -2,10 +2,12 @@ use std::fmt;
 use std::rc::Rc;
 
 use compose_foundation::{ModifierNodeChain, NodeCapabilities, PointerEvent};
+use compose_ui_graphics::GraphicsLayer;
 
 use crate::draw::DrawCommand;
 use crate::modifier::{Brush, Modifier};
-use crate::modifier_nodes::{BackgroundNode, ClickableNode, ClipToBoundsNode, CornerShapeNode, DrawCommandNode};
+use crate::modifier_nodes::{BackgroundNode, ClickableNode, ClipToBoundsNode, CornerShapeNode, DrawCommandNode, GraphicsLayerNode};
+use crate::text_modifier_node::TextModifierNode;
 use std::cell::RefCell;
 
 use super::{ModifierChainHandle, Point};
@@ -17,6 +19,8 @@ pub struct ModifierNodeSlices {
     pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
     click_handlers: Vec<Rc<dyn Fn(Point)>>,
     clip_to_bounds: bool,
+    text_content: Option<String>,
+    graphics_layer: Option<GraphicsLayer>,
     chain_guard: Option<Rc<ChainGuard>>,
 }
 
@@ -31,6 +35,8 @@ impl Clone for ModifierNodeSlices {
             pointer_inputs: self.pointer_inputs.clone(),
             click_handlers: self.click_handlers.clone(),
             clip_to_bounds: self.clip_to_bounds,
+            text_content: self.text_content.clone(),
+            graphics_layer: self.graphics_layer,
             chain_guard: self.chain_guard.clone(),
         }
     }
@@ -53,11 +59,27 @@ impl ModifierNodeSlices {
         self.clip_to_bounds
     }
 
+    pub fn text_content(&self) -> Option<&str> {
+        self.text_content.as_deref()
+    }
+
+    pub fn graphics_layer(&self) -> Option<GraphicsLayer> {
+        self.graphics_layer
+    }
+
     fn extend(&mut self, other: ModifierNodeSlices) {
         self.draw_commands.extend(other.draw_commands);
         self.pointer_inputs.extend(other.pointer_inputs.into_iter());
         self.click_handlers.extend(other.click_handlers.into_iter());
         self.clip_to_bounds |= other.clip_to_bounds;
+        // Take the last text content (rightmost modifier wins)
+        if other.text_content.is_some() {
+            self.text_content = other.text_content;
+        }
+        // Take the last graphics layer (rightmost modifier wins)
+        if other.graphics_layer.is_some() {
+            self.graphics_layer = other.graphics_layer;
+        }
         if self.chain_guard.is_none() {
             self.chain_guard = other.chain_guard;
         }
@@ -76,6 +98,8 @@ impl fmt::Debug for ModifierNodeSlices {
             .field("pointer_inputs", &self.pointer_inputs.len())
             .field("click_handlers", &self.click_handlers.len())
             .field("clip_to_bounds", &self.clip_to_bounds)
+            .field("text_content", &self.text_content)
+            .field("graphics_layer", &self.graphics_layer)
             .finish()
     }
 }
@@ -130,8 +154,22 @@ pub fn collect_modifier_slices(chain: &ModifierNodeChain) -> ModifierNodeSlices 
                 .extend(commands.commands().iter().cloned());
         }
 
+        // Collect graphics layer from GraphicsLayerNode
+        if let Some(layer_node) = any.downcast_ref::<GraphicsLayerNode>() {
+            slices.graphics_layer = Some(layer_node.layer());
+        }
+
         if any.is::<ClipToBoundsNode>() {
             slices.clip_to_bounds = true;
+        }
+    });
+
+    // Collect text content from TextModifierNode (LAYOUT capability, not DRAW)
+    chain.for_each_node_with_capability(NodeCapabilities::LAYOUT, |_ref, node| {
+        let any = node.as_any();
+        if let Some(text_node) = any.downcast_ref::<TextModifierNode>() {
+            // Rightmost text modifier wins
+            slices.text_content = Some(text_node.text().to_string());
         }
     });
 

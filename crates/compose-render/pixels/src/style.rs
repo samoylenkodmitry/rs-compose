@@ -25,10 +25,8 @@ impl NodeStyle {
         let slices: &ModifierNodeSlices = data.modifier_slices();
         let pointer_inputs = slices.pointer_inputs().to_vec();
 
-        // Visual properties (background, shape, graphics_layer) are now encoded in draw commands
-        // within modifier slices. The renderer should interpret draw commands directly rather than
-        // extracting these as separate fields. For now, set them to None since they're rendered
-        // via draw_commands.
+        // Visual properties (background, shape) are now encoded in draw commands within modifier
+        // slices. Graphics layer is extracted directly from the slices for coordinate transformations.
         Self {
             padding: resolved.padding(),
             background: None, // Now rendered via draw commands
@@ -36,7 +34,7 @@ impl NodeStyle {
             shape: None, // Now encoded in draw command round rects
             pointer_inputs,
             draw_commands: slices.draw_commands().to_vec(),
-            graphics_layer: None, // TODO: Extract from GraphicsLayerNode if needed for transformations
+            graphics_layer: slices.graphics_layer(), // Extracted from GraphicsLayerNode
             clip_to_bounds: slices.clip_to_bounds(),
         }
     }
