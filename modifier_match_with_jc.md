@@ -5,9 +5,9 @@ Concise status of how the modifier system differs from Jetpack Compose and what 
 ## Current Snapshot (only what matters for remaining work)
 
 - ✅ Modifier node chain + capability masks (`crates/compose-foundation/src/modifier.rs`); builders take `self` and use `then`; `ModifierKind::Combined` mirrors Kotlin (`crates/compose-ui/src/modifier/mod.rs:235`).
-- ⚠️ Reconciliation still flattens modifiers into element/inspector vectors and a `ResolvedModifiers` snapshot every update (`crates/compose-ui/src/modifier/chain.rs:71,188`), losing structural sharing and modifier ordering.
-- ⚠️ Layout measurement uses a coordinator chain (`crates/compose-ui/src/layout/mod.rs:725`), but `LayoutModifierCoordinator` clones padding/size/fill/offset/text nodes each measure, ignores unknown layout modifiers, and has stub placement (`crates/compose-ui/src/layout/coordinator.rs:141`).
-- ⚠️ Draw/pointer/semantics still read `ResolvedModifiers`; padding/offset/background/layers collapse to last-write wins.
+- ⚠️ Reconciliation still flattens modifiers into element/inspector vectors and a `ResolvedModifiers` snapshot every update (`crates/compose-ui/src/modifier/chain.rs:71,188`), losing structural sharing, invalidation reuse, and modifier ordering.
+- ⚠️ Layout measurement uses a coordinator chain (`crates/compose-ui/src/layout/mod.rs:725`), but `LayoutModifierCoordinator` rehydrates built-in nodes from a `NodeKind` snapshot (`crates/compose-ui/src/layout/coordinator.rs:175`) instead of calling the live modifier node; custom/stateful layout nodes are skipped, and placement is stubbed (`coordinator.rs:164`).
+- ⚠️ Draw/pointer/semantics still read `ResolvedModifiers`; padding/offset/background/layers collapse to last-write wins and ignore per-node ordering.
 - ⚠️ Text is string-only: monospaced measure (`crates/compose-ui/src/text.rs:1`), empty draw, semantics via `content_description` (`crates/compose-ui/src/text_modifier_node.rs:159`), no invalidations on update; widget surface lacks style/overflow/min/max lines.
 - ⚠️ Pointer integration tests still count nodes instead of dispatching through `HitTestTarget` (`crates/compose-ui/src/tests/pointer_input_integration_test.rs`).
 
@@ -18,7 +18,7 @@ Concise status of how the modifier system differs from Jetpack Compose and what 
 - Fix: Walk the Combined tree directly for chain + inspector updates; pipe phase work through reconciled nodes, not snapshots.
 
 ### Coordinator chain stops at measurement
-- Problem: Built-in layout nodes are cloned and unknown ones are skipped; placement/draw/pointer/semantics/lookahead not handled.
+- Problem: Built-in layout nodes are cloned and unknown ones are skipped; placement/draw/pointer/semantics/lookahead not handled. Jetpack Compose’s `LayoutModifierNodeCoordinator` keeps a persistent reference to the live node (`.../LayoutModifierNodeCoordinator.kt:37-65`), measures it directly (`:147-195`), and uses the same coordinator chain for placement/draw/alignment (`:240-280`).
 - Fix: Invoke reconciled layout modifier nodes (or explicitly fall back), implement placement/draw/hit-test/semantics/lookahead coordinators, and drop padding/size/offset munging once node-driven layout is authoritative.
 
 ### Text pipeline mismatch

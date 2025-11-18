@@ -1,6 +1,6 @@
 # Modifier System Migration Tracker
 
-## Status: ⚠️ Coordinator-based layout measure exists, but it clones nodes each pass and ignores unknown layout modifiers; draw/pointer/semantics still run off flattened snapshots.
+## Status: ⚠️ Layout modifier coordinators exist but rehydrate built-ins each pass, skip unknown layout nodes, and have stub placement; draw/pointer/semantics still run off flattened `ResolvedModifiers`.
 
 ## Baseline (useful context)
 
@@ -9,8 +9,10 @@
 - Widgets emit `LayoutNode` + `MeasurePolicy`; dispatch queues keep pointer/focus flags in sync.
 - Built-in layout modifier nodes exist (padding/size/fill/offset/text).
 - Layout measurement goes through a coordinator chain
-  (`crates/compose-ui/src/layout/mod.rs:725`), but coordinators clone built-ins, ignore unknown
-  layout modifiers, and have stub placement (`crates/compose-ui/src/layout/coordinator.rs:141`).
+  (`crates/compose-ui/src/layout/mod.rs:725`), but `LayoutModifierCoordinator` downcasts to
+  built-ins and recreates them (`crates/compose-ui/src/layout/coordinator.rs:175`) instead of
+  calling live nodes; placement is stubbed (`coordinator.rs:164`) and padding/offset is still
+  accumulated separately as a workaround.
 
 ## Architecture Overview
 
@@ -24,42 +26,63 @@
 - **Invalidation**: Capability flags exist but layout/draw/semantics invalidations mostly come from
   the flattened snapshot.
 
+## Jetpack Compose reference cues (what we’re missing)
+
+- `LayoutModifierNodeCoordinator` keeps a persistent handle to the live modifier node and measures
+  it directly instead of cloning (`.../LayoutModifierNodeCoordinator.kt:37-195`).
+- The same coordinator drives placement/draw/alignment and wraps the next coordinator for ordering
+  (`LayoutModifierNodeCoordinator.kt:240-280`), so per-node state and lookahead are preserved.
+- Node capabilities are honored per phase; draw/pointer/semantics are dispatched through the node
+  chain rather than flattened snapshots.
+
 ## Unacceptable Gaps
 
 ### Modifier chain still flattened
 - `ModifierChainHandle::update()` clones element/inspector vectors and rebuilds
   `ResolvedModifiers` every recomposition (`crates/compose-ui/src/modifier/chain.rs:71`), so the
-  persistent `ModifierKind` tree is discarded and stacked properties collapse (padding summed,
-  backgrounds last-write wins).
+  persistent `ModifierKind` tree is discarded; stacked properties collapse (padding summed,
+  backgrounds last-write wins) and invalidations do not reuse node state.
 
 ### Coordinator chain gaps
-- Only built-in padding/size/fill/offset/text measured; custom/stateful layout modifiers skipped and
-  nodes rehydrated each pass (`crates/compose-ui/src/layout/coordinator.rs:141`).
-- Placement/draw/pointer/semantics coordinators absent; runtime still depends on `ResolvedModifiers`
-  snapshots.
+- Only built-in padding/size/fill/offset/text measured; custom/stateful layout modifiers skipped,
+  and nodes rehydrated each pass (`crates/compose-ui/src/layout/coordinator.rs:141,175`).
+- Placement/draw/pointer/semantics/lookahead coordinators absent; runtime still depends on
+  `ResolvedModifiers` snapshots and manual padding/offset accumulation.
 
 ### Text pipeline gap
 - `TextModifierElement` is string-only (`crates/compose-ui/src/text_modifier_node.rs:166`), measure
   uses monospaced stub, draw empty, semantics via `content_description`, no invalidations on update;
   widget surface lacks style/overflow/min/max lines, etc.
 
-## Remaining Work
+## Remaining Work (phased)
 
-### 1. Coordinator chain: use reconciled nodes and cover all phases
-- Invoke reconciled layout modifier nodes (or fall back to snapshot) instead of cloning adapters; add
-  placement/draw/pointer/semantics/lookahead support so ordering/state persist.
+### Phase 1: Core Architecture & Layout (blocking)
+- [ ] Generalize coordinator construction: iterate all `NodeCapabilities::LAYOUT` entries and wrap
+  them without downcasting to padding/size/fill/offset/text adapters.
+- [ ] Refactor `LayoutModifierCoordinator`: drop the `NodeKind` snapshot, hold the live node handle
+  from `ModifierNodeChain`, and measure via `node.as_layout_node().measure(...)`.
+- [ ] Implement placement: accumulate offsets and propagate `place` through the coordinator chain.
 
-### 2. Reconcile without flattening
-- Walk the `ModifierKind::Combined` tree directly for chain + inspector updates; keep O(1) updates
-  and avoid `ResolvedModifiers` except as temporary draw/semantics data.
+### Phase 2: Rendering Pipeline & Visual Correctness
+- [ ] Invalidate render on any tree structure change, not just constraint changes.
+- [ ] Deduplicate click handling: remove legacy handler extraction and use
+  `modifier_slices.click_handlers`.
+- [ ] Render via modifier slices: iterate `modifier_slices.draw_commands` for draw order; stop using
+  `ResolvedModifiers` for visuals; drop background/corner_shape/graphics_layer from `ResolvedModifiers`.
 
-### 3. Finish Text
-- Mirror `TextStringSimpleElement` surface, add paragraph cache + renderer integration, issue
-  invalidations on updates, expose real semantics, expand widget API.
+### Phase 3: Text Integration (node-driven)
+- [ ] Implement `TextModifierNode::draw` to emit the renderer’s expected draw ops.
+- [ ] Remove `content_description` fallback for text semantics; populate semantics from the text
+  modifier node.
 
-### 4. Testing & integration
-- Add pointer/focus tests through `HitTestTarget`; add text layout/draw/semantics coverage. Run
-  `cargo test > 1.tmp 2>&1` after major changes.
+### Phase 4: Input & Focus Wiring
+- [ ] Instantiate and process `FocusManager` invalidations in the app shell.
+- [ ] Switch demo input to `Modifier.pointer_input((), handler)` so pointer flows through nodes.
+- [ ] Expose a debug API like `Modifier.debug_chain(true)` for inspector logging.
+
+### Phase 5: Standardization
+- [ ] Deprecate static modifier factories; standardize on `Modifier::empty().foo(...)` chaining.
+- [ ] Add integration tests for pointer/focus/text through `HitTestTarget`; run `cargo test > 1.tmp 2>&1`.
 
 ## References
 
