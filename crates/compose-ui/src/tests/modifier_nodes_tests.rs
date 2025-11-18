@@ -150,7 +150,10 @@ fn modifier_chain_reuses_padding_nodes() {
         10.0,
     )))];
     chain.update_from_slice(&elements, &mut context);
-    let initial_node = chain.node::<PaddingNode>(0).unwrap() as *const _;
+    let initial_node = {
+        let node_ref = chain.node::<PaddingNode>(0).unwrap();
+        &*node_ref as *const _
+    };
 
     context.clear_invalidations();
 
@@ -159,11 +162,17 @@ fn modifier_chain_reuses_padding_nodes() {
         20.0,
     )))];
     chain.update_from_slice(&elements, &mut context);
-    let updated_node = chain.node::<PaddingNode>(0).unwrap() as *const _;
+    let updated_node = {
+        let node_ref = chain.node::<PaddingNode>(0).unwrap();
+        &*node_ref as *const _
+    };
 
     // Same node instance should be reused
     assert_eq!(initial_node, updated_node);
-    assert_eq!(chain.node::<PaddingNode>(0).unwrap().padding.left, 20.0);
+    {
+        let node_ref = chain.node::<PaddingNode>(0).unwrap();
+        assert_eq!(node_ref.padding.left, 20.0);
+    }
 }
 
 #[test]
@@ -207,7 +216,7 @@ fn clickable_node_handles_pointer_events() {
     assert!(chain.has_nodes_for_invalidation(compose_foundation::InvalidationKind::PointerInput));
 
     // Simulate a pointer event
-    let node = chain.node_mut::<ClickableNode>(0).unwrap();
+    let mut node = chain.node_mut::<ClickableNode>(0).unwrap();
     let event = PointerEvent {
         id: 0,
         kind: PointerEventKind::Down,
@@ -231,8 +240,10 @@ fn alpha_node_clamps_values() {
     let elements = vec![modifier_element(AlphaElement::new(1.5))]; // > 1.0
     chain.update_from_slice(&elements, &mut context);
 
-    let node = chain.node::<AlphaNode>(0).unwrap();
-    assert_eq!(node.alpha, 1.0);
+    {
+        let node = chain.node::<AlphaNode>(0).unwrap();
+        assert_eq!(node.alpha, 1.0);
+    }
 
     context.clear_invalidations();
 
@@ -240,8 +251,10 @@ fn alpha_node_clamps_values() {
     let elements = vec![modifier_element(AlphaElement::new(-0.5))];
     chain.update_from_slice(&elements, &mut context);
 
-    let node = chain.node::<AlphaNode>(0).unwrap();
-    assert_eq!(node.alpha, 0.0);
+    {
+        let node = chain.node::<AlphaNode>(0).unwrap();
+        assert_eq!(node.alpha, 0.0);
+    }
 }
 
 #[test]
@@ -313,7 +326,10 @@ fn toggling_background_color_reuses_node() {
     chain.update_from_slice(&elements, &mut context);
 
     // Get pointer to the node
-    let initial_node_ptr = chain.node::<BackgroundNode>(0).unwrap() as *const _;
+    let initial_node_ptr = {
+        let node_ref = chain.node::<BackgroundNode>(0).unwrap();
+        &*node_ref as *const _
+    };
 
     // Toggle to different color - should reuse same node
     let blue = Color(0.0, 0.0, 1.0, 1.0);
@@ -321,11 +337,17 @@ fn toggling_background_color_reuses_node() {
     chain.update_from_slice(&elements, &mut context);
 
     // Verify same node instance (zero allocations)
-    let updated_node_ptr = chain.node::<BackgroundNode>(0).unwrap() as *const _;
+    let updated_node_ptr = {
+        let node_ref = chain.node::<BackgroundNode>(0).unwrap();
+        &*node_ref as *const _
+    };
     assert_eq!(initial_node_ptr, updated_node_ptr, "Node should be reused");
 
     // Verify color was updated
-    assert_eq!(chain.node::<BackgroundNode>(0).unwrap().color, blue);
+    {
+        let node_ref = chain.node::<BackgroundNode>(0).unwrap();
+        assert_eq!(node_ref.color, blue);
+    }
 }
 
 #[test]
@@ -345,8 +367,11 @@ fn reordering_modifiers_with_stable_reuse() {
     ];
     chain.update_from_slice(&elements, &mut context);
 
-    let padding_ptr = chain.node::<PaddingNode>(0).unwrap() as *const _;
-    let background_ptr = chain.node::<BackgroundNode>(1).unwrap() as *const _;
+    let (padding_ptr, background_ptr) = {
+        let padding_ref = chain.node::<PaddingNode>(0).unwrap();
+        let background_ref = chain.node::<BackgroundNode>(1).unwrap();
+        (&*padding_ref as *const _, &*background_ref as *const _)
+    };
 
     // Reverse order: background then padding
     let elements = vec![
@@ -356,8 +381,11 @@ fn reordering_modifiers_with_stable_reuse() {
     chain.update_from_slice(&elements, &mut context);
 
     // Nodes should still be reused (matched by type)
-    let new_background_ptr = chain.node::<BackgroundNode>(0).unwrap() as *const _;
-    let new_padding_ptr = chain.node::<PaddingNode>(1).unwrap() as *const _;
+    let (new_background_ptr, new_padding_ptr) = {
+        let background_ref = chain.node::<BackgroundNode>(0).unwrap();
+        let padding_ref = chain.node::<PaddingNode>(1).unwrap();
+        (&*background_ref as *const _, &*padding_ref as *const _)
+    };
 
     assert_eq!(
         background_ptr, new_background_ptr,

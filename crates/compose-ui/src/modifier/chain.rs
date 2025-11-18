@@ -420,7 +420,7 @@ mod tests {
         handle
             .chain()
             .node::<N>(0)
-            .map(|node| node as *const N)
+            .map(|node| &*node as *const N)
             .expect("expected node to exist")
     }
 }
