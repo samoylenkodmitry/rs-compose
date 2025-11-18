@@ -190,9 +190,6 @@ impl ModifierChainHandle {
         let mut layout = LayoutProperties::default();
         let mut padding = EdgeInsets::default();
         let mut offset = Point::default();
-        let mut background: Option<Color> = None;
-        let mut corner_shape: Option<RoundedCornerShape> = None;
-        let mut graphics_layer: Option<GraphicsLayer> = None;
 
         self.chain.for_each_forward(|node_ref| {
             let Some(node) = node_ref.node() else {
@@ -223,25 +220,15 @@ impl ModifierChainHandle {
                 let delta = offset_node.offset();
                 offset.x += delta.x;
                 offset.y += delta.y;
-            } else if let Some(background_node) = any.downcast_ref::<BackgroundNode>() {
-                background = Some(background_node.color());
-            } else if let Some(shape_node) = any.downcast_ref::<CornerShapeNode>() {
-                corner_shape = Some(shape_node.shape());
-            } else if let Some(layer_node) = any.downcast_ref::<GraphicsLayerNode>() {
-                graphics_layer = Some(layer_node.layer());
             }
+            // Note: BackgroundNode, CornerShapeNode, and GraphicsLayerNode are no longer
+            // tracked in ResolvedModifiers. Visual rendering now flows through modifier slices
+            // collected from the node chain at draw time.
         });
 
         resolved.set_padding(padding);
         resolved.set_layout_properties(layout);
         resolved.set_offset(offset);
-        resolved.set_graphics_layer(graphics_layer);
-        resolved.set_corner_shape(corner_shape);
-        if let Some(color) = background {
-            resolved.set_background_color(color);
-        } else {
-            resolved.clear_background();
-        }
         resolved
     }
 
@@ -386,42 +373,31 @@ mod tests {
     }
 
     #[test]
-    fn resolved_modifiers_capture_background_and_shape() {
+    fn modifier_slices_capture_background_and_shape() {
+        use crate::modifier::slices::collect_modifier_slices;
+
         let mut handle = ModifierChainHandle::new();
         let _ = handle.update(
             &Modifier::empty()
                 .background(Color(0.2, 0.3, 0.4, 1.0))
                 .then(Modifier::empty().rounded_corners(8.0)),
         );
-        let resolved = handle.resolved_modifiers();
-        let background = resolved
-            .background()
-            .expect("expected resolved background entry");
-        assert_eq!(background.color(), Color(0.2, 0.3, 0.4, 1.0));
-        assert_eq!(
-            resolved.corner_shape(),
-            Some(RoundedCornerShape::uniform(8.0))
-        );
+
+        // Background and shape are now captured in modifier slices as draw commands
+        let slices = collect_modifier_slices(handle.chain());
+        assert!(!slices.draw_commands().is_empty(), "Expected draw commands for background");
 
         let _ = handle.update(
             &Modifier::empty()
                 .rounded_corners(4.0)
                 .then(Modifier::empty().background(Color(0.9, 0.1, 0.1, 1.0))),
         );
-        let resolved = handle.resolved_modifiers();
-        let background = resolved
-            .background()
-            .expect("background should be tracked after update");
-        assert_eq!(background.color(), Color(0.9, 0.1, 0.1, 1.0));
-        assert_eq!(
-            resolved.corner_shape(),
-            Some(RoundedCornerShape::uniform(4.0))
-        );
+        let slices = collect_modifier_slices(handle.chain());
+        assert!(!slices.draw_commands().is_empty(), "Expected draw commands after update");
 
         let _ = handle.update(&Modifier::empty());
-        let resolved = handle.resolved_modifiers();
-        assert!(resolved.background().is_none());
-        assert!(resolved.corner_shape().is_none());
+        let slices = collect_modifier_slices(handle.chain());
+        assert!(slices.draw_commands().is_empty(), "Expected no draw commands with empty modifier");
     }
 
     #[test]

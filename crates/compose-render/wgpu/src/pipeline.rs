@@ -28,16 +28,6 @@ fn render_layout_node(
     parent_hit_clip: Option<Rect>,
 ) {
     match &layout.node_data.kind {
-        LayoutNodeKind::Text { value } => {
-            render_text(
-                layout,
-                value,
-                parent_layer,
-                parent_visual_clip,
-                parent_hit_clip,
-                scene,
-            );
-        }
         LayoutNodeKind::Spacer => {
             render_spacer(
                 layout,
@@ -133,6 +123,27 @@ fn render_container(
         scene.push_shape(transformed_rect, brush, scaled_shape.clone(), visual_clip);
     }
 
+    // Render text content if present in modifier slices.
+    // Text is now handled via TextModifierNode in the modifier chain.
+    if let Some(value) = layout.node_data.modifier_slices().text_content() {
+        let metrics = measure_text(value);
+        let padding = style.padding;
+        let text_rect = Rect {
+            x: rect.x + padding.left,
+            y: rect.y + padding.top,
+            width: metrics.width,
+            height: metrics.height,
+        };
+        let transformed_text_rect = apply_layer_to_rect(text_rect, origin, node_layer);
+        scene.push_text(
+            transformed_text_rect,
+            value.to_string(),
+            apply_layer_to_color(Color(1.0, 1.0, 1.0, 1.0), node_layer),
+            node_layer.scale,
+            visual_clip,
+        );
+    }
+
     for handler in &style.click_actions {
         extra_clicks.push(ClickAction::WithPoint(handler.clone()));
     }
@@ -149,105 +160,6 @@ fn render_container(
         render_layout_node(child_layout, node_layer, scene, visual_clip, hit_clip);
     }
 
-    apply_draw_commands(
-        &style.draw_commands,
-        DrawPlacement::Overlay,
-        rect,
-        origin,
-        size,
-        node_layer,
-        visual_clip,
-        scene,
-    );
-}
-
-fn render_text(
-    layout: &LayoutBox,
-    value: &str,
-    parent_layer: GraphicsLayer,
-    parent_visual_clip: Option<Rect>,
-    parent_hit_clip: Option<Rect>,
-    scene: &mut Scene,
-) {
-    let style = NodeStyle::from_layout_node(&layout.node_data);
-    let node_layer = combine_layers(parent_layer, style.graphics_layer);
-    let rect = layout.rect;
-    let size = Size {
-        width: rect.width,
-        height: rect.height,
-    };
-    let origin = (rect.x, rect.y);
-    let transformed_rect = apply_layer_to_rect(rect, origin, node_layer);
-
-    if transformed_rect.width <= 0.0 || transformed_rect.height <= 0.0 {
-        return;
-    }
-
-    let requested_visual_clip = style.clip_to_bounds.then_some(transformed_rect);
-    let visual_clip = match (parent_visual_clip, requested_visual_clip) {
-        (Some(parent), Some(current)) => intersect_rect(parent, current),
-        (Some(parent), None) => Some(parent),
-        (None, Some(current)) => Some(current),
-        (None, None) => None,
-    };
-
-    if style.clip_to_bounds && visual_clip.is_none() {
-        return;
-    }
-
-    let requested_hit_clip = style.clip_to_bounds.then_some(transformed_rect);
-    let hit_clip = match (parent_hit_clip, requested_hit_clip) {
-        (Some(parent), Some(current)) => intersect_rect(parent, current),
-        (Some(parent), None) => Some(parent),
-        (None, Some(current)) => Some(current),
-        (None, None) => None,
-    };
-
-    apply_draw_commands(
-        &style.draw_commands,
-        DrawPlacement::Behind,
-        rect,
-        origin,
-        size,
-        node_layer,
-        visual_clip,
-        scene,
-    );
-    let scaled_shape = style.shape.map(|shape| {
-        let resolved = shape.resolve(rect.width, rect.height);
-        RoundedCornerShape::with_radii(scale_corner_radii(resolved, node_layer.scale))
-    });
-    if let Some(color) = style.background {
-        let brush = apply_layer_to_brush(Brush::solid(color), node_layer);
-        scene.push_shape(transformed_rect, brush, scaled_shape.clone(), visual_clip);
-    }
-    let metrics = measure_text(value);
-    let padding = style.padding;
-    let text_rect = Rect {
-        x: rect.x + padding.left,
-        y: rect.y + padding.top,
-        width: metrics.width,
-        height: metrics.height,
-    };
-    let transformed_text_rect = apply_layer_to_rect(text_rect, origin, node_layer);
-    scene.push_text(
-        transformed_text_rect,
-        value.to_string(),
-        apply_layer_to_color(Color(1.0, 1.0, 1.0, 1.0), node_layer),
-        node_layer.scale,
-        visual_clip,
-    );
-    let mut click_actions = Vec::new();
-    for handler in &style.click_actions {
-        click_actions.push(ClickAction::WithPoint(handler.clone()));
-    }
-    scene.push_hit(
-        transformed_rect,
-        scaled_shape.clone(),
-        click_actions,
-        style.pointer_inputs.clone(),
-        hit_clip,
-    );
     apply_draw_commands(
         &style.draw_commands,
         DrawPlacement::Overlay,

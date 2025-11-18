@@ -1,5 +1,5 @@
 use crate::layout::{LayoutBox, LayoutNodeData, LayoutNodeKind, LayoutTree};
-use crate::modifier::{Brush, DrawCommand as ModifierDrawCommand, Rect, RoundedCornerShape, Size};
+use crate::modifier::{DrawCommand as ModifierDrawCommand, Rect, Size};
 use compose_core::NodeId;
 use compose_ui_graphics::DrawPrimitive;
 
@@ -77,28 +77,28 @@ impl HeadlessRenderer {
 
     fn render_box(&self, layout: &LayoutBox, operations: &mut Vec<RenderOp>) {
         let rect = layout.rect;
-        match &layout.node_data.kind {
-            LayoutNodeKind::Text { value } => {
-                let (mut behind, mut overlay) =
-                    evaluate_modifier(layout.node_id, &layout.node_data, rect);
-                operations.append(&mut behind);
-                operations.push(RenderOp::Text {
-                    node_id: layout.node_id,
-                    rect,
-                    value: value.clone(),
-                });
-                operations.append(&mut overlay);
-            }
-            _ => {
-                let (mut behind, mut overlay) =
-                    evaluate_modifier(layout.node_id, &layout.node_data, rect);
-                operations.append(&mut behind);
-                for child in &layout.children {
-                    self.render_box(child, operations);
-                }
-                operations.append(&mut overlay);
-            }
+        let (mut behind, mut overlay) =
+            evaluate_modifier(layout.node_id, &layout.node_data, rect);
+
+        operations.append(&mut behind);
+
+        // Render text content if present in modifier slices.
+        // This follows Jetpack Compose's pattern where text is a modifier node capability
+        // (TextModifierNode implements LayoutModifierNode + DrawModifierNode + SemanticsNode)
+        if let Some(text) = layout.node_data.modifier_slices().text_content() {
+            operations.push(RenderOp::Text {
+                node_id: layout.node_id,
+                rect,
+                value: text.to_string(),
+            });
         }
+
+        // Render children
+        for child in &layout.children {
+            self.render_box(child, operations);
+        }
+
+        operations.append(&mut overlay);
     }
 }
 
@@ -107,31 +107,16 @@ fn evaluate_modifier(
     data: &LayoutNodeData,
     rect: Rect,
 ) -> (Vec<RenderOp>, Vec<RenderOp>) {
-    let resolved = data.resolved_modifiers;
-    let _ = resolved;
     let mut behind = Vec::new();
     let mut overlay = Vec::new();
-
-    if let Some(background) = resolved.background() {
-        let brush = Brush::solid(background.color());
-        let primitive = if let Some(shape) = background.shape() {
-            let radii = resolve_radii(shape, rect);
-            DrawPrimitive::RoundRect { rect, brush, radii }
-        } else {
-            DrawPrimitive::Rect { rect, brush }
-        };
-        behind.push(RenderOp::Primitive {
-            node_id,
-            layer: PaintLayer::Behind,
-            primitive,
-        });
-    }
 
     let size = Size {
         width: rect.width,
         height: rect.height,
     };
 
+    // Render via modifier slices - all drawing now goes through draw commands
+    // collected from the modifier node chain, including backgrounds, borders, etc.
     for command in data.modifier_slices().draw_commands() {
         match command {
             ModifierDrawCommand::Behind(func) => {
@@ -170,10 +155,6 @@ fn translate_primitive(primitive: DrawPrimitive, dx: f32, dy: f32) -> DrawPrimit
             radii,
         },
     }
-}
-
-fn resolve_radii(shape: RoundedCornerShape, rect: Rect) -> crate::modifier::CornerRadii {
-    shape.resolve(rect.width, rect.height)
 }
 
 #[cfg(test)]

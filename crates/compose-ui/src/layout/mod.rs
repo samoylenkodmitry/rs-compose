@@ -292,11 +292,15 @@ impl LayoutNodeData {
 }
 
 /// Classification of the node captured inside a [`LayoutBox`].
+///
+/// Note: Text content is no longer represented as a distinct LayoutNodeKind.
+/// Text nodes now use `LayoutNodeKind::Layout` with their content stored in
+/// `modifier_slices.text_content()` via TextModifierNode, following Jetpack
+/// Compose's pattern where text is a modifier node capability.
 #[derive(Clone)]
 pub enum LayoutNodeKind {
     Layout,
     Subcompose,
-    Text { value: String },
     Spacer,
     Button { on_click: Rc<RefCell<dyn FnMut()>> },
     Unknown,
@@ -307,7 +311,6 @@ impl fmt::Debug for LayoutNodeKind {
         match self {
             LayoutNodeKind::Layout => f.write_str("Layout"),
             LayoutNodeKind::Subcompose => f.write_str("Subcompose"),
-            LayoutNodeKind::Text { value } => f.debug_struct("Text").field("value", value).finish(),
             LayoutNodeKind::Spacer => f.write_str("Spacer"),
             LayoutNodeKind::Button { .. } => f.write_str("Button"),
             LayoutNodeKind::Unknown => f.write_str("Unknown"),
@@ -2023,9 +2026,12 @@ fn layout_kind_from_metadata(_node_id: NodeId, info: &RuntimeNodeMetadata) -> La
     match &info.role {
         SemanticsRole::Layout => LayoutNodeKind::Layout,
         SemanticsRole::Subcompose => LayoutNodeKind::Subcompose,
-        SemanticsRole::Text { value } => LayoutNodeKind::Text {
-            value: value.clone(),
-        },
+        SemanticsRole::Text { .. } => {
+            // Text content is now handled via TextModifierNode in the modifier chain
+            // and collected in modifier_slices.text_content(). LayoutNodeKind should
+            // reflect the layout policy (EmptyMeasurePolicy), not the content type.
+            LayoutNodeKind::Layout
+        }
         SemanticsRole::Spacer => LayoutNodeKind::Spacer,
         SemanticsRole::Button => {
             let handler = info

@@ -23,16 +23,18 @@ impl NodeStyle {
     pub fn from_layout_node(data: &LayoutNodeData) -> Self {
         let resolved = data.resolved_modifiers;
         let slices: &ModifierNodeSlices = data.modifier_slices();
-        let resolved_background = resolved.background();
         let pointer_inputs = slices.pointer_inputs().to_vec();
+
+        // Visual properties (background, shape) are now encoded in draw commands within modifier
+        // slices. Graphics layer is extracted directly from the slices for coordinate transformations.
         Self {
             padding: resolved.padding(),
-            background: resolved_background.map(|background| background.color()),
+            background: None, // Now rendered via draw commands
             click_actions: slices.click_handlers().iter().cloned().collect(),
-            shape: resolved.corner_shape(),
+            shape: None, // Now encoded in draw command round rects
             pointer_inputs,
             draw_commands: slices.draw_commands().to_vec(),
-            graphics_layer: resolved.graphics_layer(),
+            graphics_layer: slices.graphics_layer(), // Extracted from GraphicsLayerNode
             clip_to_bounds: slices.clip_to_bounds(),
         }
     }

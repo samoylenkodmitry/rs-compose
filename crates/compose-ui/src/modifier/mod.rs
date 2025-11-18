@@ -359,6 +359,110 @@ impl Modifier {
         self.then(modifier)
     }
 
+    /// Enables debug logging for this modifier chain.
+    ///
+    /// When enabled, logs the entire modifier chain structure including:
+    /// - Element types and their properties
+    /// - Inspector metadata
+    /// - Capability flags
+    ///
+    /// This is useful for debugging modifier composition issues and understanding
+    /// how the modifier chain is structured at runtime.
+    ///
+    /// Example:
+    /// ```ignore
+    /// Modifier::empty()
+    ///     .padding(8.0)
+    ///     .background(Color(1.0, 0.0, 0.0, 1.0))
+    ///     .debug_chain("MyWidget")
+    /// ```
+    pub fn debug_chain(self, tag: &'static str) -> Self {
+        use compose_foundation::{ModifierNode, ModifierNodeContext, NodeCapabilities, NodeState};
+
+        #[derive(Clone)]
+        struct DebugChainElement {
+            tag: &'static str,
+        }
+
+        impl fmt::Debug for DebugChainElement {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("DebugChainElement")
+                    .field("tag", &self.tag)
+                    .finish()
+            }
+        }
+
+        impl PartialEq for DebugChainElement {
+            fn eq(&self, other: &Self) -> bool {
+                self.tag == other.tag
+            }
+        }
+
+        impl Eq for DebugChainElement {}
+
+        impl std::hash::Hash for DebugChainElement {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.tag.hash(state);
+            }
+        }
+
+        impl ModifierNodeElement for DebugChainElement {
+            type Node = DebugChainNode;
+
+            fn create(&self) -> Self::Node {
+                DebugChainNode::new(self.tag)
+            }
+
+            fn update(&self, node: &mut Self::Node) {
+                node.tag = self.tag;
+            }
+
+            fn capabilities(&self) -> NodeCapabilities {
+                NodeCapabilities::empty()
+            }
+        }
+
+        struct DebugChainNode {
+            tag: &'static str,
+            state: NodeState,
+        }
+
+        impl DebugChainNode {
+            fn new(tag: &'static str) -> Self {
+                Self {
+                    tag,
+                    state: NodeState::new(),
+                }
+            }
+        }
+
+        impl ModifierNode for DebugChainNode {
+            fn on_attach(&mut self, _context: &mut dyn ModifierNodeContext) {
+                eprintln!("[debug_chain:{}] Modifier chain attached", self.tag);
+            }
+
+            fn on_detach(&mut self) {
+                eprintln!("[debug_chain:{}] Modifier chain detached", self.tag);
+            }
+
+            fn on_reset(&mut self) {
+                eprintln!("[debug_chain:{}] Modifier chain reset", self.tag);
+            }
+        }
+
+        impl compose_foundation::DelegatableNode for DebugChainNode {
+            fn node_state(&self) -> &NodeState {
+                &self.state
+            }
+        }
+
+        let element = DebugChainElement { tag };
+        let modifier = Modifier::from_parts(vec![modifier_element(element)]);
+        self.then(modifier).with_inspector_metadata(inspector_metadata("debugChain", move |info| {
+            info.add_property("tag", tag);
+        }))
+    }
+
     /// Concatenates this modifier with another.
     ///
     /// This creates a persistent tree structure (CombinedModifier pattern) rather than
@@ -454,22 +558,8 @@ impl Modifier {
         self.layout_properties().row_alignment()
     }
 
-    pub fn background_color(&self) -> Option<Color> {
-        self.resolved_modifiers()
-            .background()
-            .map(|background| background.color())
-    }
-
-    pub fn corner_shape(&self) -> Option<RoundedCornerShape> {
-        self.resolved_modifiers().corner_shape()
-    }
-
     pub fn draw_commands(&self) -> Vec<DrawCommand> {
         collect_slices_from_modifier(self).draw_commands().to_vec()
-    }
-
-    pub fn graphics_layer_values(&self) -> Option<GraphicsLayer> {
-        self.resolved_modifiers().graphics_layer()
     }
 
     pub fn clips_to_bounds(&self) -> bool {
@@ -828,22 +918,16 @@ impl ResolvedBackground {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResolvedModifiers {
     padding: EdgeInsets,
-    background: Option<ResolvedBackground>,
-    corner_shape: Option<RoundedCornerShape>,
     layout: LayoutProperties,
     offset: Point,
-    graphics_layer: Option<GraphicsLayer>,
 }
 
 impl Default for ResolvedModifiers {
     fn default() -> Self {
         Self {
             padding: EdgeInsets::default(),
-            background: None,
-            corner_shape: None,
             layout: LayoutProperties::default(),
             offset: Point::default(),
-            graphics_layer: None,
         }
     }
 }
@@ -853,24 +937,12 @@ impl ResolvedModifiers {
         self.padding
     }
 
-    pub fn background(&self) -> Option<ResolvedBackground> {
-        self.background
-    }
-
-    pub fn corner_shape(&self) -> Option<RoundedCornerShape> {
-        self.corner_shape
-    }
-
     pub fn layout_properties(&self) -> LayoutProperties {
         self.layout
     }
 
     pub fn offset(&self) -> Point {
         self.offset
-    }
-
-    pub fn graphics_layer(&self) -> Option<GraphicsLayer> {
-        self.graphics_layer
     }
 
     pub(crate) fn set_padding(&mut self, padding: EdgeInsets) {
@@ -887,25 +959,6 @@ impl ResolvedModifiers {
 
     pub(crate) fn set_offset(&mut self, offset: Point) {
         self.offset = offset;
-    }
-
-    pub(crate) fn set_graphics_layer(&mut self, layer: Option<GraphicsLayer>) {
-        self.graphics_layer = layer;
-    }
-
-    pub(crate) fn set_background_color(&mut self, color: Color) {
-        self.background = Some(ResolvedBackground::new(color, self.corner_shape));
-    }
-
-    pub(crate) fn clear_background(&mut self) {
-        self.background = None;
-    }
-
-    pub(crate) fn set_corner_shape(&mut self, shape: Option<RoundedCornerShape>) {
-        self.corner_shape = shape;
-        if let Some(background) = &mut self.background {
-            background.set_shape(shape);
-        }
     }
 }
 

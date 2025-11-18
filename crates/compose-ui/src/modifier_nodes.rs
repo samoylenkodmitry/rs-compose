@@ -312,9 +312,8 @@ impl ModifierNode for BackgroundNode {
 
 impl DrawModifierNode for BackgroundNode {
     fn draw(&mut self, _context: &mut dyn ModifierNodeContext, _draw_scope: &mut dyn DrawScope) {
-        // In a full implementation, this would draw the background color
-        // using the draw scope. For now, this is a placeholder.
-        // The actual drawing happens in the renderer which reads node state.
+        // Background rendering is now handled via draw commands collected in modifier slices.
+        // This node exists primarily for capability tracking and future draw scope integration.
     }
 }
 
