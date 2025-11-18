@@ -226,7 +226,11 @@ impl LayoutModifierNode for PaddingNode {
     }
 }
 
-/// Measurement proxy for PaddingNode that captures padding configuration.
+/// Measurement proxy for PaddingNode that snapshots live state.
+///
+/// Phase 2: Instead of reconstructing nodes via `PaddingNode::new()`, this proxy
+/// directly implements measurement logic using the snapshotted padding state.
+/// This avoids temporary allocations and matches Jetpack Compose's pattern more closely.
 struct PaddingMeasurementProxy {
     padding: EdgeInsets,
 }
@@ -234,32 +238,60 @@ struct PaddingMeasurementProxy {
 impl MeasurementProxy for PaddingMeasurementProxy {
     fn measure_proxy(
         &self,
-        context: &mut dyn ModifierNodeContext,
+        _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
     ) -> Size {
-        let node = PaddingNode::new(self.padding);
-        node.measure(context, wrapped, constraints)
+        // Directly implement padding measurement logic (no node reconstruction)
+        let horizontal_padding = self.padding.horizontal_sum();
+        let vertical_padding = self.padding.vertical_sum();
+
+        // Subtract padding from available space
+        let inner_constraints = Constraints {
+            min_width: (constraints.min_width - horizontal_padding).max(0.0),
+            max_width: (constraints.max_width - horizontal_padding).max(0.0),
+            min_height: (constraints.min_height - vertical_padding).max(0.0),
+            max_height: (constraints.max_height - vertical_padding).max(0.0),
+        };
+
+        // Measure the wrapped content
+        let inner_placeable = wrapped.measure(inner_constraints);
+        let inner_width = inner_placeable.width();
+        let inner_height = inner_placeable.height();
+
+        // Add padding back to the result
+        Size {
+            width: inner_width + horizontal_padding,
+            height: inner_height + vertical_padding,
+        }
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = PaddingNode::new(self.padding);
-        node.min_intrinsic_width(wrapped, height)
+        let vertical_padding = self.padding.vertical_sum();
+        let inner_height = (height - vertical_padding).max(0.0);
+        let inner_width = wrapped.min_intrinsic_width(inner_height);
+        inner_width + self.padding.horizontal_sum()
     }
 
     fn max_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = PaddingNode::new(self.padding);
-        node.max_intrinsic_width(wrapped, height)
+        let vertical_padding = self.padding.vertical_sum();
+        let inner_height = (height - vertical_padding).max(0.0);
+        let inner_width = wrapped.max_intrinsic_width(inner_height);
+        inner_width + self.padding.horizontal_sum()
     }
 
     fn min_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = PaddingNode::new(self.padding);
-        node.min_intrinsic_height(wrapped, width)
+        let horizontal_padding = self.padding.horizontal_sum();
+        let inner_width = (width - horizontal_padding).max(0.0);
+        let inner_height = wrapped.min_intrinsic_height(inner_width);
+        inner_height + self.padding.vertical_sum()
     }
 
     fn max_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = PaddingNode::new(self.padding);
-        node.max_intrinsic_height(wrapped, width)
+        let horizontal_padding = self.padding.horizontal_sum();
+        let inner_width = (width - horizontal_padding).max(0.0);
+        let inner_height = wrapped.max_intrinsic_height(inner_width);
+        inner_height + self.padding.vertical_sum()
     }
 }
 
@@ -844,7 +876,10 @@ impl LayoutModifierNode for SizeNode {
     }
 }
 
-/// Measurement proxy for SizeNode.
+/// Measurement proxy for SizeNode that snapshots live state.
+///
+/// Phase 2: Instead of reconstructing nodes via `SizeNode::new()`, this proxy
+/// directly implements measurement logic using the snapshotted size configuration.
 struct SizeMeasurementProxy {
     min_width: Option<f32>,
     max_width: Option<f32>,
@@ -853,65 +888,203 @@ struct SizeMeasurementProxy {
     enforce_incoming: bool,
 }
 
+impl SizeMeasurementProxy {
+    /// Compute target constraints from the size parameters.
+    /// Matches SizeNode::target_constraints() logic.
+    fn target_constraints(&self) -> Constraints {
+        let max_width = self.max_width.map(|v| v.max(0.0)).unwrap_or(f32::INFINITY);
+        let max_height = self.max_height.map(|v| v.max(0.0)).unwrap_or(f32::INFINITY);
+
+        let min_width = self
+            .min_width
+            .map(|v| {
+                let clamped = v.clamp(0.0, max_width);
+                if clamped == f32::INFINITY {
+                    0.0
+                } else {
+                    clamped
+                }
+            })
+            .unwrap_or(0.0);
+
+        let min_height = self
+            .min_height
+            .map(|v| {
+                let clamped = v.clamp(0.0, max_height);
+                if clamped == f32::INFINITY {
+                    0.0
+                } else {
+                    clamped
+                }
+            })
+            .unwrap_or(0.0);
+
+        Constraints {
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+        }
+    }
+}
+
 impl MeasurementProxy for SizeMeasurementProxy {
     fn measure_proxy(
         &self,
-        context: &mut dyn ModifierNodeContext,
+        _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
     ) -> Size {
-        let node = SizeNode::new(
-            self.min_width,
-            self.max_width,
-            self.min_height,
-            self.max_height,
-            self.enforce_incoming,
-        );
-        node.measure(context, wrapped, constraints)
+        // Directly implement size measurement logic (no node reconstruction)
+        let target = self.target_constraints();
+
+        let wrapped_constraints = if self.enforce_incoming {
+            // Constrain target constraints by incoming constraints
+            Constraints {
+                min_width: target
+                    .min_width
+                    .max(constraints.min_width)
+                    .min(constraints.max_width),
+                max_width: target
+                    .max_width
+                    .min(constraints.max_width)
+                    .max(constraints.min_width),
+                min_height: target
+                    .min_height
+                    .max(constraints.min_height)
+                    .min(constraints.max_height),
+                max_height: target
+                    .max_height
+                    .min(constraints.max_height)
+                    .max(constraints.min_height),
+            }
+        } else {
+            // Required size: use target, but preserve incoming if target is unspecified
+            let resolved_min_width = if self.min_width.is_some() {
+                target.min_width
+            } else {
+                constraints.min_width.min(target.max_width)
+            };
+            let resolved_max_width = if self.max_width.is_some() {
+                target.max_width
+            } else {
+                constraints.max_width.max(target.min_width)
+            };
+            let resolved_min_height = if self.min_height.is_some() {
+                target.min_height
+            } else {
+                constraints.min_height.min(target.max_height)
+            };
+            let resolved_max_height = if self.max_height.is_some() {
+                target.max_height
+            } else {
+                constraints.max_height.max(target.min_height)
+            };
+
+            Constraints {
+                min_width: resolved_min_width,
+                max_width: resolved_max_width,
+                min_height: resolved_min_height,
+                max_height: resolved_max_height,
+            }
+        };
+
+        let placeable = wrapped.measure(wrapped_constraints);
+        let measured_width = placeable.width();
+        let measured_height = placeable.height();
+
+        // Return the target size when both min==max (fixed size), but only if it satisfies
+        // the wrapped constraints we passed down. Otherwise return measured size.
+        let result_width = if self.min_width.is_some()
+            && self.max_width.is_some()
+            && self.min_width == self.max_width
+            && target.min_width >= wrapped_constraints.min_width
+            && target.min_width <= wrapped_constraints.max_width
+        {
+            target.min_width
+        } else {
+            measured_width
+        };
+
+        let result_height = if self.min_height.is_some()
+            && self.max_height.is_some()
+            && self.min_height == self.max_height
+            && target.min_height >= wrapped_constraints.min_height
+            && target.min_height <= wrapped_constraints.max_height
+        {
+            target.min_height
+        } else {
+            measured_height
+        };
+
+        Size {
+            width: result_width,
+            height: result_height,
+        }
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = SizeNode::new(
-            self.min_width,
-            self.max_width,
-            self.min_height,
-            self.max_height,
-            self.enforce_incoming,
-        );
-        node.min_intrinsic_width(wrapped, height)
+        let target = self.target_constraints();
+        if target.min_width == target.max_width && target.max_width != f32::INFINITY {
+            target.max_width
+        } else {
+            let child_height = if self.enforce_incoming {
+                height
+            } else {
+                height.clamp(target.min_height, target.max_height)
+            };
+            wrapped
+                .min_intrinsic_width(child_height)
+                .clamp(target.min_width, target.max_width)
+        }
     }
 
     fn max_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = SizeNode::new(
-            self.min_width,
-            self.max_width,
-            self.min_height,
-            self.max_height,
-            self.enforce_incoming,
-        );
-        node.max_intrinsic_width(wrapped, height)
+        let target = self.target_constraints();
+        if target.min_width == target.max_width && target.max_width != f32::INFINITY {
+            target.max_width
+        } else {
+            let child_height = if self.enforce_incoming {
+                height
+            } else {
+                height.clamp(target.min_height, target.max_height)
+            };
+            wrapped
+                .max_intrinsic_width(child_height)
+                .clamp(target.min_width, target.max_width)
+        }
     }
 
     fn min_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = SizeNode::new(
-            self.min_width,
-            self.max_width,
-            self.min_height,
-            self.max_height,
-            self.enforce_incoming,
-        );
-        node.min_intrinsic_height(wrapped, width)
+        let target = self.target_constraints();
+        if target.min_height == target.max_height && target.max_height != f32::INFINITY {
+            target.max_height
+        } else {
+            let child_width = if self.enforce_incoming {
+                width
+            } else {
+                width.clamp(target.min_width, target.max_width)
+            };
+            wrapped
+                .min_intrinsic_height(child_width)
+                .clamp(target.min_height, target.max_height)
+        }
     }
 
     fn max_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = SizeNode::new(
-            self.min_width,
-            self.max_width,
-            self.min_height,
-            self.max_height,
-            self.enforce_incoming,
-        );
-        node.max_intrinsic_height(wrapped, width)
+        let target = self.target_constraints();
+        if target.min_height == target.max_height && target.max_height != f32::INFINITY {
+            target.max_height
+        } else {
+            let child_width = if self.enforce_incoming {
+                width
+            } else {
+                width.clamp(target.min_width, target.max_width)
+            };
+            wrapped
+                .max_intrinsic_height(child_width)
+                .clamp(target.min_height, target.max_height)
+        }
     }
 }
 
@@ -1644,42 +1817,49 @@ impl LayoutModifierNode for OffsetNode {
     }
 }
 
-/// Measurement proxy for OffsetNode.
+/// Measurement proxy for OffsetNode that snapshots live state.
+///
+/// Phase 2: Instead of reconstructing nodes via `OffsetNode::new()`, this proxy
+/// directly implements measurement logic. Since offset doesn't affect measurement
+/// (only placement), this is a simple passthrough.
 struct OffsetMeasurementProxy {
+    #[allow(dead_code)]
     x: f32,
+    #[allow(dead_code)]
     y: f32,
+    #[allow(dead_code)]
     rtl_aware: bool,
 }
 
 impl MeasurementProxy for OffsetMeasurementProxy {
     fn measure_proxy(
         &self,
-        context: &mut dyn ModifierNodeContext,
+        _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
     ) -> Size {
-        let node = OffsetNode::new(self.x, self.y, self.rtl_aware);
-        node.measure(context, wrapped, constraints)
+        // Offset doesn't affect measurement, just placement - simple passthrough
+        let placeable = wrapped.measure(constraints);
+        Size {
+            width: placeable.width(),
+            height: placeable.height(),
+        }
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = OffsetNode::new(self.x, self.y, self.rtl_aware);
-        node.min_intrinsic_width(wrapped, height)
+        wrapped.min_intrinsic_width(height)
     }
 
     fn max_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = OffsetNode::new(self.x, self.y, self.rtl_aware);
-        node.max_intrinsic_width(wrapped, height)
+        wrapped.max_intrinsic_width(height)
     }
 
     fn min_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = OffsetNode::new(self.x, self.y, self.rtl_aware);
-        node.min_intrinsic_height(wrapped, width)
+        wrapped.min_intrinsic_height(width)
     }
 
     fn max_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = OffsetNode::new(self.x, self.y, self.rtl_aware);
-        node.max_intrinsic_height(wrapped, width)
+        wrapped.max_intrinsic_height(width)
     }
 }
 
@@ -1854,7 +2034,10 @@ impl LayoutModifierNode for FillNode {
     }
 }
 
-/// Measurement proxy for FillNode.
+/// Measurement proxy for FillNode that snapshots live state.
+///
+/// Phase 2: Instead of reconstructing nodes via `FillNode::new()`, this proxy
+/// directly implements measurement logic using the snapshotted fill configuration.
 struct FillMeasurementProxy {
     direction: FillDirection,
     fraction: f32,
@@ -1863,32 +2046,61 @@ struct FillMeasurementProxy {
 impl MeasurementProxy for FillMeasurementProxy {
     fn measure_proxy(
         &self,
-        context: &mut dyn ModifierNodeContext,
+        _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
     ) -> Size {
-        let node = FillNode::new(self.direction, self.fraction);
-        node.measure(context, wrapped, constraints)
+        // Directly implement fill measurement logic (no node reconstruction)
+        let (min_width, max_width) = if self.direction != FillDirection::Vertical
+            && constraints.max_width != f32::INFINITY
+        {
+            let width = (constraints.max_width * self.fraction)
+                .round()
+                .clamp(constraints.min_width, constraints.max_width);
+            (width, width)
+        } else {
+            (constraints.min_width, constraints.max_width)
+        };
+
+        let (min_height, max_height) = if self.direction != FillDirection::Horizontal
+            && constraints.max_height != f32::INFINITY
+        {
+            let height = (constraints.max_height * self.fraction)
+                .round()
+                .clamp(constraints.min_height, constraints.max_height);
+            (height, height)
+        } else {
+            (constraints.min_height, constraints.max_height)
+        };
+
+        let fill_constraints = Constraints {
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+        };
+
+        let placeable = wrapped.measure(fill_constraints);
+        Size {
+            width: placeable.width(),
+            height: placeable.height(),
+        }
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = FillNode::new(self.direction, self.fraction);
-        node.min_intrinsic_width(wrapped, height)
+        wrapped.min_intrinsic_width(height)
     }
 
     fn max_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
-        let node = FillNode::new(self.direction, self.fraction);
-        node.max_intrinsic_width(wrapped, height)
+        wrapped.max_intrinsic_width(height)
     }
 
     fn min_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = FillNode::new(self.direction, self.fraction);
-        node.min_intrinsic_height(wrapped, width)
+        wrapped.min_intrinsic_height(width)
     }
 
     fn max_intrinsic_height_proxy(&self, wrapped: &dyn Measurable, width: f32) -> f32 {
-        let node = FillNode::new(self.direction, self.fraction);
-        node.max_intrinsic_height(wrapped, width)
+        wrapped.max_intrinsic_height(width)
     }
 }
 
