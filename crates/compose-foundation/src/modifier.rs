@@ -1091,6 +1091,51 @@ impl Default for ModifierNodeChain {
     }
 }
 
+/// Helper function to find the best matching entry for reuse during update.
+/// Returns the index of the best match, or None if no match found.
+///
+/// Matching priority (from highest to lowest):
+/// 1. Keyed match: same type + same key
+/// 2. Exact match: same type + no key + same hash + equals_element
+/// 3. Type match: same type + no key (will require update)
+fn find_matching_entry(
+    entries: &[Box<ModifierNodeEntry>],
+    used: &[bool],
+    element_type: TypeId,
+    key: Option<u64>,
+    hash_code: u64,
+    element: &DynModifierElement,
+) -> Option<usize> {
+    if let Some(key_value) = key {
+        // Priority 1: Keyed lookup
+        for (i, entry) in entries.iter().enumerate() {
+            if !used[i] && entry.element_type == element_type && entry.key == Some(key_value) {
+                return Some(i);
+            }
+        }
+    } else {
+        // Priority 2: Exact match (hash + equality)
+        for (i, entry) in entries.iter().enumerate() {
+            if !used[i]
+                && entry.key.is_none()
+                && entry.hash_code == hash_code
+                && entry.element.as_ref().equals_element(element.as_ref())
+            {
+                return Some(i);
+            }
+        }
+
+        // Priority 3: Type match only (will need update)
+        for (i, entry) in entries.iter().enumerate() {
+            if !used[i] && entry.element_type == element_type && entry.key.is_none() {
+                return Some(i);
+            }
+        }
+    }
+
+    None
+}
+
 impl ModifierNodeChain {
     pub fn new() -> Self {
         let mut chain = Self {
@@ -1112,67 +1157,65 @@ impl ModifierNodeChain {
         elements: &[DynModifierElement],
         context: &mut dyn ModifierNodeContext,
     ) {
+        // Optimization: Avoid O(n²) complexity by marking matches instead of removing
         let mut old_entries = std::mem::take(&mut self.entries);
+        let mut old_used = vec![false; old_entries.len()];
         let mut new_entries: Vec<Box<ModifierNodeEntry>> = Vec::with_capacity(elements.len());
 
-        for element in elements {
+        // Track which old entry index maps to which position in new list
+        let mut match_order: Vec<Option<usize>> = vec![None; old_entries.len()];
+
+        // Process each new element, reusing old entries where possible
+        for (new_pos, element) in elements.iter().enumerate() {
             let element_type = element.element_type();
             let key = element.key();
             let hash_code = element.hash_code();
             let capabilities = element.capabilities();
-            let mut same_element = false;
-            let mut reused_entry: Option<Box<ModifierNodeEntry>> = None;
 
-            if let Some(key_value) = key {
-                if let Some(index) = old_entries.iter().position(|entry| {
-                    entry.element_type == element_type && entry.key == Some(key_value)
-                }) {
-                    let entry = old_entries.remove(index);
-                    same_element = entry.element.as_ref().equals_element(element.as_ref());
-                    reused_entry = Some(entry);
-                }
-            } else if let Some(index) = old_entries.iter().position(|entry| {
-                entry.key.is_none()
-                    && entry.hash_code == hash_code
-                    && entry.element.as_ref().equals_element(element.as_ref())
-            }) {
-                let entry = old_entries.remove(index);
-                same_element = true;
-                reused_entry = Some(entry);
-            } else if let Some(index) = old_entries
-                .iter()
-                .position(|entry| entry.element_type == element_type && entry.key.is_none())
-            {
-                let entry = old_entries.remove(index);
-                same_element = entry.element.as_ref().equals_element(element.as_ref());
-                reused_entry = Some(entry);
-            }
+            // Find best matching old entry (in priority order)
+            let matched_idx = find_matching_entry(
+                &old_entries,
+                &old_used,
+                element_type,
+                key,
+                hash_code,
+                element,
+            );
 
-            if let Some(mut entry) = reused_entry {
+            if let Some(idx) = matched_idx {
+                // Reuse existing entry
+                old_used[idx] = true;
+                match_order[idx] = Some(new_pos);
+                let entry = &mut old_entries[idx];
+
+                // Check if element actually changed
+                let same_element = entry.element.as_ref().equals_element(element.as_ref());
+
+                // Minimize RefCell borrows
                 {
-                    let entry_mut = entry.as_mut();
-                    if !entry_mut.node.borrow().node_state().is_attached() {
-                        attach_node_tree(&mut **entry_mut.node.borrow_mut(), context);
+                    let node_borrow = entry.node.borrow();
+                    if !node_borrow.node_state().is_attached() {
+                        drop(node_borrow);
+                        attach_node_tree(&mut **entry.node.borrow_mut(), context);
                     }
-
-                    if !same_element {
-                        element.update_node(&mut **entry_mut.node.borrow_mut());
-                    }
-
-                    entry_mut.key = key;
-                    entry_mut.element = element.clone();
-                    entry_mut.element_type = element_type;
-                    entry_mut.hash_code = hash_code;
-                    entry_mut.capabilities = capabilities;
-                    entry_mut
-                        .node
-                        .borrow()
-                        .node_state()
-                        .set_capabilities(entry_mut.capabilities);
                 }
-                new_entries.push(entry);
+
+                // Only update node if element changed
+                if !same_element {
+                    element.update_node(&mut **entry.node.borrow_mut());
+                    entry.element = element.clone();
+                    entry.hash_code = hash_code;
+                }
+
+                // Always update metadata (capabilities may change independently)
+                entry.key = key;
+                entry.element_type = element_type;
+                entry.capabilities = capabilities;
+                entry.node.borrow().node_state().set_capabilities(capabilities);
+
             } else {
-                let mut entry = Box::new(ModifierNodeEntry::new(
+                // Create new entry and insert at correct position
+                let entry = Box::new(ModifierNodeEntry::new(
                     element_type,
                     key,
                     element.clone(),
@@ -1180,20 +1223,54 @@ impl ModifierNodeChain {
                     hash_code,
                     capabilities,
                 ));
-                {
-                    let entry_mut = entry.as_mut();
-                    attach_node_tree(&mut **entry_mut.node.borrow_mut(), context);
-                    element.update_node(&mut **entry_mut.node.borrow_mut());
-                }
+                attach_node_tree(&mut **entry.node.borrow_mut(), context);
+                element.update_node(&mut **entry.node.borrow_mut());
                 new_entries.push(entry);
             }
         }
 
-        for entry in old_entries {
-            detach_node_tree(&mut **entry.node.borrow_mut());
+        // Assemble final list in correct order
+        // First, create a temporary list of (position, entry) pairs for matched entries
+        let mut matched_entries: Vec<(usize, Box<ModifierNodeEntry>)> = Vec::new();
+        for (entry, (used, order)) in old_entries.into_iter().zip(old_used.into_iter().zip(match_order)) {
+            if used {
+                matched_entries.push((order.unwrap(), entry));
+            } else {
+                detach_node_tree(&mut **entry.node.borrow_mut());
+            }
         }
 
-        self.entries = new_entries;
+        // Sort matched entries by their new position
+        matched_entries.sort_by_key(|(pos, _)| *pos);
+
+        // Merge matched entries with newly created entries
+        // new_entries currently only has newly created entries
+        let mut final_entries: Vec<Box<ModifierNodeEntry>> = Vec::with_capacity(elements.len());
+        let mut matched_iter = matched_entries.into_iter();
+        let mut new_iter = new_entries.into_iter();
+        let mut next_matched = matched_iter.next();
+        let mut next_new = new_iter.next();
+        let mut new_entry_pos = 0;
+
+        for pos in 0..elements.len() {
+            if let Some((matched_pos, _)) = next_matched {
+                if matched_pos == pos {
+                    // This position gets a matched entry
+                    final_entries.push(next_matched.take().unwrap().1);
+                    next_matched = matched_iter.next();
+                    continue;
+                }
+            }
+
+            // This position gets a new entry
+            if let Some(entry) = next_new.take() {
+                final_entries.push(entry);
+                next_new = new_iter.next();
+                new_entry_pos += 1;
+            }
+        }
+
+        self.entries = final_entries;
         self.sync_chain_links();
     }
 
