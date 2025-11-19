@@ -1,5 +1,8 @@
 #![allow(private_interfaces)]
 
+#[allow(unused_imports)] // Used in tests
+use compose_foundation::InvalidationKind;
+
 use compose_foundation::{
     BasicModifierNodeContext, ModifierInvalidation, ModifierNodeChain,
     NodeCapabilities,
@@ -333,7 +336,7 @@ mod tests {
     use compose_foundation::{ModifierInvalidation, ModifierNode, NodeCapabilities};
 
     use super::*;
-    use crate::modifier::{Color, RoundedCornerShape};
+    use crate::modifier::Color;
     use crate::modifier_nodes::PaddingNode;
 
     #[test]

@@ -190,6 +190,12 @@ pub struct NodeState {
     is_sentinel: bool,
 }
 
+impl Default for NodeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeState {
     pub const fn new() -> Self {
         Self {
@@ -534,6 +540,7 @@ pub trait SemanticsNode: ModifierNode {
 /// This mirrors Jetpack Compose's FocusState enum which tracks whether
 /// a node is focused, has a focused child, or is inactive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum FocusState {
     /// The focusable component is currently active (i.e. it receives key events).
     Active,
@@ -545,6 +552,7 @@ pub enum FocusState {
     Captured,
     /// The focusable component does not receive any key events. (ie it is not active,
     /// nor are any of its descendants active).
+    #[default]
     Inactive,
 }
 
@@ -568,11 +576,6 @@ impl FocusState {
     }
 }
 
-impl Default for FocusState {
-    fn default() -> Self {
-        Self::Inactive
-    }
-}
 
 /// Marker trait for focus modifier nodes.
 ///
@@ -980,7 +983,7 @@ fn visit_node_tree_mut(
     node.for_each_delegate_mut(&mut |child| visit_node_tree_mut(child, visitor));
 }
 
-fn nth_delegate<'a>(node: &'a dyn ModifierNode, target: usize) -> Option<&'a dyn ModifierNode> {
+fn nth_delegate(node: &dyn ModifierNode, target: usize) -> Option<&dyn ModifierNode> {
     let mut current = 0usize;
     let mut result: Option<&dyn ModifierNode> = None;
     node.for_each_delegate(&mut |child| {
@@ -992,10 +995,10 @@ fn nth_delegate<'a>(node: &'a dyn ModifierNode, target: usize) -> Option<&'a dyn
     result
 }
 
-fn nth_delegate_mut<'a>(
-    node: &'a mut dyn ModifierNode,
+fn nth_delegate_mut(
+    node: &mut dyn ModifierNode,
     target: usize,
-) -> Option<&'a mut dyn ModifierNode> {
+) -> Option<&mut dyn ModifierNode> {
     let mut current = 0usize;
     let mut result: Option<&mut dyn ModifierNode> = None;
     node.for_each_delegate_mut(&mut |child| {

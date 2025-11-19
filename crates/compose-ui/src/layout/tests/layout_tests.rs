@@ -357,7 +357,7 @@ fn selective_measure_uses_cache_when_not_dirty() -> Result<(), NodeError> {
     let node = LayoutNode::new(Modifier::empty(), Rc::new(MaxSizePolicy));
     let node_id = applier.create(Box::new(node));
 
-    let constraints = Constraints {
+    let _constraints = Constraints {
         min_width: 0.0,
         max_width: 100.0,
         min_height: 0.0,
@@ -411,7 +411,7 @@ fn selective_measure_remeasures_when_dirty() -> Result<(), NodeError> {
             height: 100.0,
         },
     )?;
-    let size1 = result1.root_size();
+    let _size1 = result1.root_size();
 
     // Mark as dirty by changing measure policy
     applier.with_node::<LayoutNode, _>(node_id, |node| {
@@ -419,7 +419,7 @@ fn selective_measure_remeasures_when_dirty() -> Result<(), NodeError> {
     })?;
 
     // Second measure - should remeasure because dirty
-    let result2 = measure_layout(
+    let _result2 = measure_layout(
         &mut applier,
         node_id,
         Size {

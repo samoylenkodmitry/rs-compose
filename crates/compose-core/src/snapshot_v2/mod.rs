@@ -1163,6 +1163,7 @@ mod tests {
         use std::cell::Cell;
 
         // Mock StateObject for testing
+        #[allow(dead_code)]
         struct TestState {
             value: Cell<i32>,
         }
@@ -1223,6 +1224,7 @@ mod tests {
         use crate::state::StateObject;
         use std::cell::Cell;
 
+        #[allow(dead_code)]
         struct TestState {
             value: Cell<i32>,
         }

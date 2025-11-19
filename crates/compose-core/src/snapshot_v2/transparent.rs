@@ -326,6 +326,7 @@ mod tests {
 
         let _guard = reset_runtime();
 
+        #[allow(dead_code)]
         struct MockState {
             value: Cell<i32>,
         }

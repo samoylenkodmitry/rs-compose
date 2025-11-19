@@ -628,7 +628,7 @@ mod tests {
 
     impl DelegatingProviderNode {
         fn new(token: ModifierLocalToken, factory: Rc<dyn Fn() -> Box<dyn Any>>) -> Self {
-            let mut node = Self {
+            let node = Self {
                 state: NodeState::new(),
                 delegate: ModifierLocalProviderNode::new(token, factory),
             };
@@ -698,7 +698,7 @@ mod tests {
 
     impl DelegatingConsumerNode {
         fn new(callback: Rc<dyn for<'a> Fn(&mut ModifierLocalReadScope<'a>)>) -> Self {
-            let mut node = Self {
+            let node = Self {
                 state: NodeState::new(),
                 delegate: ModifierLocalConsumerNode::new(callback),
             };

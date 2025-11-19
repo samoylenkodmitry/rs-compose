@@ -1,5 +1,13 @@
 //! High level UI primitives built on top of the Compose core runtime.
 
+#![allow(clippy::arc_with_non_send_sync)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::manual_let_else)]
+
 use compose_core::{location_key, MemoryApplier};
 pub use compose_core::{Composition, Key};
 pub use compose_macros::composable;
@@ -80,10 +88,10 @@ pub use debug::{
 pub type TestComposition = Composition<MemoryApplier>;
 
 /// Build a composition with a simple in-memory applier and run the provided closure once.
-pub fn run_test_composition(mut build: impl FnMut()) -> TestComposition {
+pub fn run_test_composition(build: impl FnMut()) -> TestComposition {
     let mut composition = Composition::new(MemoryApplier::new());
     composition
-        .render(location_key(file!(), line!(), column!()), || build())
+        .render(location_key(file!(), line!(), column!()), build)
         .expect("initial render succeeds");
     composition
 }

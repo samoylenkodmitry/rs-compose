@@ -71,8 +71,8 @@ impl ModifierNodeSlices {
 
     fn extend(&mut self, other: ModifierNodeSlices) {
         self.draw_commands.extend(other.draw_commands);
-        self.pointer_inputs.extend(other.pointer_inputs.into_iter());
-        self.click_handlers.extend(other.click_handlers.into_iter());
+        self.pointer_inputs.extend(other.pointer_inputs);
+        self.click_handlers.extend(other.click_handlers);
         self.clip_to_bounds |= other.clip_to_bounds;
         // Take the last text content (rightmost modifier wins)
         if other.text_content.is_some() {

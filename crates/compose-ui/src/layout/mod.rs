@@ -442,11 +442,11 @@ pub fn measure_layout(
     let measured = builder.measure_node(root, normalize_constraints(constraints))?;
     let metadata = {
         let mut applier_ref = applier_host.borrow_typed();
-        collect_runtime_metadata(&mut *applier_ref, &measured)?
+        collect_runtime_metadata(&mut applier_ref, &measured)?
     };
     let semantics_snapshot = {
         let mut applier_ref = applier_host.borrow_typed();
-        collect_semantics_snapshot(&mut *applier_ref, &measured)?
+        collect_semantics_snapshot(&mut applier_ref, &measured)?
     };
     drop(builder);
     let applier_inner = Rc::try_unwrap(applier_host)
@@ -533,7 +533,7 @@ impl LayoutBuilderState {
             return None;
         };
 
-        Some(f(&mut *applier))
+        Some(f(&mut applier))
     }
 
     fn with_applier_result<R>(
@@ -1151,7 +1151,7 @@ impl SlotsGuard {
     }
 
     fn host(&mut self) -> Rc<SlotsHost> {
-        let slots = self.slots.take().unwrap_or_else(SlotBackend::default);
+        let slots = self.slots.take().unwrap_or_default();
         Rc::new(SlotsHost::new(slots))
     }
 

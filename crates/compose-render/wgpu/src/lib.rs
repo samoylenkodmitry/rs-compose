@@ -3,6 +3,9 @@
 //! This renderer uses WGPU for cross-platform GPU support across
 //! desktop (Windows/Mac/Linux), web (WebGPU), and mobile (Android/iOS).
 
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+
 mod pipeline;
 mod render;
 mod scene;
@@ -193,7 +196,7 @@ impl WgpuRenderer {
         if let Some(gpu_renderer) = &mut self.gpu_renderer {
             gpu_renderer
                 .render(view, &self.scene.shapes, &self.scene.texts, width, height)
-                .map_err(|e| WgpuRendererError::Wgpu(e))
+                .map_err(WgpuRendererError::Wgpu)
         } else {
             Err(WgpuRendererError::Wgpu(
                 "GPU renderer not initialized. Call init_gpu() first.".to_string(),

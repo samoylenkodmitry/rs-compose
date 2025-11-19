@@ -96,6 +96,7 @@ mod tests {
     use std::cell::Cell;
 
     // Mock StateObject for testing
+    #[allow(dead_code)]
     struct MockStateObject {
         value: Cell<i32>,
     }

@@ -917,21 +917,13 @@ impl ResolvedBackground {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Default)]
 pub struct ResolvedModifiers {
     padding: EdgeInsets,
     layout: LayoutProperties,
     offset: Point,
 }
 
-impl Default for ResolvedModifiers {
-    fn default() -> Self {
-        Self {
-            padding: EdgeInsets::default(),
-            layout: LayoutProperties::default(),
-            offset: Point::default(),
-        }
-    }
-}
 
 impl ResolvedModifiers {
     pub fn padding(&self) -> EdgeInsets {

@@ -469,7 +469,7 @@ impl ScopeEntry {
 mod tests {
     use super::*;
     use crate::snapshot_v2::{reset_runtime_for_tests, TestRuntimeGuard};
-    use crate::snapshot_v2::{take_mutable_snapshot, SnapshotApplyResult};
+    use crate::snapshot_v2::take_mutable_snapshot;
     use crate::state::{NeverEqual, SnapshotMutableState};
     use std::cell::Cell;
 

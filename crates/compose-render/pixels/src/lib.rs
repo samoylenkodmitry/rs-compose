@@ -1,3 +1,6 @@
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+
 mod draw;
 mod pipeline;
 pub mod scene;
@@ -17,6 +20,12 @@ pub enum PixelsRendererError {
 
 pub struct PixelsRenderer {
     scene: Scene,
+}
+
+impl Default for PixelsRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PixelsRenderer {

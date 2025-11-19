@@ -30,7 +30,7 @@ impl NodeStyle {
         Self {
             padding: resolved.padding(),
             background: None, // Now rendered via draw commands
-            click_actions: slices.click_handlers().iter().cloned().collect(),
+            click_actions: slices.click_handlers().to_vec(),
             shape: None, // Now encoded in draw command round rects
             pointer_inputs,
             draw_commands: slices.draw_commands().to_vec(),
