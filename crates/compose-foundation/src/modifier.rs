@@ -167,14 +167,10 @@ impl NodePath {
     fn delegates(&self) -> &[usize] {
         &self.delegates
     }
-
-    fn into_parts(self) -> (usize, Vec<usize>) {
-        (self.entry, self.delegates)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum NodeLink {
+pub(crate) enum NodeLink {
     Head,
     Tail,
     Entry(NodePath),
@@ -973,11 +969,6 @@ impl ModifierNodeEntry {
     }
 }
 
-fn visit_node_tree(node: &dyn ModifierNode, visitor: &mut dyn FnMut(&dyn ModifierNode)) {
-    visitor(node);
-    node.for_each_delegate(&mut |child| visit_node_tree(child, visitor));
-}
-
 fn visit_node_tree_mut(
     node: &mut dyn ModifierNode,
     visitor: &mut dyn FnMut(&mut dyn ModifierNode),
@@ -1198,7 +1189,7 @@ impl ModifierNodeChain {
             }
         }
 
-        for mut entry in old_entries {
+        for entry in old_entries {
             detach_node_tree(&mut **entry.node.borrow_mut());
         }
 
