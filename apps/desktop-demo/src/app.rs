@@ -3,7 +3,7 @@ use compose_core::{
     self, compositionLocalOf, CompositionLocal, CompositionLocalProvider, DisposableEffect,
     DisposableEffectResult, LaunchedEffect, LaunchedEffectAsync, MutableState,
 };
-use compose_foundation::{PointerEvent, PointerEventKind};
+use compose_foundation::PointerEventKind;
 use compose_ui::{
     composable, BoxSpec, Brush, Button, Color, Column, ColumnSpec, CornerRadii, GraphicsLayer,
     IntrinsicSize, LinearArrangement, Modifier, Point, PointerInputScope, RoundedCornerShape, Row,
@@ -22,6 +22,7 @@ pub enum DemoTab {
     CompositionLocal,
     Async,
     Layout,
+    ModifierShowcase,
 }
 
 impl DemoTab {
@@ -31,6 +32,7 @@ impl DemoTab {
             DemoTab::CompositionLocal => "CompositionLocal Test",
             DemoTab::Async => "Async Runtime",
             DemoTab::Layout => "Recursive Layout",
+            DemoTab::ModifierShowcase => "Modifiers Showcase",
         }
     }
 }
@@ -108,7 +110,7 @@ pub fn combined_app() {
             Row(
                 Modifier::empty()
                     .fill_max_width()
-                    .then(Modifier::empty().padding(8.0)),
+                    .padding(8.0),
                 RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(8.0)),
                 move || {
                     let tab_state = tab_state_for_row.clone();
@@ -118,7 +120,7 @@ pub fn combined_app() {
                         Button(
                             Modifier::empty()
                                 .rounded_corners(12.0)
-                                .then(Modifier::empty().draw_behind(move |scope| {
+                                .draw_behind(move |scope| {
                                     scope.draw_round_rect(
                                         Brush::solid(if is_active {
                                             Color(0.2, 0.45, 0.9, 1.0)
@@ -127,8 +129,8 @@ pub fn combined_app() {
                                         }),
                                         CornerRadii::uniform(12.0),
                                     );
-                                }))
-                                .then(Modifier::empty().padding(10.0)),
+                                })
+                                .padding(10.0),
                             {
                                 let tab_state = tab_state.clone();
                                 move || {
@@ -151,6 +153,7 @@ pub fn combined_app() {
                     render_tab_button(DemoTab::CompositionLocal);
                     render_tab_button(DemoTab::Async);
                     render_tab_button(DemoTab::Layout);
+                    render_tab_button(DemoTab::ModifierShowcase);
                 },
             );
 
@@ -165,6 +168,7 @@ pub fn combined_app() {
                 DemoTab::CompositionLocal => composition_local_example(),
                 DemoTab::Async => async_runtime_example(),
                 DemoTab::Layout => recursive_layout_example(),
+                DemoTab::ModifierShowcase => modifier_showcase_tab(),
             });
         },
     );
@@ -177,17 +181,17 @@ fn recursive_layout_example() {
     Column(
         Modifier::empty()
             .padding(32.0)
-            .then(Modifier::empty().background(Color(0.08, 0.10, 0.18, 1.0)))
-            .then(Modifier::empty().rounded_corners(24.0))
-            .then(Modifier::empty().padding(20.0)),
+            .background(Color(0.08, 0.10, 0.18, 1.0))
+            .rounded_corners(24.0)
+            .padding(20.0),
         ColumnSpec::default(),
         move || {
             Text(
                 "Recursive Layout Playground",
                 Modifier::empty()
                     .padding(12.0)
-                    .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.08)))
-                    .then(Modifier::empty().rounded_corners(16.0)),
+                    .background(Color(1.0, 1.0, 1.0, 0.08))
+                    .rounded_corners(16.0),
             );
 
             Spacer(Size {
@@ -198,7 +202,7 @@ fn recursive_layout_example() {
             Row(
                 Modifier::empty()
                     .fill_max_width()
-                    .then(Modifier::empty().padding(8.0)),
+                    .padding(8.0),
                 RowSpec::new()
                     .horizontal_arrangement(LinearArrangement::SpacedBy(12.0))
                     .vertical_alignment(VerticalAlignment::CenterVertically),
@@ -209,13 +213,13 @@ fn recursive_layout_example() {
                         Button(
                             Modifier::empty()
                                 .rounded_corners(16.0)
-                                .then(Modifier::empty().draw_behind(|scope| {
+                                .draw_behind(|scope| {
                                     scope.draw_round_rect(
                                         Brush::solid(Color(0.35, 0.45, 0.85, 1.0)),
                                         CornerRadii::uniform(16.0),
                                     );
-                                }))
-                                .then(Modifier::empty().padding(10.0)),
+                                })
+                                .padding(10.0),
                             {
                                 let depth_state = depth_state.clone();
                                 move || {
@@ -233,13 +237,13 @@ fn recursive_layout_example() {
                         Button(
                             Modifier::empty()
                                 .rounded_corners(16.0)
-                                .then(Modifier::empty().draw_behind(|scope| {
+                                .draw_behind(|scope| {
                                     scope.draw_round_rect(
                                         Brush::solid(Color(0.65, 0.35, 0.35, 1.0)),
                                         CornerRadii::uniform(16.0),
                                     );
-                                }))
-                                .then(Modifier::empty().padding(10.0)),
+                                })
+                                .padding(10.0),
                             {
                                 let depth_state = depth_state.clone();
                                 move || {
@@ -258,8 +262,8 @@ fn recursive_layout_example() {
                             format!("Current depth: {}", depth.max(1)),
                             Modifier::empty()
                                 .padding(8.0)
-                                .then(Modifier::empty().background(Color(0.12, 0.16, 0.28, 0.8)))
-                                .then(Modifier::empty().rounded_corners(12.0)),
+                                .background(Color(0.12, 0.16, 0.28, 0.8))
+                                .rounded_corners(12.0),
                         );
                     }
                 },
@@ -274,10 +278,10 @@ fn recursive_layout_example() {
             Column(
                 Modifier::empty()
                     .fill_max_width()
-                    .then(Modifier::empty().padding(8.0))
-                    .then(Modifier::empty().background(Color(0.06, 0.08, 0.16, 0.9)))
-                    .then(Modifier::empty().rounded_corners(20.0))
-                    .then(Modifier::empty().padding(12.0)),
+                    .padding(8.0)
+                    .background(Color(0.06, 0.08, 0.16, 0.9))
+                    .rounded_corners(20.0)
+                    .padding(12.0),
                 ColumnSpec::default(),
                 move || {
                     recursive_layout_node(depth, true, 0);
@@ -300,20 +304,20 @@ fn recursive_layout_node(depth: usize, horizontal: bool, index: usize) {
     Column(
         Modifier::empty()
             .rounded_corners(18.0)
-            .then(Modifier::empty().draw_behind({
+            .draw_behind({
                 move |scope| {
                     scope.draw_round_rect(Brush::solid(accent), CornerRadii::uniform(18.0));
                 }
-            }))
-            .then(Modifier::empty().padding(12.0)),
+            })
+            .padding(12.0),
         ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(8.0)),
         move || {
             Text(
                 format!("Depth {}", depth),
                 Modifier::empty()
                     .padding(6.0)
-                    .then(Modifier::empty().background(Color(0.0, 0.0, 0.0, 0.25)))
-                    .then(Modifier::empty().rounded_corners(10.0)),
+                    .background(Color(0.0, 0.0, 0.0, 0.25))
+                    .rounded_corners(10.0),
             );
 
             if depth <= 1 {
@@ -321,8 +325,8 @@ fn recursive_layout_node(depth: usize, horizontal: bool, index: usize) {
                     format!("Leaf node #{index}"),
                     Modifier::empty()
                         .padding(6.0)
-                        .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.12)))
-                        .then(Modifier::empty().rounded_corners(10.0)),
+                        .background(Color(1.0, 1.0, 1.0, 0.12))
+                        .rounded_corners(10.0),
                 );
             } else if horizontal {
                 Row(
@@ -360,17 +364,17 @@ pub fn composition_local_example() {
     Column(
         Modifier::empty()
             .padding(32.0)
-            .then(Modifier::empty().background(Color(0.12, 0.10, 0.24, 1.0)))
-            .then(Modifier::empty().rounded_corners(24.0))
-            .then(Modifier::empty().padding(20.0)),
+            .background(Color(0.12, 0.10, 0.24, 1.0))
+            .rounded_corners(24.0)
+            .padding(20.0),
         ColumnSpec::default(),
         move || {
             Text(
                 "CompositionLocal Subscription Test",
                 Modifier::empty()
                     .padding(12.0)
-                    .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
-                    .then(Modifier::empty().rounded_corners(16.0)),
+                    .background(Color(1.0, 1.0, 1.0, 0.1))
+                    .rounded_corners(16.0),
             );
 
             Spacer(Size {
@@ -382,8 +386,8 @@ pub fn composition_local_example() {
                 format!("Counter: {}", counter.get()),
                 Modifier::empty()
                     .padding(8.0)
-                    .then(Modifier::empty().background(Color(0.2, 0.3, 0.4, 0.7)))
-                    .then(Modifier::empty().rounded_corners(12.0)),
+                    .background(Color(0.2, 0.3, 0.4, 0.7))
+                    .rounded_corners(12.0),
             );
 
             Spacer(Size {
@@ -394,13 +398,13 @@ pub fn composition_local_example() {
             Button(
                 Modifier::empty()
                     .rounded_corners(16.0)
-                    .then(Modifier::empty().draw_behind(|scope| {
+                    .draw_behind(|scope| {
                         scope.draw_round_rect(
                             Brush::solid(Color(0.2, 0.45, 0.9, 1.0)),
                             CornerRadii::uniform(16.0),
                         );
-                    }))
-                    .then(Modifier::empty().padding(12.0)),
+                    })
+                    .padding(12.0),
                 {
                     let counter = counter.clone();
                     move || {
@@ -435,8 +439,8 @@ fn composition_local_content() {
         format!("Outside provider (NOT reading): rand={}", random()),
         Modifier::empty()
             .padding(8.0)
-            .then(Modifier::empty().background(Color(0.3, 0.3, 0.3, 0.5)))
-            .then(Modifier::empty().rounded_corners(12.0)),
+            .background(Color(0.3, 0.3, 0.3, 0.5))
+            .rounded_corners(12.0),
     );
 
     Spacer(Size {
@@ -455,8 +459,8 @@ fn composition_local_content() {
         format!("NOT reading local: rand={}", random()),
         Modifier::empty()
             .padding(8.0)
-            .then(Modifier::empty().background(Color(0.9, 0.6, 0.4, 0.5)))
-            .then(Modifier::empty().rounded_corners(12.0)),
+            .background(Color(0.9, 0.6, 0.4, 0.5))
+            .rounded_corners(12.0),
     );
 }
 
@@ -468,8 +472,8 @@ fn composition_local_content_inner() {
         format!("READING local: count={}, rand={}", holder.count, random()),
         Modifier::empty()
             .padding(8.0)
-            .then(Modifier::empty().background(Color(0.6, 0.9, 0.4, 0.7)))
-            .then(Modifier::empty().rounded_corners(12.0)),
+            .background(Color(0.6, 0.9, 0.4, 0.7))
+            .rounded_corners(12.0),
     );
 }
 
@@ -554,9 +558,9 @@ fn async_runtime_example() {
     Column(
         Modifier::empty()
             .padding(32.0)
-            .then(Modifier::empty().background(Color(0.10, 0.14, 0.28, 1.0)))
-            .then(Modifier::empty().rounded_corners(24.0))
-            .then(Modifier::empty().padding(20.0)),
+            .background(Color(0.10, 0.14, 0.28, 1.0))
+            .rounded_corners(24.0)
+            .padding(20.0),
         ColumnSpec::default(),
         {
             let is_running_state = is_running.clone();
@@ -565,8 +569,8 @@ fn async_runtime_example() {
                     "Async Runtime Demo",
                     Modifier::empty()
                         .padding(12.0)
-                        .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.08)))
-                        .then(Modifier::empty().rounded_corners(16.0)),
+                        .background(Color(1.0, 1.0, 1.0, 0.08))
+                        .rounded_corners(16.0),
                 );
 
                 Spacer(Size {
@@ -581,10 +585,10 @@ fn async_runtime_example() {
                 Column(
                     Modifier::empty()
                         .fill_max_width()
-                        .then(Modifier::empty().padding(8.0))
-                        .then(Modifier::empty().background(Color(0.06, 0.10, 0.22, 0.8)))
-                        .then(Modifier::empty().rounded_corners(18.0))
-                        .then(Modifier::empty().padding(12.0)),
+                        .padding(8.0)
+                        .background(Color(0.06, 0.10, 0.22, 0.8))
+                        .rounded_corners(18.0)
+                        .padding(12.0),
                     ColumnSpec::default(),
                     {
                         move || {
@@ -601,14 +605,14 @@ fn async_runtime_example() {
                             Row(
                                 Modifier::empty()
                                     .fill_max_width()
-                                    .then(Modifier::empty().height(26.0))
-                                    .then(Modifier::empty().rounded_corners(13.0))
-                                    .then(Modifier::empty().draw_behind(|scope| {
+                                    .height(26.0)
+                                    .rounded_corners(13.0)
+                                    .draw_behind(|scope| {
                                         scope.draw_round_rect(
                                             Brush::solid(Color(0.12, 0.16, 0.30, 1.0)),
                                             CornerRadii::uniform(13.0),
                                         );
-                                    })),
+                                    }),
                                 RowSpec::default(),
                                 {
                                     let progress_width = fill_width;
@@ -621,11 +625,11 @@ fn async_runtime_example() {
                                                 Row(
                                                     Modifier::empty()
                                                         .width(progress_width.min(360.0))
-                                                        .then(Modifier::empty().height(26.0))
+                                                        .height(26.0)
                                                         .then(
                                                             Modifier::empty().rounded_corners(13.0),
                                                         )
-                                                        .then(Modifier::empty().draw_behind(
+                                                        .draw_behind(
                                                             |scope| {
                                                                 scope.draw_round_rect(
                                                                     Brush::linear_gradient(vec![
@@ -639,7 +643,7 @@ fn async_runtime_example() {
                                                                     CornerRadii::uniform(13.0),
                                                                 );
                                                             },
-                                                        )),
+                                                        ),
                                                     RowSpec::default(),
                                                     || {},
                                                 );
@@ -670,8 +674,8 @@ fn async_runtime_example() {
                     ),
                     Modifier::empty()
                         .padding(8.0)
-                        .then(Modifier::empty().background(Color(0.18, 0.22, 0.36, 0.6)))
-                        .then(Modifier::empty().rounded_corners(14.0)),
+                        .background(Color(0.18, 0.22, 0.36, 0.6))
+                        .rounded_corners(14.0),
                 );
 
                 Spacer(Size {
@@ -682,7 +686,7 @@ fn async_runtime_example() {
                 Row(
                     Modifier::empty()
                         .fill_max_width()
-                        .then(Modifier::empty().padding(4.0)),
+                        .padding(4.0),
                     RowSpec::new()
                         .horizontal_arrangement(LinearArrangement::SpacedBy(12.0))
                         .vertical_alignment(VerticalAlignment::CenterVertically),
@@ -701,7 +705,7 @@ fn async_runtime_example() {
                             Button(
                                 Modifier::empty()
                                     .rounded_corners(16.0)
-                                    .then(Modifier::empty().draw_behind({
+                                    .draw_behind({
                                         let color = button_color;
                                         move |scope| {
                                             scope.draw_round_rect(
@@ -709,8 +713,8 @@ fn async_runtime_example() {
                                                 CornerRadii::uniform(16.0),
                                             );
                                         }
-                                    }))
-                                    .then(Modifier::empty().padding(12.0)),
+                                    })
+                                    .padding(12.0),
                                 {
                                     let toggle_state = toggle_state.clone();
                                     move || toggle_state.set(!toggle_state.get())
@@ -734,13 +738,13 @@ fn async_runtime_example() {
                             Button(
                                 Modifier::empty()
                                     .rounded_corners(16.0)
-                                    .then(Modifier::empty().draw_behind(|scope| {
+                                    .draw_behind(|scope| {
                                         scope.draw_round_rect(
                                             Brush::solid(Color(0.16, 0.36, 0.82, 1.0)),
                                             CornerRadii::uniform(16.0),
                                         );
-                                    }))
-                                    .then(Modifier::empty().padding(12.0)),
+                                    })
+                                    .padding(12.0),
                                 move || {
                                     reset_animation.set(AnimationState::default());
                                     reset_stats.set(FrameStats::default());
@@ -830,12 +834,12 @@ fn counter_app() {
                                 16.0, 24.0, 16.0, 24.0,
                             )),
                         )
-                        .then(Modifier::empty().draw_with_content(|scope| {
+                        .draw_with_content(|scope| {
                             scope.draw_round_rect(
                                 Brush::solid(Color(1.0, 1.0, 1.0, 0.1)),
                                 CornerRadii::uniform(20.0),
                             );
-                        })),
+                        }),
                 );
             } else {
                 println!("Rendering odd branch");
@@ -848,12 +852,12 @@ fn counter_app() {
                                 16.0, 24.0, 16.0, 24.0,
                             )),
                         )
-                        .then(Modifier::empty().draw_with_content(|scope| {
+                        .draw_with_content(|scope| {
                             scope.draw_round_rect(
                                 Brush::solid(Color(1.0, 1.0, 1.0, 0.5)),
                                 CornerRadii::uniform(20.0),
                             );
-                        })),
+                        }),
                 );
             }
         });
@@ -863,8 +867,8 @@ fn counter_app() {
         Column(
             Modifier::empty()
                 .padding(32.0)
-                .then(Modifier::empty().rounded_corners(24.0))
-                .then(Modifier::empty().draw_behind({
+                .rounded_corners(24.0)
+                .draw_behind({
                     let phase = wave_state.value();
                     move |scope| {
                         scope.draw_round_rect(
@@ -875,8 +879,8 @@ fn counter_app() {
                             CornerRadii::uniform(24.0),
                         );
                     }
-                }))
-                .then(Modifier::empty().padding(20.0)),
+                })
+                .padding(20.0),
             ColumnSpec::default(),
             {
                 let counter_main = counter.clone();
@@ -899,12 +903,12 @@ fn counter_app() {
                                     16.0, 24.0, 16.0, 24.0,
                                 )),
                             )
-                            .then(Modifier::empty().draw_with_content(|scope| {
+                            .draw_with_content(|scope| {
                                 scope.draw_round_rect(
                                     Brush::solid(Color(1.0, 1.0, 1.0, 0.1)),
                                     CornerRadii::uniform(20.0),
                                 );
-                            })),
+                            }),
                     );
 
                     Spacer(Size {
@@ -915,7 +919,7 @@ fn counter_app() {
                     Row(
                         Modifier::empty()
                             .fill_max_width()
-                            .then(Modifier::empty().padding(8.0)),
+                            .padding(8.0),
                         RowSpec::new()
                             .horizontal_arrangement(LinearArrangement::SpacedBy(12.0))
                             .vertical_alignment(VerticalAlignment::CenterVertically),
@@ -932,7 +936,7 @@ fn counter_app() {
                                             Modifier::empty()
                                                 .background(Color(0.0, 0.0, 0.0, 0.35)),
                                         )
-                                        .then(Modifier::empty().rounded_corners(12.0)),
+                                        .rounded_corners(12.0),
                                 );
                                 Text(
                                     format!("Wave {:.2}", wave_value),
@@ -942,13 +946,13 @@ fn counter_app() {
                                             Modifier::empty()
                                                 .background(Color(0.35, 0.55, 0.9, 0.5)),
                                         )
-                                        .then(Modifier::empty().rounded_corners(12.0))
-                                        .then(Modifier::empty().graphics_layer(GraphicsLayer {
+                                        .rounded_corners(12.0)
+                                        .graphics_layer(GraphicsLayer {
                                             alpha: 0.7 + wave_value * 0.3,
                                             scale: 0.85 + wave_value * 0.3,
                                             translation_x: 0.0,
                                             translation_y: (wave_value - 0.5) * 12.0,
-                                        })),
+                                        }),
                                 );
                             }
                         },
@@ -964,15 +968,15 @@ fn counter_app() {
                     Column(
                         Modifier::empty()
                             .rounded_corners(20.0)
-                            .then(Modifier::empty().draw_with_cache(|cache| {
+                            .draw_with_cache(|cache| {
                                 cache.on_draw_behind(|scope| {
                                     scope.draw_round_rect(
                                         Brush::solid(Color(0.16, 0.18, 0.26, 0.95)),
                                         CornerRadii::uniform(20.0),
                                     );
                                 });
-                            }))
-                            .then(Modifier::empty().draw_with_content({
+                            })
+                            .draw_with_content({
                                 let position = pointer_position.get();
                                 let pressed = pointer_down.get();
                                 move |scope| {
@@ -989,8 +993,8 @@ fn counter_app() {
                                         CornerRadii::uniform(20.0),
                                     );
                                 }
-                            }))
-                            .then(Modifier::empty().pointer_input((), {
+                            })
+                            .pointer_input((), {
                                 let pointer_position = pointer_position.clone();
                                 let pointer_down = pointer_down.clone();
                                 move |scope: PointerInputScope| {
@@ -1028,8 +1032,8 @@ fn counter_app() {
                                             .await;
                                     }
                                 }
-                            }))
-                            .then(Modifier::empty().padding(16.0)),
+                            })
+                            .padding(16.0),
                         ColumnSpec::default(),
                         move || {
                             let async_message_state = async_message_state.clone();
@@ -1038,9 +1042,9 @@ fn counter_app() {
                                 format!("Pointer: ({:.1}, {:.1})", pointer.x, pointer.y),
                                 Modifier::empty()
                                     .padding(8.0)
-                                    .then(Modifier::empty().background(Color(0.1, 0.1, 0.15, 0.6)))
-                                    .then(Modifier::empty().rounded_corners(12.0))
-                                    .then(Modifier::empty().padding(8.0)),
+                                    .background(Color(0.1, 0.1, 0.15, 0.6))
+                                    .rounded_corners(12.0)
+                                    .padding(8.0),
                             );
 
                             Spacer(Size {
@@ -1051,9 +1055,9 @@ fn counter_app() {
                             Row(
                                 Modifier::empty()
                                     .padding(8.0)
-                                    .then(Modifier::empty().rounded_corners(12.0))
-                                    .then(Modifier::empty().background(Color(0.1, 0.1, 0.15, 0.6)))
-                                    .then(Modifier::empty().padding(8.0)),
+                                    .rounded_corners(12.0)
+                                    .background(Color(0.1, 0.1, 0.15, 0.6))
+                                    .padding(8.0),
                                 RowSpec::new()
                                     .horizontal_arrangement(LinearArrangement::SpacedBy(8.0))
                                     .vertical_alignment(VerticalAlignment::CenterVertically),
@@ -1061,14 +1065,14 @@ fn counter_app() {
                                     Button(
                                         Modifier::empty()
                                             .width_intrinsic(IntrinsicSize::Max)
-                                            .then(Modifier::empty().rounded_corners(12.0))
-                                            .then(Modifier::empty().draw_behind(|scope| {
+                                            .rounded_corners(12.0)
+                                            .draw_behind(|scope| {
                                                 scope.draw_round_rect(
                                                     Brush::solid(Color(0.3, 0.5, 0.2, 1.0)),
                                                     CornerRadii::uniform(12.0),
                                                 );
-                                            }))
-                                            .then(Modifier::empty().padding(10.0)),
+                                            })
+                                            .padding(10.0),
                                         || {},
                                         || {
                                             Text(
@@ -1085,14 +1089,14 @@ fn counter_app() {
                                     Button(
                                         Modifier::empty()
                                             .width_intrinsic(IntrinsicSize::Max)
-                                            .then(Modifier::empty().rounded_corners(12.0))
-                                            .then(Modifier::empty().draw_behind(|scope| {
+                                            .rounded_corners(12.0)
+                                            .draw_behind(|scope| {
                                                 scope.draw_round_rect(
                                                     Brush::solid(Color(0.5, 0.3, 0.2, 1.0)),
                                                     CornerRadii::uniform(12.0),
                                                 );
-                                            }))
-                                            .then(Modifier::empty().padding(10.0)),
+                                            })
+                                            .padding(10.0),
                                         || {},
                                         || {
                                             Text("Cancel", Modifier::empty().padding(4.0));
@@ -1101,14 +1105,14 @@ fn counter_app() {
                                     Button(
                                         Modifier::empty()
                                             .width_intrinsic(IntrinsicSize::Max)
-                                            .then(Modifier::empty().rounded_corners(12.0))
-                                            .then(Modifier::empty().draw_behind(|scope| {
+                                            .rounded_corners(12.0)
+                                            .draw_behind(|scope| {
                                                 scope.draw_round_rect(
                                                     Brush::solid(Color(0.2, 0.3, 0.5, 1.0)),
                                                     CornerRadii::uniform(12.0),
                                                 );
-                                            }))
-                                            .then(Modifier::empty().padding(10.0)),
+                                            })
+                                            .padding(10.0),
                                         || {},
                                         || {
                                             Text(
@@ -1130,14 +1134,14 @@ fn counter_app() {
                             Row(
                                 Modifier::empty()
                                     .fill_max_width()
-                                    .then(Modifier::empty().padding(8.0)),
+                                    .padding(8.0),
                                 RowSpec::new()
                                     .horizontal_arrangement(LinearArrangement::SpacedBy(12.0)),
                                 move || {
                                     Button(
                                         Modifier::empty()
                                             .rounded_corners(16.0)
-                                            .then(Modifier::empty().draw_with_cache(|cache| {
+                                            .draw_with_cache(|cache| {
                                                 cache.on_draw_behind(|scope| {
                                                     scope.draw_round_rect(
                                                         Brush::linear_gradient(vec![
@@ -1147,8 +1151,8 @@ fn counter_app() {
                                                         CornerRadii::uniform(16.0),
                                                     );
                                                 });
-                                            }))
-                                            .then(Modifier::empty().padding(12.0)),
+                                            })
+                                            .padding(12.0),
                                         {
                                             let counter = counter_inc.clone();
                                             move || {
@@ -1166,13 +1170,13 @@ fn counter_app() {
                                     Button(
                                         Modifier::empty()
                                             .rounded_corners(16.0)
-                                            .then(Modifier::empty().draw_behind(|scope| {
+                                            .draw_behind(|scope| {
                                                 scope.draw_round_rect(
                                                     Brush::solid(Color(0.4, 0.18, 0.3, 1.0)),
                                                     CornerRadii::uniform(16.0),
                                                 );
-                                            }))
-                                            .then(Modifier::empty().padding(12.0)),
+                                            })
+                                            .padding(12.0),
                                         {
                                             let counter = counter_dec.clone();
                                             move || counter.set(counter.get() - 1)
@@ -1194,8 +1198,8 @@ fn counter_app() {
                                 async_message_text.get(),
                                 Modifier::empty()
                                     .padding(10.0)
-                                    .then(Modifier::empty().background(Color(0.1, 0.18, 0.32, 0.6)))
-                                    .then(Modifier::empty().rounded_corners(14.0)),
+                                    .background(Color(0.1, 0.18, 0.32, 0.6))
+                                    .rounded_corners(14.0),
                             );
 
                             Spacer(Size {
@@ -1208,7 +1212,7 @@ fn counter_app() {
                             Button(
                                 Modifier::empty()
                                     .rounded_corners(16.0)
-                                    .then(Modifier::empty().draw_with_cache(|cache| {
+                                    .draw_with_cache(|cache| {
                                         cache.on_draw_behind(|scope| {
                                             scope.draw_round_rect(
                                                 Brush::linear_gradient(vec![
@@ -1218,8 +1222,8 @@ fn counter_app() {
                                                 CornerRadii::uniform(16.0),
                                             );
                                         });
-                                    }))
-                                    .then(Modifier::empty().padding(12.0)),
+                                    })
+                                    .padding(12.0),
                                 {
                                     move || {
                                         async_message_button.set(
@@ -1246,6 +1250,662 @@ fn composition_local_observer() {
     DisposableEffect!((), move |_| {
         state.set(state.get() + 1);
         DisposableEffectResult::default()
+    });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum ShowcaseType {
+    SimpleCard,
+    PositionedBoxes,
+    ItemList,
+    ComplexChain,
+    DynamicModifiers,
+    LongList,
+}
+
+impl ShowcaseType {
+    fn label(self) -> &'static str {
+        match self {
+            ShowcaseType::SimpleCard => "Simple Card",
+            ShowcaseType::PositionedBoxes => "Positioned Boxes",
+            ShowcaseType::ItemList => "Item List (5)",
+            ShowcaseType::ComplexChain => "Complex Chain",
+            ShowcaseType::DynamicModifiers => "Dynamic Modifiers",
+            ShowcaseType::LongList => "Long List (50)",
+        }
+    }
+}
+
+#[composable]
+fn modifier_showcase_tab() {
+    let selected_showcase = compose_core::useState(|| ShowcaseType::SimpleCard);
+
+    Row(
+        Modifier::empty()
+            .fill_max_width()
+            .padding(8.0),
+        RowSpec::new()
+            .horizontal_arrangement(LinearArrangement::SpacedBy(12.0))
+            .vertical_alignment(VerticalAlignment::Top),
+        move || {
+            // Left panel - showcase selector
+            Column(
+                Modifier::empty()
+                    .width(180.0)
+                    .padding(16.0)
+                    .background(Color(0.08, 0.10, 0.18, 1.0))
+                    .rounded_corners(20.0),
+                ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(8.0)),
+                {
+                    let showcase_state = selected_showcase.clone();
+                    move || {
+                        Text(
+                            "Select Showcase",
+                            Modifier::empty()
+                                .padding(8.0)
+                                .background(Color(1.0, 1.0, 1.0, 0.08))
+                                .rounded_corners(12.0),
+                        );
+
+                        Spacer(Size {
+                            width: 0.0,
+                            height: 8.0,
+                        });
+
+                        let showcase_types = [
+                            ShowcaseType::SimpleCard,
+                            ShowcaseType::PositionedBoxes,
+                            ShowcaseType::ItemList,
+                            ShowcaseType::ComplexChain,
+                            ShowcaseType::DynamicModifiers,
+                            ShowcaseType::LongList,
+                        ];
+
+                        for showcase_type in showcase_types {
+                            let is_selected = showcase_state.get() == showcase_type;
+                            Button(
+                                Modifier::empty()
+                                    .fill_max_width()
+                                    .rounded_corners(10.0)
+                                    .draw_behind(move |scope| {
+                                        scope.draw_round_rect(
+                                            Brush::solid(if is_selected {
+                                                Color(0.25, 0.45, 0.85, 1.0)
+                                            } else {
+                                                Color(0.15, 0.18, 0.25, 0.8)
+                                            }),
+                                            CornerRadii::uniform(10.0),
+                                        );
+                                    })
+                                    .padding(10.0),
+                                {
+                                    let showcase_state = showcase_state.clone();
+                                    move || {
+                                        if showcase_state.get() != showcase_type {
+                                            showcase_state.set(showcase_type);
+                                        }
+                                    }
+                                },
+                                {
+                                    let label = showcase_type.label();
+                                    move || {
+                                        Text(label, Modifier::empty().padding(4.0));
+                                    }
+                                },
+                            );
+                        }
+                    }
+                },
+            );
+
+            // Right panel - showcase content
+            Column(
+                Modifier::empty()
+                    .fill_max_width()
+                    .padding(24.0)
+                    .background(Color(0.06, 0.08, 0.16, 0.9))
+                    .rounded_corners(20.0)
+                    .padding(16.0),
+                ColumnSpec::default(),
+                {
+                    let selected_showcase_inner = selected_showcase.clone();
+                    move || {
+                        let showcase_to_render = selected_showcase_inner.get();
+                        compose_core::with_key(&showcase_to_render, || {
+                            match showcase_to_render {
+                                ShowcaseType::SimpleCard => simple_card_showcase(),
+                                ShowcaseType::PositionedBoxes => positioned_boxes_showcase(),
+                                ShowcaseType::ItemList => item_list_showcase(),
+                                ShowcaseType::ComplexChain => complex_chain_showcase(),
+                                ShowcaseType::DynamicModifiers => dynamic_modifiers_showcase(),
+                                ShowcaseType::LongList => long_list_showcase(),
+                            }
+                        });
+                    }
+                },
+            );
+        },
+    );
+}
+
+#[composable]
+pub fn simple_card_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Simple Card Pattern ===",
+            Modifier::empty()
+                .padding(12.0)
+                .background(Color(1.0, 1.0, 1.0, 0.1))
+                .rounded_corners(14.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        // Card with border effect (outer box creates border)
+        compose_ui::Box(
+            Modifier::empty()
+                .padding(3.0)
+                .background(Color(0.4, 0.6, 0.9, 0.8))
+                .rounded_corners(18.0),
+            BoxSpec::default(),
+            || {
+                compose_ui::Box(
+                    Modifier::empty()
+                        .padding(16.0)
+                        .size(Size {
+                            width: 300.0,
+                            height: 200.0,
+                        })
+                        .background(Color(0.15, 0.18, 0.25, 0.95))
+                        .rounded_corners(16.0),
+                    BoxSpec::default(),
+                    || {
+                        Column(
+                            Modifier::empty().padding(8.0),
+                            ColumnSpec::default(),
+                            || {
+                                Text(
+                                    "Card Title",
+                                    Modifier::empty()
+                                        .padding(8.0)
+                                        .background(Color(0.3, 0.5, 0.8, 0.6))
+                                        .rounded_corners(8.0),
+                                );
+
+                                Spacer(Size {
+                                    width: 0.0,
+                                    height: 8.0,
+                                });
+
+                                Text(
+                                    "Card content goes here with padding",
+                                    Modifier::empty().padding(4.0),
+                                );
+
+                                Spacer(Size {
+                                    width: 0.0,
+                                    height: 12.0,
+                                });
+
+                                // Action buttons row
+                                Row(
+                                    Modifier::empty(),
+                                    RowSpec::default(),
+                                    || {
+                                        Text(
+                                            "Action 1",
+                                            Modifier::empty()
+                                                .padding(8.0)
+                                                .background(Color(0.2, 0.7, 0.4, 0.7))
+                                                .rounded_corners(6.0),
+                                        );
+
+                                        Spacer(Size {
+                                            width: 8.0,
+                                            height: 0.0,
+                                        });
+
+                                        Text(
+                                            "Action 2",
+                                            Modifier::empty()
+                                                .padding(8.0)
+                                                .background(Color(0.8, 0.3, 0.3, 0.7))
+                                                .rounded_corners(6.0),
+                                        );
+                                    },
+                                );
+                            },
+                        );
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[composable]
+pub fn positioned_boxes_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Positioned Boxes ===",
+            Modifier::empty()
+                .padding(12.0)
+                .background(Color(1.0, 1.0, 1.0, 0.1))
+                .rounded_corners(14.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        // Wrap positioned boxes in a container with explicit size
+        // This allows overlapping boxes with offset positioning
+        compose_ui::Box(
+            Modifier::empty()
+                .size_points(360.0, 280.0)
+                .background(Color(0.05, 0.05, 0.15, 0.5))
+                .rounded_corners(8.0),
+            BoxSpec::default(),
+            || {
+                // Box A - Purple, top-left
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size_points(100.0, 100.0)
+                        .offset(20.0, 20.0)
+                        .padding(8.0)
+                        .background(Color(0.6, 0.2, 0.7, 0.85))
+                        .rounded_corners(12.0),
+                    BoxSpec::default(),
+                    || {
+                        Text("Box A", Modifier::empty().padding(6.0));
+                    },
+                );
+
+                // Box B - Green, bottom-right
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size_points(100.0, 100.0)
+                        .offset(220.0, 160.0)
+                        .padding(8.0)
+                        .background(Color(0.2, 0.7, 0.4, 0.85))
+                        .rounded_corners(12.0),
+                    BoxSpec::default(),
+                    || {
+                        Text("Box B", Modifier::empty().padding(6.0));
+                    },
+                );
+
+                // Box C - Orange, center-top (smaller)
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size_points(80.0, 60.0)
+                        .offset(140.0, 30.0)
+                        .padding(6.0)
+                        .background(Color(0.9, 0.5, 0.2, 0.85))
+                        .rounded_corners(10.0),
+                    BoxSpec::default(),
+                    || {
+                        Text("C", Modifier::empty().padding(4.0));
+                    },
+                );
+
+                // Box D - Blue, center-left (larger)
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size_points(120.0, 80.0)
+                        .offset(40.0, 140.0)
+                        .padding(8.0)
+                        .background(Color(0.2, 0.5, 0.9, 0.85))
+                        .rounded_corners(14.0),
+                    BoxSpec::default(),
+                    || {
+                        Text("Box D", Modifier::empty().padding(6.0));
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[composable]
+pub fn item_list_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Item List (5 items) ===",
+            Modifier::empty()
+                .padding(12.0)
+                .background(Color(1.0, 1.0, 1.0, 0.1))
+                .rounded_corners(14.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        // List with alternating colors and borders
+        Column(
+            Modifier::empty().padding(16.0),
+            ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(8.0)),
+            || {
+                for i in 0..5 {
+                    // Alternate colors: even = blue-ish, odd = purple-ish
+                    let (bg_color, border_color) = if i % 2 == 0 {
+                        (Color(0.12, 0.16, 0.28, 0.8), Color(0.3, 0.5, 0.8, 0.9))
+                    } else {
+                        (Color(0.18, 0.12, 0.28, 0.8), Color(0.5, 0.3, 0.8, 0.9))
+                    };
+
+                    // Border wrapper
+                    compose_ui::Box(
+                        Modifier::empty()
+                            .padding(2.0)
+                            .background(border_color)
+                            .rounded_corners(12.0),
+                        BoxSpec::default(),
+                        move || {
+                            Row(
+                                Modifier::empty()
+                                    .padding(8.0)
+                                    .size_points(400.0, 50.0)
+                                    .background(bg_color)
+                                    .rounded_corners(10.0),
+                                RowSpec::default(),
+                                move || {
+                                    let text = match i {
+                                        0 => "Item #0",
+                                        1 => "Item #1",
+                                        2 => "Item #2",
+                                        3 => "Item #3",
+                                        4 => "Item #4",
+                                        _ => "Item",
+                                    };
+                                    Text(text, Modifier::empty().padding_horizontal(12.0));
+
+                                    Spacer(Size {
+                                        width: 0.0,
+                                        height: 0.0,
+                                    });
+
+                                    // Status indicator
+                                    let status_color = if i % 3 == 0 {
+                                        Color(0.2, 0.8, 0.3, 0.9) // Green
+                                    } else if i % 3 == 1 {
+                                        Color(0.9, 0.7, 0.2, 0.9) // Yellow
+                                    } else {
+                                        Color(0.8, 0.3, 0.2, 0.9) // Red
+                                    };
+
+                                    compose_ui::Box(
+                                        Modifier::empty()
+                                            .size_points(12.0, 12.0)
+                                            .background(status_color)
+                                            .rounded_corners(6.0),
+                                        BoxSpec::default(),
+                                        || {},
+                                    );
+                                },
+                            );
+                        },
+                    );
+                }
+            },
+        );
+    });
+}
+
+#[composable]
+pub fn complex_chain_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Complex Modifier Chain ===",
+            Modifier::empty()
+                .padding(12.0)
+                .background(Color(1.0, 1.0, 1.0, 0.1))
+                .rounded_corners(14.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Text(
+            "Nested: Red → Green → Blue layers",
+            Modifier::empty().padding(8.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 12.0,
+        });
+
+        // Nested backgrounds showcase - creates visible colored borders
+        // Red outer layer
+        compose_ui::Box(
+            Modifier::empty()
+                .padding(8.0)
+                .background(Color(0.8, 0.2, 0.2, 0.9))
+                .rounded_corners(16.0),
+            BoxSpec::default(),
+            || {
+                // Green middle layer
+                compose_ui::Box(
+                    Modifier::empty()
+                        .padding(6.0)
+                        .background(Color(0.2, 0.7, 0.3, 0.9))
+                        .rounded_corners(12.0),
+                    BoxSpec::default(),
+                    || {
+                        // Blue inner layer
+                        compose_ui::Box(
+                            Modifier::empty()
+                                .padding(12.0)
+                                .background(Color(0.3, 0.5, 0.9, 0.9))
+                                .rounded_corners(8.0),
+                            BoxSpec::default(),
+                            || {
+                                Text("Nested!", Modifier::empty());
+                            },
+                        );
+                    },
+                );
+            },
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Text(
+            "Chain: offset + size + multiple backgrounds",
+            Modifier::empty().padding(8.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 12.0,
+        });
+
+        // Complex modifier chain with offset and sizing - Orange outer, Purple inner
+        compose_ui::Box(
+            Modifier::empty()
+                .offset(20.0, 0.0)
+                .size_points(180.0, 80.0)
+                .padding(6.0)
+                .background(Color(0.9, 0.6, 0.2, 0.9))
+                .rounded_corners(10.0),
+            BoxSpec::default(),
+            || {
+                compose_ui::Box(
+                    Modifier::empty()
+                        .padding(8.0)
+                        .background(Color(0.5, 0.3, 0.7, 0.9))
+                        .rounded_corners(6.0),
+                    BoxSpec::default(),
+                    || {
+                        Text("Offset + Sized", Modifier::empty());
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[composable]
+pub fn dynamic_modifiers_showcase() {
+    let frame = compose_core::useState(|| 0i32);
+
+    Column(Modifier::empty(), ColumnSpec::default(), move || {
+        Text(
+            "=== Dynamic Modifiers ===",
+            Modifier::empty()
+                .padding(12.0)
+                .background(Color(1.0, 1.0, 1.0, 0.1))
+                .rounded_corners(14.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        let current_frame = frame.get();
+        let x = (current_frame as f32 * 10.0) % 200.0;
+        let y = 50.0;
+
+        // Wrap moving box in a container with explicit size to prevent overflow
+        compose_ui::Box(
+            Modifier::empty()
+                .size_points(250.0, 150.0)
+                .background(Color(0.05, 0.05, 0.15, 0.5))
+                .rounded_corners(8.0),
+            BoxSpec::default(),
+            move || {
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size(Size {
+                            width: 50.0,
+                            height: 50.0,
+                        })
+                        .offset(x, y)
+                        .padding(6.0)
+                        .background(Color(0.3, 0.6, 0.9, 0.9))
+                        .rounded_corners(10.0),
+                    BoxSpec::default(),
+                    || {
+                        Text("Move", Modifier::empty());
+                    },
+                );
+            },
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Text(
+            format!("Frame: {}, X: {:.1}", current_frame, x),
+            Modifier::empty()
+                .padding(8.0)
+                .background(Color(0.2, 0.2, 0.3, 0.6))
+                .rounded_corners(10.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 12.0,
+        });
+
+        Button(
+            Modifier::empty()
+                .rounded_corners(12.0)
+                .draw_behind(|scope| {
+                    scope.draw_round_rect(
+                        Brush::solid(Color(0.25, 0.45, 0.85, 1.0)),
+                        CornerRadii::uniform(12.0),
+                    );
+                })
+                .padding(10.0),
+            {
+                let frame_state = frame.clone();
+                move || {
+                    frame_state.set(frame_state.get() + 1);
+                }
+            },
+            || {
+                Text("Advance Frame", Modifier::empty().padding(6.0));
+            },
+        );
+    });
+}
+
+#[composable]
+pub fn long_list_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Long List (50 items) ===",
+            Modifier::empty()
+                .padding(12.0)
+                .background(Color(1.0, 1.0, 1.0, 0.1))
+                .rounded_corners(14.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Column(
+            Modifier::empty().padding(16.0),
+            ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(6.0)),
+            || {
+                for i in 0..50 {
+                    Row(
+                        Modifier::empty()
+                            .padding_symmetric(8.0, 4.0)
+                            .size(Size {
+                                width: 400.0,
+                                height: 40.0,
+                            })
+                            .background(Color(
+                                0.12 + (i as f32 * 0.005),
+                                0.15,
+                                0.25,
+                                0.7,
+                            ))
+                            .rounded_corners(8.0),
+                        RowSpec::default(),
+                        move || {
+                            let text = if i < 10 {
+                                match i {
+                                    0 => "Item 0",
+                                    1 => "Item 1",
+                                    2 => "Item 2",
+                                    3 => "Item 3",
+                                    4 => "Item 4",
+                                    5 => "Item 5",
+                                    6 => "Item 6",
+                                    7 => "Item 7",
+                                    8 => "Item 8",
+                                    9 => "Item 9",
+                                    _ => "Item",
+                                }
+                            } else {
+                                "Item 10+"
+                            };
+                            Text(text, Modifier::empty().padding_horizontal(12.0));
+                        },
+                    );
+                }
+            },
+        );
     });
 }
 

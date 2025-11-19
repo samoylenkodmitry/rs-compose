@@ -5,10 +5,9 @@ use std::rc::Rc;
 
 fn count_nodes_with_capability(chain: &ModifierNodeChain, capability: NodeCapabilities) -> usize {
     let mut count = 0;
-    chain.for_each_forward_matching(capability, |node_ref| {
-        if node_ref.node().is_some() {
-            count += 1;
-        }
+    chain.for_each_forward_matching(capability, |_node_ref| {
+        // for_each_forward_matching only visits non-sentinel nodes, so we always count
+        count += 1;
     });
     count
 }
@@ -290,7 +289,10 @@ fn element_equality_controls_node_reuse() {
         updates: updates.clone(),
     })];
     chain.update_from_slice(&initial, &mut context);
-    let first_ptr = chain.node::<EqualityNode>(0).unwrap() as *const EqualityNode;
+    let first_ptr = {
+        let node_ref = chain.node::<EqualityNode>(0).unwrap();
+        &*node_ref as *const EqualityNode
+    };
     updates.set(0);
 
     let same = vec![modifier_element(EqualityElement {
@@ -298,7 +300,10 @@ fn element_equality_controls_node_reuse() {
         updates: updates.clone(),
     })];
     chain.update_from_slice(&same, &mut context);
-    let reused_ptr = chain.node::<EqualityNode>(0).unwrap() as *const EqualityNode;
+    let reused_ptr = {
+        let node_ref = chain.node::<EqualityNode>(0).unwrap();
+        &*node_ref as *const EqualityNode
+    };
     assert_eq!(
         first_ptr, reused_ptr,
         "nodes should be reused when elements are equal"
@@ -310,7 +315,10 @@ fn element_equality_controls_node_reuse() {
         updates: updates.clone(),
     })];
     chain.update_from_slice(&different, &mut context);
-    let updated_ptr = chain.node::<EqualityNode>(0).unwrap() as *const EqualityNode;
+    let updated_ptr = {
+        let node_ref = chain.node::<EqualityNode>(0).unwrap();
+        &*node_ref as *const EqualityNode
+    };
     assert_eq!(
         first_ptr, updated_ptr,
         "nodes should be reused even when element data changes"
@@ -395,16 +403,25 @@ fn element_keys_gate_node_reuse() {
 
     let initial = vec![modifier_element(KeyedElement { key: 7, value: 1 })];
     chain.update_from_slice(&initial, &mut context);
-    let first_ptr = chain.node::<EqualityNode>(0).unwrap() as *const EqualityNode;
+    let first_ptr = {
+        let node_ref = chain.node::<EqualityNode>(0).unwrap();
+        &*node_ref as *const EqualityNode
+    };
 
     let same_key = vec![modifier_element(KeyedElement { key: 7, value: 1 })];
     chain.update_from_slice(&same_key, &mut context);
-    let reused_ptr = chain.node::<EqualityNode>(0).unwrap() as *const EqualityNode;
+    let reused_ptr = {
+        let node_ref = chain.node::<EqualityNode>(0).unwrap();
+        &*node_ref as *const EqualityNode
+    };
     assert_eq!(first_ptr, reused_ptr, "matching keys should reuse nodes");
 
     let different_key = vec![modifier_element(KeyedElement { key: 8, value: 1 })];
     chain.update_from_slice(&different_key, &mut context);
-    let replaced_ptr = chain.node::<EqualityNode>(0).unwrap() as *const EqualityNode;
+    let replaced_ptr = {
+        let node_ref = chain.node::<EqualityNode>(0).unwrap();
+        &*node_ref as *const EqualityNode
+    };
     assert_ne!(
         first_ptr, replaced_ptr,
         "changing keys should force recreation"
@@ -616,12 +633,12 @@ impl LayoutModifierNode for TestLayoutNode {
         _context: &mut dyn ModifierNodeContext,
         _measurable: &dyn Measurable,
         _constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         self.measure_count.set(self.measure_count.get() + 1);
-        Size {
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: 100.0,
             height: 100.0,
-        }
+        })
     }
 
     fn min_intrinsic_width(&self, _measurable: &dyn Measurable, _height: f32) -> f32 {
@@ -1081,24 +1098,20 @@ fn sentinel_links_follow_chain_order() {
     let first = head.child().expect("head should link to first node");
     assert!(!first.is_sentinel());
     assert!(first.parent().unwrap().is_head());
-    assert!(
-        first
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<TestLayoutNode>()
-            .is_some(),
-        "first node should be layout"
-    );
+
+    // Verify first node is layout using with_node closure
+    let is_layout = first
+        .with_node(|node| node.as_any().downcast_ref::<TestLayoutNode>().is_some())
+        .unwrap_or(false);
+    assert!(is_layout, "first node should be layout");
 
     let second = first.child().expect("first should link to draw node");
-    assert!(
-        second
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<TestDrawNode>()
-            .is_some(),
+
+    // Verify second node is draw using with_node closure
+    let is_draw = second
+        .with_node(|node| node.as_any().downcast_ref::<TestDrawNode>().is_some())
+        .unwrap_or(false);
+    assert!(is_draw,
         "second node should be draw"
     );
     assert!(second.child().unwrap().is_tail());
@@ -1106,15 +1119,11 @@ fn sentinel_links_follow_chain_order() {
     let tail = chain.tail();
     assert!(tail.is_tail());
     let tail_parent = tail.parent().expect("tail should have parent");
-    assert!(
-        tail_parent
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<TestDrawNode>()
-            .is_some(),
-        "tail parent should be the draw node"
-    );
+
+    let is_draw = tail_parent
+        .with_node(|node| node.as_any().downcast_ref::<TestDrawNode>().is_some())
+        .unwrap_or(false);
+    assert!(is_draw, "tail parent should be the draw node");
     assert!(tail.child().is_none());
 }
 
@@ -1165,16 +1174,17 @@ fn delegate_nodes_participate_in_traversal() {
     let order: Vec<&'static str> = chain
         .head_to_tail()
         .map(|node_ref| {
-            let node = node_ref.node().unwrap();
-            if node.as_any().downcast_ref::<DelegatingHostNode>().is_some() {
-                "host"
-            } else if node.as_any().downcast_ref::<DelegatedDrawNode>().is_some() {
-                "delegate"
-            } else if node.as_any().downcast_ref::<TestDrawNode>().is_some() {
-                "draw"
-            } else {
-                "unknown"
-            }
+            node_ref.with_node(|node| {
+                if node.as_any().downcast_ref::<DelegatingHostNode>().is_some() {
+                    "host"
+                } else if node.as_any().downcast_ref::<DelegatedDrawNode>().is_some() {
+                    "delegate"
+                } else if node.as_any().downcast_ref::<TestDrawNode>().is_some() {
+                    "draw"
+                } else {
+                    "unknown"
+                }
+            }).unwrap_or("unknown")
         })
         .collect();
 
@@ -1196,13 +1206,10 @@ fn delegate_capabilities_propagate() {
 
     let mut draw_nodes = 0;
     chain.for_each_forward_matching(NodeCapabilities::DRAW, |node_ref| {
-        if node_ref
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<DelegatedDrawNode>()
-            .is_some()
-        {
+        let is_delegated = node_ref
+            .with_node(|node| node.as_any().downcast_ref::<DelegatedDrawNode>().is_some())
+            .unwrap_or(false);
+        if is_delegated {
             draw_nodes += 1;
         }
     });
@@ -1226,13 +1233,10 @@ fn semantics_delegates_are_visited_by_forward_matching() {
 
     let mut visits = 0;
     chain.for_each_forward_matching(NodeCapabilities::SEMANTICS, |node_ref| {
-        if node_ref
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<DelegatedSemanticsNode>()
-            .is_some()
-        {
+        let is_delegated = node_ref
+            .with_node(|node| node.as_any().downcast_ref::<DelegatedSemanticsNode>().is_some())
+            .unwrap_or(false);
+        if is_delegated {
             visits += 1;
         }
     });
@@ -1244,12 +1248,11 @@ fn semantics_delegates_are_visited_by_forward_matching() {
         is_clickable: false,
     };
     chain.for_each_forward_matching(NodeCapabilities::SEMANTICS, |node_ref| {
-        node_ref
-            .node()
-            .unwrap()
-            .as_semantics_node()
-            .unwrap()
-            .merge_semantics(&mut config);
+        node_ref.with_node(|node| {
+            if let Some(semantics_node) = node.as_semantics_node() {
+                semantics_node.merge_semantics(&mut config);
+            }
+        });
     });
     assert_eq!(
         config.content_description.as_deref(),
@@ -1278,13 +1281,10 @@ fn pointer_delegates_are_visited_by_forward_matching() {
 
     let mut visits = 0;
     chain.for_each_forward_matching(NodeCapabilities::POINTER_INPUT, |node_ref| {
-        if node_ref
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<DelegatedPointerNode>()
-            .is_some()
-        {
+        let is_delegated = node_ref
+            .with_node(|node| node.as_any().downcast_ref::<DelegatedPointerNode>().is_some())
+            .unwrap_or(false);
+        if is_delegated {
             visits += 1;
         }
     });
@@ -1304,31 +1304,36 @@ fn delegate_parent_links_owner() {
     ];
     chain.update_from_slice(&elements, &mut context);
 
-    let host = chain
-        .node::<DelegatingHostNode>(0)
-        .expect("host node should exist");
-    let delegate = host.delegate() as &dyn ModifierNode;
+    let delegate_ptr = {
+        let host = chain
+            .node::<DelegatingHostNode>(0)
+            .expect("host node should exist");
+        host.delegate() as *const dyn ModifierNode as *const ()
+    };
 
+    // Find delegate by comparing pointers since we can't hold the reference
     let delegate_ref = chain
-        .find_node_ref(delegate)
+        .head_to_tail()
+        .find(|node_ref| {
+            node_ref.with_node(|node| {
+                node as *const dyn ModifierNode as *const () == delegate_ptr
+            }).unwrap_or(false)
+        })
         .expect("delegate should be discoverable");
+
     let parent = delegate_ref.parent().expect("delegate should have parent");
-    assert!(parent
-        .node()
-        .unwrap()
-        .as_any()
-        .downcast_ref::<DelegatingHostNode>()
-        .is_some());
+    let is_host = parent
+        .with_node(|node| node.as_any().downcast_ref::<DelegatingHostNode>().is_some())
+        .unwrap_or(false);
+    assert!(is_host);
 
     let after_delegate = delegate_ref
         .child()
         .expect("delegate should have next node");
-    assert!(after_delegate
-        .node()
-        .unwrap()
-        .as_any()
-        .downcast_ref::<TestDrawNode>()
-        .is_some());
+    let is_draw = after_delegate
+        .with_node(|node| node.as_any().downcast_ref::<TestDrawNode>().is_some())
+        .unwrap_or(false);
+    assert!(is_draw);
 }
 
 #[test]
@@ -1356,25 +1361,15 @@ fn chain_iterators_follow_expected_order() {
     let forward: Vec<&'static str> = chain
         .head_to_tail()
         .map(|node_ref| {
-            if node_ref
-                .node()
-                .unwrap()
-                .as_any()
-                .downcast_ref::<TestLayoutNode>()
-                .is_some()
-            {
-                "layout"
-            } else if node_ref
-                .node()
-                .unwrap()
-                .as_any()
-                .downcast_ref::<TestDrawNode>()
-                .is_some()
-            {
-                "draw"
-            } else {
-                "unknown"
-            }
+            node_ref.with_node(|node| {
+                if node.as_any().downcast_ref::<TestLayoutNode>().is_some() {
+                    "layout"
+                } else if node.as_any().downcast_ref::<TestDrawNode>().is_some() {
+                    "draw"
+                } else {
+                    "unknown"
+                }
+            }).unwrap_or("unknown")
         })
         .collect();
     assert_eq!(forward, vec!["layout", "draw"]);
@@ -1382,25 +1377,15 @@ fn chain_iterators_follow_expected_order() {
     let backward: Vec<&'static str> = chain
         .tail_to_head()
         .map(|node_ref| {
-            if node_ref
-                .node()
-                .unwrap()
-                .as_any()
-                .downcast_ref::<TestLayoutNode>()
-                .is_some()
-            {
-                "layout"
-            } else if node_ref
-                .node()
-                .unwrap()
-                .as_any()
-                .downcast_ref::<TestDrawNode>()
-                .is_some()
-            {
-                "draw"
-            } else {
-                "unknown"
-            }
+            node_ref.with_node(|node| {
+                if node.as_any().downcast_ref::<TestLayoutNode>().is_some() {
+                    "layout"
+                } else if node.as_any().downcast_ref::<TestDrawNode>().is_some() {
+                    "draw"
+                } else {
+                    "unknown"
+                }
+            }).unwrap_or("unknown")
         })
         .collect();
     assert_eq!(backward, vec!["draw", "layout"]);
@@ -1416,29 +1401,19 @@ fn chain_can_find_node_refs() {
     ];
     chain.update_from_slice(&elements, &mut context);
 
-    let layout_node: &dyn ModifierNode =
-        chain.node::<TestLayoutNode>(0).expect("layout node exists");
-    let draw_node: &dyn ModifierNode = chain.node::<TestDrawNode>(1).expect("draw node exists");
+    let layout_node_guard = chain.node::<TestLayoutNode>(0).expect("layout node exists");
+    let draw_node_guard = chain.node::<TestDrawNode>(1).expect("draw node exists");
 
     let layout_ref = chain
-        .find_node_ref(layout_node)
+        .find_node_ref(&*layout_node_guard as &dyn ModifierNode)
         .expect("should resolve layout node ref");
-    assert!(layout_ref
-        .node()
-        .unwrap()
-        .as_any()
-        .downcast_ref::<TestLayoutNode>()
-        .is_some());
+    // Use entry_index() for navigation
+    assert_eq!(layout_ref.entry_index(), Some(0));
 
     let draw_ref = chain
-        .find_node_ref(draw_node)
+        .find_node_ref(&*draw_node_guard as &dyn ModifierNode)
         .expect("should resolve draw node ref");
-    assert!(draw_ref
-        .node()
-        .unwrap()
-        .as_any()
-        .downcast_ref::<TestDrawNode>()
-        .is_some());
+    assert_eq!(draw_ref.entry_index(), Some(1));
 }
 
 #[test]
@@ -1457,15 +1432,11 @@ fn visit_descendants_matching_short_circuits() {
     first
         .clone()
         .visit_descendants_matching(false, NodeCapabilities::DRAW, |node| {
-            if node
-                .node()
-                .unwrap()
-                .as_any()
-                .downcast_ref::<TestDrawNode>()
-                .is_some()
-            {
-                visited.push("draw");
-            }
+            node.with_node(|n| {
+                if n.as_any().downcast_ref::<TestDrawNode>().is_some() {
+                    visited.push("draw");
+                }
+            });
         });
     assert_eq!(visited, vec!["draw"]);
 
@@ -1494,23 +1465,13 @@ fn visit_ancestors_matching_includes_self() {
         .expect("draw node present");
     let mut order = Vec::new();
     draw_ref.visit_ancestors(true, |node| {
-        if node
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<TestDrawNode>()
-            .is_some()
-        {
-            order.push("draw");
-        } else if node
-            .node()
-            .unwrap()
-            .as_any()
-            .downcast_ref::<TestLayoutNode>()
-            .is_some()
-        {
-            order.push("layout");
-        }
+        node.with_node(|n| {
+            if n.as_any().downcast_ref::<TestDrawNode>().is_some() {
+                order.push("draw");
+            } else if n.as_any().downcast_ref::<TestLayoutNode>().is_some() {
+                order.push("layout");
+            }
+        });
     });
     assert_eq!(order, vec!["draw", "layout"]);
 }

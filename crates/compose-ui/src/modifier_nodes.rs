@@ -166,7 +166,7 @@ impl LayoutModifierNode for PaddingNode {
         _context: &mut dyn ModifierNodeContext,
         measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Convert padding to floating point values
         let horizontal_padding = self.padding.horizontal_sum();
         let vertical_padding = self.padding.vertical_sum();
@@ -184,11 +184,15 @@ impl LayoutModifierNode for PaddingNode {
         let inner_width = inner_placeable.width();
         let inner_height = inner_placeable.height();
 
-        // Add padding back to the result
-        Size {
-            width: inner_width + horizontal_padding,
-            height: inner_height + vertical_padding,
-        }
+        // Return size with padding added, and placement offset to position child inside padding
+        compose_ui_layout::LayoutModifierMeasureResult::new(
+            Size {
+                width: inner_width + horizontal_padding,
+                height: inner_height + vertical_padding,
+            },
+            self.padding.left,  // Place child offset by left padding
+            self.padding.top,   // Place child offset by top padding
+        )
     }
 
     fn min_intrinsic_width(&self, measurable: &dyn Measurable, height: f32) -> f32 {
@@ -241,7 +245,7 @@ impl MeasurementProxy for PaddingMeasurementProxy {
         _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Directly implement padding measurement logic (no node reconstruction)
         let horizontal_padding = self.padding.horizontal_sum();
         let vertical_padding = self.padding.vertical_sum();
@@ -259,11 +263,15 @@ impl MeasurementProxy for PaddingMeasurementProxy {
         let inner_width = inner_placeable.width();
         let inner_height = inner_placeable.height();
 
-        // Add padding back to the result
-        Size {
-            width: inner_width + horizontal_padding,
-            height: inner_height + vertical_padding,
-        }
+        // Return size with padding added, and placement offset to position child inside padding
+        compose_ui_layout::LayoutModifierMeasureResult::new(
+            Size {
+                width: inner_width + horizontal_padding,
+                height: inner_height + vertical_padding,
+            },
+            self.padding.left,  // Place child offset by left padding
+            self.padding.top,   // Place child offset by top padding
+        )
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
@@ -712,7 +720,7 @@ impl LayoutModifierNode for SizeNode {
         _context: &mut dyn ModifierNodeContext,
         measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         let target = self.target_constraints();
 
         let wrapped_constraints = if self.enforce_incoming {
@@ -795,10 +803,11 @@ impl LayoutModifierNode for SizeNode {
             measured_height
         };
 
-        Size {
+        // SizeNode doesn't offset placement - child is placed at (0, 0) relative to this node
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: result_width,
             height: result_height,
-        }
+        })
     }
 
     fn min_intrinsic_width(&self, measurable: &dyn Measurable, height: f32) -> f32 {
@@ -934,7 +943,7 @@ impl MeasurementProxy for SizeMeasurementProxy {
         _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Directly implement size measurement logic (no node reconstruction)
         let target = self.target_constraints();
 
@@ -1017,10 +1026,11 @@ impl MeasurementProxy for SizeMeasurementProxy {
             measured_height
         };
 
-        Size {
+        // SizeNode doesn't offset placement - child is placed at (0, 0) relative to this node
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: result_width,
             height: result_height,
-        }
+        })
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
@@ -1783,13 +1793,19 @@ impl LayoutModifierNode for OffsetNode {
         _context: &mut dyn ModifierNodeContext,
         measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Offset doesn't affect measurement, just placement
         let placeable = measurable.measure(constraints);
-        Size {
-            width: placeable.width(),
-            height: placeable.height(),
-        }
+
+        // Return child size unchanged, but specify the offset for placement
+        compose_ui_layout::LayoutModifierMeasureResult::new(
+            Size {
+                width: placeable.width(),
+                height: placeable.height(),
+            },
+            self.x,  // Place child offset by x
+            self.y,  // Place child offset by y
+        )
     }
 
     fn min_intrinsic_width(&self, measurable: &dyn Measurable, height: f32) -> f32 {
@@ -1823,9 +1839,7 @@ impl LayoutModifierNode for OffsetNode {
 /// directly implements measurement logic. Since offset doesn't affect measurement
 /// (only placement), this is a simple passthrough.
 struct OffsetMeasurementProxy {
-    #[allow(dead_code)]
     x: f32,
-    #[allow(dead_code)]
     y: f32,
     #[allow(dead_code)]
     rtl_aware: bool,
@@ -1837,13 +1851,19 @@ impl MeasurementProxy for OffsetMeasurementProxy {
         _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Offset doesn't affect measurement, just placement - simple passthrough
         let placeable = wrapped.measure(constraints);
-        Size {
-            width: placeable.width(),
-            height: placeable.height(),
-        }
+
+        // Return child size unchanged, but specify the offset for placement
+        compose_ui_layout::LayoutModifierMeasureResult::new(
+            Size {
+                width: placeable.width(),
+                height: placeable.height(),
+            },
+            self.x,  // Place child offset by x
+            self.y,  // Place child offset by y
+        )
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {
@@ -1973,7 +1993,7 @@ impl LayoutModifierNode for FillNode {
         _context: &mut dyn ModifierNodeContext,
         measurable: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         let (min_width, max_width) = if self.direction != FillDirection::Vertical
             && constraints.max_width != f32::INFINITY
         {
@@ -2004,10 +2024,11 @@ impl LayoutModifierNode for FillNode {
         };
 
         let placeable = measurable.measure(fill_constraints);
-        Size {
+        // FillNode doesn't offset placement - child is placed at (0, 0) relative to this node
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: placeable.width(),
             height: placeable.height(),
-        }
+        })
     }
 
     fn min_intrinsic_width(&self, measurable: &dyn Measurable, height: f32) -> f32 {
@@ -2049,7 +2070,7 @@ impl MeasurementProxy for FillMeasurementProxy {
         _context: &mut dyn ModifierNodeContext,
         wrapped: &dyn Measurable,
         constraints: Constraints,
-    ) -> Size {
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
         // Directly implement fill measurement logic (no node reconstruction)
         let (min_width, max_width) = if self.direction != FillDirection::Vertical
             && constraints.max_width != f32::INFINITY
@@ -2081,10 +2102,11 @@ impl MeasurementProxy for FillMeasurementProxy {
         };
 
         let placeable = wrapped.measure(fill_constraints);
-        Size {
+        // FillNode doesn't offset placement - child is placed at (0, 0) relative to this node
+        compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
             width: placeable.width(),
             height: placeable.height(),
-        }
+        })
     }
 
     fn min_intrinsic_width_proxy(&self, wrapped: &dyn Measurable, height: f32) -> f32 {

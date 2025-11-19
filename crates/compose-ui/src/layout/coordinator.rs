@@ -56,10 +56,17 @@ pub struct LayoutModifierCoordinator<'a> {
     node_id: NodeId,
     /// The index of this node in the modifier chain.
     node_index: usize,
+    /// Direct reference to the layout modifier node.
+    /// This Rc<RefCell<>> allows the coordinator to hold a shared reference
+    /// and call the node's measure() method directly without proxies.
+    node: Rc<RefCell<Box<dyn compose_foundation::ModifierNode>>>,
     /// The inner (wrapped) coordinator.
     wrapped: Box<dyn NodeCoordinator + 'a>,
     /// The measured size from the last measure pass.
     measured_size: Cell<Size>,
+    /// The placement offset from the last measure pass.
+    /// This tells us where to place the wrapped content relative to this coordinator's position.
+    placement_offset: Cell<Point>,
     /// Position relative to parent.
     position: Cell<Point>,
     /// Shared context for invalidation tracking.
@@ -72,6 +79,7 @@ impl<'a> LayoutModifierCoordinator<'a> {
         state_rc: Rc<RefCell<crate::layout::LayoutBuilderState>>,
         node_id: NodeId,
         node_index: usize,
+        node: Rc<RefCell<Box<dyn compose_foundation::ModifierNode>>>,
         wrapped: Box<dyn NodeCoordinator + 'a>,
         context: Rc<RefCell<LayoutNodeContext>>,
     ) -> Self {
@@ -79,8 +87,10 @@ impl<'a> LayoutModifierCoordinator<'a> {
             state_rc,
             node_id,
             node_index,
+            node,
             wrapped,
             measured_size: Cell::new(Size::ZERO),
+            placement_offset: Cell::new(Point::default()),
             position: Cell::new(Point::default()),
             context,
         }
@@ -111,178 +121,88 @@ impl<'a> NodeCoordinator for LayoutModifierCoordinator<'a> {
 
     fn place(&mut self, x: f32, y: f32) {
         self.set_position(Point { x, y });
-        // Propagate placement through the coordinator chain
-        self.wrapped.place(x, y);
+        // Apply the placement offset from the measure result when placing the wrapped content.
+        // This allows modifiers like Padding to offset their children appropriately.
+        let offset = self.placement_offset.get();
+        self.wrapped.place(x + offset.x, y + offset.y);
     }
 }
 
 impl<'a> Measurable for LayoutModifierCoordinator<'a> {
     fn measure(&self, constraints: Constraints) -> Box<dyn Placeable> {
-        // Extract a measurement proxy from the node via its create_measurement_proxy() method.
-        // In Jetpack Compose, coordinators can hold direct references to nodes, but in Rust
-        // we need to extract configuration data first, release the borrow, then perform
-        // measurement. This preserves node behavior while avoiding nested borrow panics.
+        // Call the node's measure method directly using the Rc<RefCell<>> we hold.
+        // This achieves true 1:1 parity with Jetpack Compose where coordinators
+        // hold direct references to nodes and call them without proxies.
+        let result = {
+            let node_borrow = self.node.borrow();
+            if let Some(layout_node) = node_borrow.as_layout_node() {
+                match self.context.try_borrow_mut() {
+                    Ok(mut ctx) => layout_node.measure(&mut *ctx, self.wrapped.as_ref(), constraints),
+                    Err(_) => {
+                        // Context already borrowed - use a temporary context
+                        let mut temp = LayoutNodeContext::new();
+                        let result = layout_node.measure(&mut temp, self.wrapped.as_ref(), constraints);
 
-        let proxy = {
-            let state = self.state_rc.borrow();
-            let mut applier = state.applier.borrow_typed();
-
-            applier
-                .with_node::<LayoutNode, _>(self.node_id, |layout_node| {
-                    let chain = layout_node.modifier_chain().chain();
-
-                    if let Some(entry_ref) = chain.node_ref_at(self.node_index) {
-                        if let Some(node) = entry_ref.node() {
-                            if let Some(layout_modifier) = node.as_layout_node() {
-                                // Use the node's own proxy factory method
-                                return layout_modifier.create_measurement_proxy();
+                        // Merge invalidations from temp context to shared
+                        if let Ok(mut shared) = self.context.try_borrow_mut() {
+                            for kind in temp.take_invalidations() {
+                                shared.invalidate(kind);
                             }
                         }
+
+                        result
                     }
-                    None
-                })
-                .unwrap_or(None)
-        };
-
-        let size = if let Some(proxy) = proxy {
-            // Use the proxy to measure with the applier borrow released
-            match self.context.try_borrow_mut() {
-                Ok(mut ctx) => proxy.measure_proxy(&mut *ctx, self.wrapped.as_ref(), constraints),
-                Err(_) => {
-                    // Context already borrowed - use a temporary context
-                    let mut temp = LayoutNodeContext::new();
-                    let size = proxy.measure_proxy(&mut temp, self.wrapped.as_ref(), constraints);
-
-                    // Merge invalidations from temp context to shared
-                    if let Ok(mut shared) = self.context.try_borrow_mut() {
-                        for kind in temp.take_invalidations() {
-                            shared.invalidate(kind);
-                        }
-                    }
-
-                    size
                 }
-            }
-        } else {
-            // Node doesn't provide a proxy - pass through to wrapped coordinator
-            let placeable = self.wrapped.measure(constraints);
-            Size {
-                width: placeable.width(),
-                height: placeable.height(),
+            } else {
+                // Node is not a layout modifier - pass through to wrapped coordinator
+                let placeable = self.wrapped.measure(constraints);
+                compose_ui_layout::LayoutModifierMeasureResult::with_size(Size {
+                    width: placeable.width(),
+                    height: placeable.height(),
+                })
             }
         };
 
-        self.measured_size.set(size);
-        Box::new(CoordinatorPlaceable { size })
+        // Store both the size and the placement offset for use during placement
+        self.measured_size.set(result.size);
+        self.placement_offset.set(Point {
+            x: result.placement_offset_x,
+            y: result.placement_offset_y,
+        });
+        Box::new(CoordinatorPlaceable { size: result.size })
     }
 
     fn min_intrinsic_width(&self, height: f32) -> f32 {
-        let proxy = {
-            let state = self.state_rc.borrow();
-            let mut applier = state.applier.borrow_typed();
-
-            applier
-                .with_node::<LayoutNode, _>(self.node_id, |layout_node| {
-                    let chain = layout_node.modifier_chain().chain();
-
-                    if let Some(entry_ref) = chain.node_ref_at(self.node_index) {
-                        if let Some(node) = entry_ref.node() {
-                            if let Some(layout_modifier) = node.as_layout_node() {
-                                return layout_modifier.create_measurement_proxy();
-                            }
-                        }
-                    }
-                    None
-                })
-                .unwrap_or(None)
-        };
-
-        if let Some(proxy) = proxy {
-            proxy.min_intrinsic_width_proxy(self.wrapped.as_ref(), height)
+        let node_borrow = self.node.borrow();
+        if let Some(layout_node) = node_borrow.as_layout_node() {
+            layout_node.min_intrinsic_width(self.wrapped.as_ref(), height)
         } else {
             self.wrapped.min_intrinsic_width(height)
         }
     }
 
     fn max_intrinsic_width(&self, height: f32) -> f32 {
-        let proxy = {
-            let state = self.state_rc.borrow();
-            let mut applier = state.applier.borrow_typed();
-
-            applier
-                .with_node::<LayoutNode, _>(self.node_id, |layout_node| {
-                    let chain = layout_node.modifier_chain().chain();
-
-                    if let Some(entry_ref) = chain.node_ref_at(self.node_index) {
-                        if let Some(node) = entry_ref.node() {
-                            if let Some(layout_modifier) = node.as_layout_node() {
-                                return layout_modifier.create_measurement_proxy();
-                            }
-                        }
-                    }
-                    None
-                })
-                .unwrap_or(None)
-        };
-
-        if let Some(proxy) = proxy {
-            proxy.max_intrinsic_width_proxy(self.wrapped.as_ref(), height)
+        let node_borrow = self.node.borrow();
+        if let Some(layout_node) = node_borrow.as_layout_node() {
+            layout_node.max_intrinsic_width(self.wrapped.as_ref(), height)
         } else {
             self.wrapped.max_intrinsic_width(height)
         }
     }
 
     fn min_intrinsic_height(&self, width: f32) -> f32 {
-        let proxy = {
-            let state = self.state_rc.borrow();
-            let mut applier = state.applier.borrow_typed();
-
-            applier
-                .with_node::<LayoutNode, _>(self.node_id, |layout_node| {
-                    let chain = layout_node.modifier_chain().chain();
-
-                    if let Some(entry_ref) = chain.node_ref_at(self.node_index) {
-                        if let Some(node) = entry_ref.node() {
-                            if let Some(layout_modifier) = node.as_layout_node() {
-                                return layout_modifier.create_measurement_proxy();
-                            }
-                        }
-                    }
-                    None
-                })
-                .unwrap_or(None)
-        };
-
-        if let Some(proxy) = proxy {
-            proxy.min_intrinsic_height_proxy(self.wrapped.as_ref(), width)
+        let node_borrow = self.node.borrow();
+        if let Some(layout_node) = node_borrow.as_layout_node() {
+            layout_node.min_intrinsic_height(self.wrapped.as_ref(), width)
         } else {
             self.wrapped.min_intrinsic_height(width)
         }
     }
 
     fn max_intrinsic_height(&self, width: f32) -> f32 {
-        let proxy = {
-            let state = self.state_rc.borrow();
-            let mut applier = state.applier.borrow_typed();
-
-            applier
-                .with_node::<LayoutNode, _>(self.node_id, |layout_node| {
-                    let chain = layout_node.modifier_chain().chain();
-
-                    if let Some(entry_ref) = chain.node_ref_at(self.node_index) {
-                        if let Some(node) = entry_ref.node() {
-                            if let Some(layout_modifier) = node.as_layout_node() {
-                                return layout_modifier.create_measurement_proxy();
-                            }
-                        }
-                    }
-                    None
-                })
-                .unwrap_or(None)
-        };
-
-        if let Some(proxy) = proxy {
-            proxy.max_intrinsic_height_proxy(self.wrapped.as_ref(), width)
+        let node_borrow = self.node.borrow();
+        if let Some(layout_node) = node_borrow.as_layout_node() {
+            layout_node.max_intrinsic_height(self.wrapped.as_ref(), width)
         } else {
             self.wrapped.max_intrinsic_height(width)
         }

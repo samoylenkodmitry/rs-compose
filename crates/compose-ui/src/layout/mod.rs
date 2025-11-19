@@ -723,7 +723,7 @@ impl LayoutBuilderState {
     /// Iterates through LayoutModifierNode instances from the ModifierNodeChain and calls
     /// their measure() methods, mirroring Jetpack Compose's LayoutModifierNodeCoordinator pattern.
     ///
-    /// Returns Ok(MeasureResult) if successful, Err(()) if modifier nodes should not be used.
+    /// Always succeeds, building a coordinator chain (possibly just InnerCoordinator) to measure.
     ///
     fn measure_through_modifier_chain(
         state_rc: &Rc<RefCell<Self>>,
@@ -731,12 +731,12 @@ impl LayoutBuilderState {
         measurables: &[Box<dyn Measurable>],
         measure_policy: &Rc<dyn MeasurePolicy>,
         constraints: Constraints,
-    ) -> Result<ModifierChainMeasurement, ()> {
+    ) -> ModifierChainMeasurement {
         use crate::modifier_nodes::{OffsetNode, PaddingNode};
         use compose_foundation::NodeCapabilities;
 
         // Collect layout node information from the modifier chain
-        let mut layout_node_indices: Vec<usize> = Vec::new();
+        let mut layout_node_data: Vec<(usize, Rc<RefCell<Box<dyn compose_foundation::ModifierNode>>>)> = Vec::new();
         let mut padding = EdgeInsets::default();
         let mut offset = Point::default();
 
@@ -752,15 +752,18 @@ impl LayoutBuilderState {
                         return;
                     }
 
-                    // Collect indices of layout modifier nodes
+                    // Collect indices and node Rc clones for layout modifier nodes
                     chain_handle.chain().for_each_forward_matching(
                         NodeCapabilities::LAYOUT,
                         |node_ref| {
                             if let Some(index) = node_ref.entry_index() {
-                                layout_node_indices.push(index);
+                                // Get the Rc clone for this node
+                                if let Some(node_rc) = chain_handle.chain().get_node_rc(index) {
+                                    layout_node_data.push((index, node_rc));
+                                }
 
                                 // Calculate padding and offset for backward compat
-                                if let Some(node) = node_ref.node() {
+                                node_ref.with_node(|node| {
                                     let any = node.as_any();
                                     if let Some(padding_node) = any.downcast_ref::<PaddingNode>() {
                                         padding += padding_node.padding();
@@ -769,21 +772,20 @@ impl LayoutBuilderState {
                                         offset.x += delta.x;
                                         offset.y += delta.y;
                                     }
-                                }
+                                });
                             }
                         },
                     );
-                })
-                .map_err(|_| ())?;
+                });
         }
 
-        if layout_node_indices.is_empty() {
-            return Err(());
-        }
+        // Even if there are no layout modifiers, we use the coordinator chain
+        // (just InnerCoordinator alone). This eliminates the need for the
+        // ResolvedModifiers fallback path.
 
         // Build the coordinator chain from innermost to outermost
         // Reverse order: rightmost modifier is measured first (innermost), leftmost is outer
-        layout_node_indices.reverse();
+        layout_node_data.reverse();
 
         // Create a shared context for this measurement pass to track invalidations
         let shared_context = Rc::new(RefCell::new(LayoutNodeContext::new()));
@@ -800,12 +802,13 @@ impl LayoutBuilderState {
 
         // Wrap each layout modifier node in a coordinator, building the chain
         let mut current_coordinator = inner_coordinator;
-        for node_index in layout_node_indices {
+        for (node_index, node_rc) in layout_node_data {
             current_coordinator = Box::new(
                 crate::layout::coordinator::LayoutModifierCoordinator::new(
                     Rc::clone(state_rc),
                     node_id,
                     node_index,
+                    node_rc,
                     current_coordinator,
                     Rc::clone(&shared_context),
                 )
@@ -845,14 +848,14 @@ impl LayoutBuilderState {
             .ok();
         }
 
-        Ok(ModifierChainMeasurement {
+        ModifierChainMeasurement {
             result: MeasureResult {
                 size: final_size,
                 placements,
             },
             padding,
             offset,
-        })
+        }
     }
 
     fn measure_layout_node(
@@ -971,8 +974,8 @@ impl LayoutBuilderState {
 
         if (chain_constraints.max_width != constraints.max_width
             || chain_constraints.max_height != constraints.max_height)
-            && matches!(modifier_chain_result, Ok(ref result) if (constraints.max_width.is_finite() && result.result.size.width > constraints.max_width)
-                || (constraints.max_height.is_finite() && result.result.size.height > constraints.max_height))
+            && ((constraints.max_width.is_finite() && modifier_chain_result.result.size.width > constraints.max_width)
+                || (constraints.max_height.is_finite() && modifier_chain_result.result.size.height > constraints.max_height))
         {
             modifier_chain_result = Self::measure_through_modifier_chain(
                 &state_rc,
@@ -983,10 +986,9 @@ impl LayoutBuilderState {
             );
         }
 
-        let (width, height, policy_result, padding, offset) = if let Ok(result) =
-            modifier_chain_result
-        {
-            // Modifier chain succeeded - use the node-driven measurement.
+        // Modifier chain always succeeds - use the node-driven measurement.
+        let (width, height, policy_result, padding, offset) = {
+            let result = modifier_chain_result;
             // The size is already correct from the modifier chain (modifiers like SizeNode
             // have already enforced their constraints), so we use it directly.
             if let Some(err) = error.borrow_mut().take() {
@@ -1000,119 +1002,6 @@ impl LayoutBuilderState {
                 result.padding,
                 result.offset,
             )
-        } else {
-            // No layout modifier nodes - fall back to ResolvedModifiers logic.
-            let props = layout_props;
-            let padding = resolved_modifiers.padding();
-            let offset = resolved_modifiers.offset();
-            let mut inner_constraints =
-                normalize_constraints(subtract_padding(constraints, padding));
-
-            if let DimensionConstraint::Points(width) = props.width() {
-                let constrained_width = width - padding.horizontal_sum();
-                inner_constraints.max_width = inner_constraints.max_width.min(constrained_width);
-                inner_constraints.min_width = inner_constraints.min_width.min(constrained_width);
-            }
-            if let DimensionConstraint::Points(height) = props.height() {
-                let constrained_height = height - padding.vertical_sum();
-                inner_constraints.max_height = inner_constraints.max_height.min(constrained_height);
-                inner_constraints.min_height = inner_constraints.min_height.min(constrained_height);
-            }
-
-            let needs_intrinsic_width = matches!(props.width(), DimensionConstraint::Intrinsic(_));
-            if needs_intrinsic_width {
-                let intrinsic_width = measure_policy
-                    .min_intrinsic_width(measurables.as_slice(), inner_constraints.max_height);
-                let constrained_width = intrinsic_width.max(inner_constraints.min_width);
-                if constrained_width.is_finite() && constrained_width < inner_constraints.max_width
-                {
-                    inner_constraints.max_width = constrained_width;
-                }
-            }
-
-            let needs_intrinsic_height =
-                matches!(props.height(), DimensionConstraint::Intrinsic(_));
-            if needs_intrinsic_height {
-                let intrinsic_height = measure_policy
-                    .min_intrinsic_height(measurables.as_slice(), inner_constraints.max_width);
-                let constrained_height = intrinsic_height.max(inner_constraints.min_height);
-                if constrained_height.is_finite()
-                    && constrained_height < inner_constraints.max_height
-                {
-                    inner_constraints.max_height = constrained_height;
-                }
-            }
-
-            let mut measure_constraints = inner_constraints;
-            let mut relaxed_width = None;
-            if matches!(props.width(), DimensionConstraint::Unspecified)
-                && inner_constraints.min_width < inner_constraints.max_width
-                && constraints.min_width < constraints.max_width
-                && inner_constraints.max_width.is_finite()
-            {
-                relaxed_width = Some(inner_constraints.max_width);
-                measure_constraints.max_width = f32::INFINITY;
-            }
-
-            let mut relaxed_height = None;
-            if matches!(props.height(), DimensionConstraint::Unspecified)
-                && inner_constraints.min_height < inner_constraints.max_height
-                && constraints.min_height < constraints.max_height
-                && inner_constraints.max_height.is_finite()
-            {
-                relaxed_height = Some(inner_constraints.max_height);
-                measure_constraints.max_height = f32::INFINITY;
-            }
-
-            let mut policy_result =
-                measure_policy.measure(measurables.as_slice(), measure_constraints);
-
-            if relaxed_width.is_some() || relaxed_height.is_some() {
-                let width_exceeds = relaxed_width
-                    .map(|limit| policy_result.size.width > limit && limit.is_finite())
-                    .unwrap_or(false);
-                let height_exceeds = relaxed_height
-                    .map(|limit| policy_result.size.height > limit && limit.is_finite())
-                    .unwrap_or(false);
-
-                if width_exceeds || height_exceeds {
-                    let mut tightened_constraints = measure_constraints;
-                    if let Some(limit) = relaxed_width {
-                        tightened_constraints.max_width = limit;
-                    }
-                    if let Some(limit) = relaxed_height {
-                        tightened_constraints.max_height = limit;
-                    }
-                    policy_result =
-                        measure_policy.measure(measurables.as_slice(), tightened_constraints);
-                }
-            }
-
-            if let Some(err) = error.borrow_mut().take() {
-                return Err(err);
-            }
-
-            let mut width = policy_result.size.width + padding.horizontal_sum();
-            let mut height = policy_result.size.height + padding.vertical_sum();
-
-            width = resolve_dimension(
-                width,
-                props.width(),
-                props.min_width(),
-                props.max_width(),
-                constraints.min_width,
-                constraints.max_width,
-            );
-            height = resolve_dimension(
-                height,
-                props.height(),
-                props.min_height(),
-                props.max_height(),
-                constraints.min_height,
-                constraints.max_height,
-            );
-
-            (width, height, policy_result, padding, offset)
         };
 
         let mut measured_children = Vec::new();
