@@ -3,7 +3,7 @@ use compose_core::{
     self, compositionLocalOf, CompositionLocal, CompositionLocalProvider, DisposableEffect,
     DisposableEffectResult, LaunchedEffect, LaunchedEffectAsync, MutableState,
 };
-use compose_foundation::{PointerEvent, PointerEventKind};
+use compose_foundation::PointerEventKind;
 use compose_ui::{
     composable, BoxSpec, Brush, Button, Color, Column, ColumnSpec, CornerRadii, GraphicsLayer,
     IntrinsicSize, LinearArrangement, Modifier, Point, PointerInputScope, RoundedCornerShape, Row,
@@ -22,6 +22,7 @@ pub enum DemoTab {
     CompositionLocal,
     Async,
     Layout,
+    ModifierShowcase,
 }
 
 impl DemoTab {
@@ -31,6 +32,7 @@ impl DemoTab {
             DemoTab::CompositionLocal => "CompositionLocal Test",
             DemoTab::Async => "Async Runtime",
             DemoTab::Layout => "Recursive Layout",
+            DemoTab::ModifierShowcase => "Modifiers Showcase",
         }
     }
 }
@@ -151,6 +153,7 @@ pub fn combined_app() {
                     render_tab_button(DemoTab::CompositionLocal);
                     render_tab_button(DemoTab::Async);
                     render_tab_button(DemoTab::Layout);
+                    render_tab_button(DemoTab::ModifierShowcase);
                 },
             );
 
@@ -165,6 +168,7 @@ pub fn combined_app() {
                 DemoTab::CompositionLocal => composition_local_example(),
                 DemoTab::Async => async_runtime_example(),
                 DemoTab::Layout => recursive_layout_example(),
+                DemoTab::ModifierShowcase => modifier_showcase_tab(),
             });
         },
     );
@@ -1246,6 +1250,461 @@ fn composition_local_observer() {
     DisposableEffect!((), move |_| {
         state.set(state.get() + 1);
         DisposableEffectResult::default()
+    });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum ShowcaseType {
+    SimpleCard,
+    PositionedBoxes,
+    ItemList,
+    ComplexChain,
+    DynamicModifiers,
+    LongList,
+}
+
+impl ShowcaseType {
+    fn label(self) -> &'static str {
+        match self {
+            ShowcaseType::SimpleCard => "Simple Card",
+            ShowcaseType::PositionedBoxes => "Positioned Boxes",
+            ShowcaseType::ItemList => "Item List (5)",
+            ShowcaseType::ComplexChain => "Complex Chain",
+            ShowcaseType::DynamicModifiers => "Dynamic Modifiers",
+            ShowcaseType::LongList => "Long List (50)",
+        }
+    }
+}
+
+#[composable]
+fn modifier_showcase_tab() {
+    let selected_showcase = compose_core::useState(|| ShowcaseType::SimpleCard);
+
+    Row(
+        Modifier::empty()
+            .fill_max_width()
+            .then(Modifier::empty().padding(8.0)),
+        RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(12.0)),
+        move || {
+            // Left panel - showcase selector
+            Column(
+                Modifier::empty()
+                    .width(180.0)
+                    .then(Modifier::empty().padding(16.0))
+                    .then(Modifier::empty().background(Color(0.08, 0.10, 0.18, 1.0)))
+                    .then(Modifier::empty().rounded_corners(20.0)),
+                ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(8.0)),
+                {
+                    let showcase_state = selected_showcase.clone();
+                    move || {
+                        Text(
+                            "Select Showcase",
+                            Modifier::empty()
+                                .padding(8.0)
+                                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.08)))
+                                .then(Modifier::empty().rounded_corners(12.0)),
+                        );
+
+                        Spacer(Size {
+                            width: 0.0,
+                            height: 8.0,
+                        });
+
+                        let showcase_types = [
+                            ShowcaseType::SimpleCard,
+                            ShowcaseType::PositionedBoxes,
+                            ShowcaseType::ItemList,
+                            ShowcaseType::ComplexChain,
+                            ShowcaseType::DynamicModifiers,
+                            ShowcaseType::LongList,
+                        ];
+
+                        for showcase_type in showcase_types {
+                            let is_selected = showcase_state.get() == showcase_type;
+                            Button(
+                                Modifier::empty()
+                                    .fill_max_width()
+                                    .then(Modifier::empty().rounded_corners(10.0))
+                                    .then(Modifier::empty().draw_behind(move |scope| {
+                                        scope.draw_round_rect(
+                                            Brush::solid(if is_selected {
+                                                Color(0.25, 0.45, 0.85, 1.0)
+                                            } else {
+                                                Color(0.15, 0.18, 0.25, 0.8)
+                                            }),
+                                            CornerRadii::uniform(10.0),
+                                        );
+                                    }))
+                                    .then(Modifier::empty().padding(10.0)),
+                                {
+                                    let showcase_state = showcase_state.clone();
+                                    move || {
+                                        if showcase_state.get() != showcase_type {
+                                            showcase_state.set(showcase_type);
+                                        }
+                                    }
+                                },
+                                {
+                                    let label = showcase_type.label();
+                                    move || {
+                                        Text(label, Modifier::empty().padding(4.0));
+                                    }
+                                },
+                            );
+                        }
+                    }
+                },
+            );
+
+            // Right panel - showcase content
+            Column(
+                Modifier::empty()
+                    .fill_max_width()
+                    .then(Modifier::empty().padding(24.0))
+                    .then(Modifier::empty().background(Color(0.06, 0.08, 0.16, 0.9)))
+                    .then(Modifier::empty().rounded_corners(20.0))
+                    .then(Modifier::empty().padding(16.0)),
+                ColumnSpec::default(),
+                {
+                    let showcase_to_render = selected_showcase.get();
+                    move || {
+                        compose_core::with_key(&showcase_to_render, || {
+                            match showcase_to_render {
+                                ShowcaseType::SimpleCard => simple_card_showcase(),
+                                ShowcaseType::PositionedBoxes => positioned_boxes_showcase(),
+                                ShowcaseType::ItemList => item_list_showcase(),
+                                ShowcaseType::ComplexChain => complex_chain_showcase(),
+                                ShowcaseType::DynamicModifiers => dynamic_modifiers_showcase(),
+                                ShowcaseType::LongList => long_list_showcase(),
+                            }
+                        });
+                    }
+                },
+            );
+        },
+    );
+}
+
+#[composable]
+fn simple_card_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Simple Card Pattern ===",
+            Modifier::empty()
+                .padding(12.0)
+                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
+                .then(Modifier::empty().rounded_corners(14.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        compose_ui::Box(
+            Modifier::empty()
+                .padding(16.0)
+                .then(Modifier::empty().size(Size {
+                    width: 300.0,
+                    height: 200.0,
+                }))
+                .then(Modifier::empty().background(Color(0.2, 0.25, 0.35, 0.9)))
+                .then(Modifier::empty().rounded_corners(16.0)),
+            BoxSpec::default(),
+            || {
+                Column(
+                    Modifier::empty().padding(8.0),
+                    ColumnSpec::default(),
+                    || {
+                        Text(
+                            "Card Title",
+                            Modifier::empty()
+                                .padding(6.0)
+                                .then(Modifier::empty().background(Color(0.3, 0.5, 0.8, 0.5)))
+                                .then(Modifier::empty().rounded_corners(8.0)),
+                        );
+                        Text(
+                            "Card content goes here with padding",
+                            Modifier::empty().padding(4.0),
+                        );
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[composable]
+fn positioned_boxes_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Positioned Boxes ===",
+            Modifier::empty()
+                .padding(12.0)
+                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
+                .then(Modifier::empty().rounded_corners(14.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        compose_ui::Box(
+            Modifier::empty()
+                .size_points(100.0, 100.0)
+                .then(Modifier::empty().offset(50.0, 100.0))
+                .then(Modifier::empty().padding(8.0))
+                .then(Modifier::empty().background(Color(0.4, 0.2, 0.6, 0.8)))
+                .then(Modifier::empty().rounded_corners(12.0)),
+            BoxSpec::default(),
+            || {
+                Text("Box A", Modifier::empty().padding(8.0));
+            },
+        );
+
+        compose_ui::Box(
+            Modifier::empty()
+                .size_points(100.0, 100.0)
+                .then(Modifier::empty().offset(200.0, 100.0))
+                .then(Modifier::empty().padding(8.0))
+                .then(Modifier::empty().background(Color(0.2, 0.5, 0.4, 0.8)))
+                .then(Modifier::empty().rounded_corners(12.0)),
+            BoxSpec::default(),
+            || {
+                Text("Box B", Modifier::empty().padding(8.0));
+            },
+        );
+    });
+}
+
+#[composable]
+fn item_list_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Item List (5 items) ===",
+            Modifier::empty()
+                .padding(12.0)
+                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
+                .then(Modifier::empty().rounded_corners(14.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Column(
+            Modifier::empty().padding(16.0),
+            ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(8.0)),
+            || {
+                for i in 0..5 {
+                    Row(
+                        Modifier::empty()
+                            .padding(8.0)
+                            .then(Modifier::empty().size_points(400.0, 50.0))
+                            .then(Modifier::empty().background(Color(0.15, 0.2, 0.3, 0.7)))
+                            .then(Modifier::empty().rounded_corners(10.0)),
+                        RowSpec::default(),
+                        move || {
+                            let text = match i {
+                                0 => "Item #0",
+                                1 => "Item #1",
+                                2 => "Item #2",
+                                3 => "Item #3",
+                                4 => "Item #4",
+                                _ => "Item",
+                            };
+                            Text(text, Modifier::empty().padding_horizontal(12.0));
+                        },
+                    );
+                }
+            },
+        );
+    });
+}
+
+#[composable]
+fn complex_chain_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Complex Modifier Chain ===",
+            Modifier::empty()
+                .padding(12.0)
+                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
+                .then(Modifier::empty().rounded_corners(14.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Text(
+            "Deep chain: padding → size → offset → padding",
+            Modifier::empty().padding(8.0),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 12.0,
+        });
+
+        compose_ui::Box(
+            Modifier::empty()
+                .padding(10.0)
+                .then(Modifier::empty().size_points(200.0, 100.0))
+                .then(Modifier::empty().offset(20.0, 30.0))
+                .then(Modifier::empty().padding(5.0))
+                .then(Modifier::empty().background(Color(0.6, 0.3, 0.2, 0.8)))
+                .then(Modifier::empty().rounded_corners(12.0)),
+            BoxSpec::default(),
+            || {
+                Text("Complex modifiers!", Modifier::empty().padding(8.0));
+            },
+        );
+    });
+}
+
+#[composable]
+fn dynamic_modifiers_showcase() {
+    let frame = compose_core::useState(|| 0i32);
+
+    Column(Modifier::empty(), ColumnSpec::default(), move || {
+        Text(
+            "=== Dynamic Modifiers ===",
+            Modifier::empty()
+                .padding(12.0)
+                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
+                .then(Modifier::empty().rounded_corners(14.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        let current_frame = frame.get();
+        let x = (current_frame as f32 * 10.0) % 200.0;
+        let y = 50.0;
+
+        compose_ui::Box(
+            Modifier::empty()
+                .size(Size {
+                    width: 50.0,
+                    height: 50.0,
+                })
+                .then(Modifier::empty().offset(x, y))
+                .then(Modifier::empty().padding(4.0))
+                .then(Modifier::empty().background(Color(0.3, 0.6, 0.9, 0.9)))
+                .then(Modifier::empty().rounded_corners(10.0)),
+            BoxSpec::default(),
+            || {
+                Text("Moving!", Modifier::empty().padding(4.0));
+            },
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Text(
+            format!("Frame: {}, X: {:.1}", current_frame, x),
+            Modifier::empty()
+                .padding(8.0)
+                .then(Modifier::empty().background(Color(0.2, 0.2, 0.3, 0.6)))
+                .then(Modifier::empty().rounded_corners(10.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 12.0,
+        });
+
+        Button(
+            Modifier::empty()
+                .rounded_corners(12.0)
+                .then(Modifier::empty().draw_behind(|scope| {
+                    scope.draw_round_rect(
+                        Brush::solid(Color(0.25, 0.45, 0.85, 1.0)),
+                        CornerRadii::uniform(12.0),
+                    );
+                }))
+                .then(Modifier::empty().padding(10.0)),
+            {
+                let frame_state = frame.clone();
+                move || {
+                    frame_state.set(frame_state.get() + 1);
+                }
+            },
+            || {
+                Text("Advance Frame", Modifier::empty().padding(6.0));
+            },
+        );
+    });
+}
+
+#[composable]
+fn long_list_showcase() {
+    Column(Modifier::empty(), ColumnSpec::default(), || {
+        Text(
+            "=== Long List (50 items) ===",
+            Modifier::empty()
+                .padding(12.0)
+                .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.1)))
+                .then(Modifier::empty().rounded_corners(14.0)),
+        );
+
+        Spacer(Size {
+            width: 0.0,
+            height: 16.0,
+        });
+
+        Column(
+            Modifier::empty().padding(16.0),
+            ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(6.0)),
+            || {
+                for i in 0..50 {
+                    Row(
+                        Modifier::empty()
+                            .padding_symmetric(8.0, 4.0)
+                            .then(Modifier::empty().size(Size {
+                                width: 400.0,
+                                height: 40.0,
+                            }))
+                            .then(Modifier::empty().background(Color(
+                                0.12 + (i as f32 * 0.005),
+                                0.15,
+                                0.25,
+                                0.7,
+                            )))
+                            .then(Modifier::empty().rounded_corners(8.0)),
+                        RowSpec::default(),
+                        move || {
+                            let text = if i < 10 {
+                                match i {
+                                    0 => "Item 0",
+                                    1 => "Item 1",
+                                    2 => "Item 2",
+                                    3 => "Item 3",
+                                    4 => "Item 4",
+                                    5 => "Item 5",
+                                    6 => "Item 6",
+                                    7 => "Item 7",
+                                    8 => "Item 8",
+                                    9 => "Item 9",
+                                    _ => "Item",
+                                }
+                            } else {
+                                "Item 10+"
+                            };
+                            Text(text, Modifier::empty().padding_horizontal(12.0));
+                        },
+                    );
+                }
+            },
+        );
     });
 }
 
