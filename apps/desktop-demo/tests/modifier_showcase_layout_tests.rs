@@ -187,8 +187,8 @@ fn test_positioned_boxes_layout() {
     println!("=== Positioned Boxes Layout ===");
     println!("{}", dump_layout_tree(layout.root(), 0));
 
-    // NOTE: Hierarchy validation is currently disabled because it exposes positioning bugs
-    // validate_layout_hierarchy(layout.root()).expect("Layout hierarchy should be valid");
+    // Validate hierarchy - should now pass after fixing the overflow bug
+    validate_layout_hierarchy(layout.root()).expect("Layout hierarchy should be valid");
 
     // Positioned boxes showcase has boxes named Box A and Box B
     let box_a = find_box_with_text(layout.root(), "Box A")
@@ -201,11 +201,11 @@ fn test_positioned_boxes_layout() {
     println!("Box B: pos=({:.1}, {:.1}) size=({:.1}x{:.1})",
         box_b.rect.x, box_b.rect.y, box_b.rect.width, box_b.rect.height);
 
-    // NOTE: This test currently exposes a BUG - boxes extend outside parent bounds
-    // Box A is at (50, 160) with size 100x100 = right=150, bottom=260
-    // Box B is at (200, 260) with size 100x100 = right=300, bottom=360
-    // Parent is at (0, 0) with size 216x260
-    // This means Box B extends way past the parent!
+    // Verify boxes are properly positioned within container
+    // Box A should be at top-left with offset (20, 20)
+    // Box B should be at bottom-right with offset (180, 120)
+    assert!(box_a.rect.x < box_b.rect.x, "Box A should be left of Box B");
+    assert!(box_a.rect.y < box_b.rect.y, "Box A should be above Box B");
 
     println!("✓ Positioned boxes layout is correct");
 }
@@ -279,8 +279,8 @@ fn test_complex_chain_modifier_ordering() {
     println!("=== Complex Chain Layout ===");
     println!("{}", dump_layout_tree(layout.root(), 0));
 
-    // NOTE: Hierarchy validation is currently disabled because it exposes positioning bugs
-    // validate_layout_hierarchy(layout.root()).expect("Layout hierarchy should be valid");
+    // Validate hierarchy - should now pass after fixing the overflow bug
+    validate_layout_hierarchy(layout.root()).expect("Layout hierarchy should be valid");
 
     // Render the scene to check draw order
     let renderer = HeadlessRenderer::new();
@@ -341,12 +341,9 @@ fn test_all_showcases_have_valid_layouts() {
         let layout = compute_layout_from_rule(&mut rule, 800.0, 600.0)
             .expect(&format!("{} should compute layout", name));
 
-        // NOTE: Hierarchy validation currently disabled to expose all bugs
-        // Skip validation for showcases with known bugs
-        if name != "Positioned Boxes" && name != "Complex Chain" {
-            validate_layout_hierarchy(layout.root())
-                .expect(&format!("{} layout hierarchy should be valid", name));
-        }
+        // Validate hierarchy - all showcases should now have valid hierarchies
+        validate_layout_hierarchy(layout.root())
+            .expect(&format!("{} layout hierarchy should be valid", name));
 
         // Ensure root has non-zero size
         assert!(

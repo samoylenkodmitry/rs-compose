@@ -1451,29 +1451,40 @@ pub fn positioned_boxes_showcase() {
             height: 16.0,
         });
 
+        // Wrap positioned boxes in a container with explicit size
+        // This allows overlapping boxes with offset positioning
         compose_ui::Box(
             Modifier::empty()
-                .size_points(100.0, 100.0)
-                .then(Modifier::empty().offset(50.0, 100.0))
-                .then(Modifier::empty().padding(8.0))
-                .then(Modifier::empty().background(Color(0.4, 0.2, 0.6, 0.8)))
-                .then(Modifier::empty().rounded_corners(12.0)),
+                .size_points(320.0, 240.0)
+                .then(Modifier::empty().background(Color(0.05, 0.05, 0.15, 0.5)))
+                .then(Modifier::empty().rounded_corners(8.0)),
             BoxSpec::default(),
             || {
-                Text("Box A", Modifier::empty().padding(8.0));
-            },
-        );
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size_points(100.0, 100.0)
+                        .then(Modifier::empty().offset(20.0, 20.0))
+                        .then(Modifier::empty().padding(8.0))
+                        .then(Modifier::empty().background(Color(0.4, 0.2, 0.6, 0.8)))
+                        .then(Modifier::empty().rounded_corners(12.0)),
+                    BoxSpec::default(),
+                    || {
+                        Text("Box A", Modifier::empty().padding(8.0));
+                    },
+                );
 
-        compose_ui::Box(
-            Modifier::empty()
-                .size_points(100.0, 100.0)
-                .then(Modifier::empty().offset(200.0, 100.0))
-                .then(Modifier::empty().padding(8.0))
-                .then(Modifier::empty().background(Color(0.2, 0.5, 0.4, 0.8)))
-                .then(Modifier::empty().rounded_corners(12.0)),
-            BoxSpec::default(),
-            || {
-                Text("Box B", Modifier::empty().padding(8.0));
+                compose_ui::Box(
+                    Modifier::empty()
+                        .size_points(100.0, 100.0)
+                        .then(Modifier::empty().offset(180.0, 120.0))
+                        .then(Modifier::empty().padding(8.0))
+                        .then(Modifier::empty().background(Color(0.2, 0.5, 0.4, 0.8)))
+                        .then(Modifier::empty().rounded_corners(12.0)),
+                    BoxSpec::default(),
+                    || {
+                        Text("Box B", Modifier::empty().padding(8.0));
+                    },
+                );
             },
         );
     });
@@ -1555,7 +1566,7 @@ pub fn complex_chain_showcase() {
             Modifier::empty()
                 .padding(10.0)
                 .then(Modifier::empty().size_points(200.0, 100.0))
-                .then(Modifier::empty().offset(20.0, 30.0))
+                .then(Modifier::empty().offset(20.0, 0.0))
                 .then(Modifier::empty().padding(5.0))
                 .then(Modifier::empty().background(Color(0.6, 0.3, 0.2, 0.8)))
                 .then(Modifier::empty().rounded_corners(12.0)),
