@@ -192,38 +192,37 @@ impl ModifierChainHandle {
         let mut offset = Point::default();
 
         self.chain.for_each_forward(|node_ref| {
-            let Some(node) = node_ref.node() else {
-                return;
-            };
-            let any = node.as_any();
-            if let Some(padding_node) = any.downcast_ref::<PaddingNode>() {
-                padding += padding_node.padding();
-            } else if let Some(size_node) = any.downcast_ref::<SizeNode>() {
-                apply_size_node(&mut layout, size_node);
-            } else if let Some(fill_node) = any.downcast_ref::<FillNode>() {
-                apply_fill_node(&mut layout, fill_node);
-            } else if let Some(intrinsic_node) = any.downcast_ref::<IntrinsicSizeNode>() {
-                apply_intrinsic_size_node(&mut layout, intrinsic_node);
-            } else if let Some(weight_node) = any.downcast_ref::<WeightNode>() {
-                layout.weight = Some(weight_node.layout_weight());
-            } else if let Some(alignment_node) = any.downcast_ref::<AlignmentNode>() {
-                if let Some(alignment) = alignment_node.box_alignment() {
-                    layout.box_alignment = Some(alignment);
+            node_ref.with_node(|node| {
+                let any = node.as_any();
+                if let Some(padding_node) = any.downcast_ref::<PaddingNode>() {
+                    padding += padding_node.padding();
+                } else if let Some(size_node) = any.downcast_ref::<SizeNode>() {
+                    apply_size_node(&mut layout, size_node);
+                } else if let Some(fill_node) = any.downcast_ref::<FillNode>() {
+                    apply_fill_node(&mut layout, fill_node);
+                } else if let Some(intrinsic_node) = any.downcast_ref::<IntrinsicSizeNode>() {
+                    apply_intrinsic_size_node(&mut layout, intrinsic_node);
+                } else if let Some(weight_node) = any.downcast_ref::<WeightNode>() {
+                    layout.weight = Some(weight_node.layout_weight());
+                } else if let Some(alignment_node) = any.downcast_ref::<AlignmentNode>() {
+                    if let Some(alignment) = alignment_node.box_alignment() {
+                        layout.box_alignment = Some(alignment);
+                    }
+                    if let Some(alignment) = alignment_node.column_alignment() {
+                        layout.column_alignment = Some(alignment);
+                    }
+                    if let Some(alignment) = alignment_node.row_alignment() {
+                        layout.row_alignment = Some(alignment);
+                    }
+                } else if let Some(offset_node) = any.downcast_ref::<OffsetNode>() {
+                    let delta = offset_node.offset();
+                    offset.x += delta.x;
+                    offset.y += delta.y;
                 }
-                if let Some(alignment) = alignment_node.column_alignment() {
-                    layout.column_alignment = Some(alignment);
-                }
-                if let Some(alignment) = alignment_node.row_alignment() {
-                    layout.row_alignment = Some(alignment);
-                }
-            } else if let Some(offset_node) = any.downcast_ref::<OffsetNode>() {
-                let delta = offset_node.offset();
-                offset.x += delta.x;
-                offset.y += delta.y;
-            }
-            // Note: BackgroundNode, CornerShapeNode, and GraphicsLayerNode are no longer
-            // tracked in ResolvedModifiers. Visual rendering now flows through modifier slices
-            // collected from the node chain at draw time.
+                // Note: BackgroundNode, CornerShapeNode, and GraphicsLayerNode are no longer
+                // tracked in ResolvedModifiers. Visual rendering now flows through modifier slices
+                // collected from the node chain at draw time.
+            });
         });
 
         resolved.set_padding(padding);
@@ -247,25 +246,24 @@ impl ModifierChainHandle {
 
         let mut snapshot = Vec::new();
         self.chain.for_each_forward(|node_ref| {
-            let Some(node) = node_ref.node() else {
-                return;
-            };
-            let depth = node_ref.delegate_depth();
-            let entry_index = node_ref.entry_index();
-            let inspector = if depth == 0 {
-                entry_index
-                    .and_then(|idx| per_entry.get_mut(idx))
-                    .and_then(|slot| slot.take())
-            } else {
-                None
-            };
-            snapshot.push(ModifierChainInspectorNode {
-                depth,
-                entry_index,
-                type_name: type_name_of_val(node),
-                capabilities: node_ref.kind_set(),
-                aggregate_child_capabilities: node_ref.aggregate_child_capabilities(),
-                inspector,
+            node_ref.with_node(|node| {
+                let depth = node_ref.delegate_depth();
+                let entry_index = node_ref.entry_index();
+                let inspector = if depth == 0 {
+                    entry_index
+                        .and_then(|idx| per_entry.get_mut(idx))
+                        .and_then(|slot| slot.take())
+                } else {
+                    None
+                };
+                snapshot.push(ModifierChainInspectorNode {
+                    depth,
+                    entry_index,
+                    type_name: type_name_of_val(node),
+                    capabilities: node_ref.kind_set(),
+                    aggregate_child_capabilities: node_ref.aggregate_child_capabilities(),
+                    inspector,
+                });
             });
         });
         snapshot

@@ -763,7 +763,7 @@ impl LayoutBuilderState {
                                 }
 
                                 // Calculate padding and offset for backward compat
-                                if let Some(node) = node_ref.node() {
+                                node_ref.with_node(|node| {
                                     let any = node.as_any();
                                     if let Some(padding_node) = any.downcast_ref::<PaddingNode>() {
                                         padding += padding_node.padding();
@@ -772,7 +772,7 @@ impl LayoutBuilderState {
                                         offset.x += delta.x;
                                         offset.y += delta.y;
                                     }
-                                }
+                                });
                             }
                         },
                     );
