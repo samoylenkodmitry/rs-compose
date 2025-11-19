@@ -1387,7 +1387,7 @@ fn modifier_showcase_tab() {
 }
 
 #[composable]
-fn simple_card_showcase() {
+pub fn simple_card_showcase() {
     Column(Modifier::empty(), ColumnSpec::default(), || {
         Text(
             "=== Simple Card Pattern ===",
@@ -1436,7 +1436,7 @@ fn simple_card_showcase() {
 }
 
 #[composable]
-fn positioned_boxes_showcase() {
+pub fn positioned_boxes_showcase() {
     Column(Modifier::empty(), ColumnSpec::default(), || {
         Text(
             "=== Positioned Boxes ===",
@@ -1480,7 +1480,7 @@ fn positioned_boxes_showcase() {
 }
 
 #[composable]
-fn item_list_showcase() {
+pub fn item_list_showcase() {
     Column(Modifier::empty(), ColumnSpec::default(), || {
         Text(
             "=== Item List (5 items) ===",
@@ -1526,7 +1526,7 @@ fn item_list_showcase() {
 }
 
 #[composable]
-fn complex_chain_showcase() {
+pub fn complex_chain_showcase() {
     Column(Modifier::empty(), ColumnSpec::default(), || {
         Text(
             "=== Complex Modifier Chain ===",
@@ -1568,7 +1568,7 @@ fn complex_chain_showcase() {
 }
 
 #[composable]
-fn dynamic_modifiers_showcase() {
+pub fn dynamic_modifiers_showcase() {
     let frame = compose_core::useState(|| 0i32);
 
     Column(Modifier::empty(), ColumnSpec::default(), move || {
@@ -1647,7 +1647,7 @@ fn dynamic_modifiers_showcase() {
 }
 
 #[composable]
-fn long_list_showcase() {
+pub fn long_list_showcase() {
     Column(Modifier::empty(), ColumnSpec::default(), || {
         Text(
             "=== Long List (50 items) ===",
