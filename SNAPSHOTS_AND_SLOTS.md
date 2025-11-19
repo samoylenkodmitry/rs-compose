@@ -1441,31 +1441,62 @@ pub fn consolidate_gaps(&mut self) {
 
 ## Design Patterns
 
-### Copy-on-Write (CoW)
+### Persistent/Immutable Data Structures (NOT True CoW)
 
-**Used in:** SnapshotIdSet, nested snapshots
+**Used in:** SnapshotIdSet
 
-**Pattern:**
+**IMPORTANT CLARIFICATION:** The documentation claims "CoW" but this is **NOT true copy-on-write**. It's actually a **persistent/immutable data structure** with partial optimization.
+
+**Actual Implementation:**
 ```rust
 pub struct SnapshotIdSet {
-    lower_set: u64,  // Immutable value
-    // ...
+    upper_set: u64,                           // Bit set (cheap to copy)
+    lower_set: u64,                           // Bit set (cheap to copy)
+    lower_bound: usize,                       // Cheap to copy
+    below_bound: Option<Box<[SnapshotId]>>,  // FULL COPY on clone!
 }
 
 impl SnapshotIdSet {
     pub fn set(&self, id: SnapshotId) -> Self {
-        // Return new instance with modification
-        let mut new_set = self.clone();
-        new_set.lower_set |= (1u64 << bit);
-        new_set
+        // Returns NEW instance
+        Self {
+            upper_set: self.upper_set,
+            lower_set: self.lower_set | mask,
+            below_bound: self.below_bound.clone(),  // ⚠️ Box::clone() = full array copy!
+        }
     }
 }
 ```
 
-**Benefits:**
-- Snapshot `invalid` sets never change after creation
-- Can share sets between snapshots
-- No synchronization needed for reads
+**Usage Pattern (3 clones per snapshot!):**
+```rust
+// global.rs:141-143
+let mut parent_invalid = self.state.invalid.borrow().clone();  // Clone 1
+parent_invalid = parent_invalid.set(new_id);                   // Clone 2
+self.state.invalid.replace(parent_invalid.clone());            // Clone 3
+```
+
+**What's Actually Happening:**
+- ✅ **Immutable**: Can't modify in place (functional correctness)
+- ✅ **Fast for recent IDs**: Only bit operations, no allocation
+- ❌ **NOT true CoW**: `Box::clone()` does full array copy
+- ❌ **Suboptimal**: Could use `Arc<[SnapshotId]>` for O(1) sharing
+
+**True CoW Would Be:**
+```rust
+below_bound: Option<Arc<[SnapshotId]>>,  // Share via Arc
+// .clone() would just bump refcount, no array copy
+```
+
+**Real-World Impact:**
+- **Best case** (all recent IDs): 24 bytes copied, very fast ✅
+- **Worst case** (100 old IDs): ~2.4 KB copied per snapshot creation ⚠️
+- **Not dead code**: Works correctly, just not optimally
+
+**Why It Works Despite Not Being True CoW:**
+- Most snapshot IDs are recent (fit in bit sets)
+- `below_bound` array is typically small or empty
+- Correctness > performance (for now)
 
 ### Object Pool
 
