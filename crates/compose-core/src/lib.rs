@@ -1,5 +1,4 @@
 #![doc = r"Core runtime pieces for the Compose-RS experiment."]
-#![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::redundant_closure)]

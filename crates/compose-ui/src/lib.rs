@@ -1,6 +1,5 @@
 //! High level UI primitives built on top of the Compose core runtime.
 
-#![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::redundant_closure)]
@@ -11,7 +10,6 @@
 #![allow(clippy::wrong_self_convention)]
 #![allow(clippy::useless_conversion)]
 #![allow(clippy::manual_inspect)]
-#![allow(clippy::vec_box)]
 
 use compose_core::{location_key, MemoryApplier};
 pub use compose_core::{Composition, Key};

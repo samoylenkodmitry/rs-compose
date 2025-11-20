@@ -1,7 +1,6 @@
 //! Foundation elements for Compose-RS: modifiers, input, and core functionality
 
 #![allow(non_snake_case)]
-#![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::new_without_default)]
 
@@ -12,6 +11,8 @@ pub mod nodes;
 
 // Re-export commonly used items
 pub use modifier::*;
+#[allow(unused_imports)] // Module exists for API compatibility
+pub use modifier_helpers::*;
 pub use measurement_proxy::*;
 pub use nodes::input::{
     PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerId, PointerPhase,

@@ -18,6 +18,10 @@
 //! The current snapshot is stored in thread-local storage and automatically
 //! managed by the snapshot system.
 
+// All snapshot types use Arc with Cell/RefCell for single-threaded shared ownership.
+// This is safe because snapshots are thread-local and never cross thread boundaries.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use crate::collections::map::HashMap; // FUTURE(no_std): replace HashMap/HashSet with arena-backed maps.
 use crate::collections::map::HashSet;
 use crate::snapshot_id_set::{SnapshotId, SnapshotIdSet};
@@ -583,6 +587,11 @@ pub(crate) fn optimistic_merges(
 }
 
 /// Merge two read observers into one.
+///
+/// # Thread Safety
+/// The resulting Arc-wrapped closure may capture non-Send closures. This is safe
+/// because observers are only invoked on the UI thread where they were created.
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn merge_read_observers(
     a: Option<ReadObserver>,
     b: Option<ReadObserver>,
@@ -599,6 +608,11 @@ pub fn merge_read_observers(
 }
 
 /// Merge two write observers into one.
+///
+/// # Thread Safety
+/// The resulting Arc-wrapped closure may capture non-Send closures. This is safe
+/// because observers are only invoked on the UI thread where they were created.
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn merge_write_observers(
     a: Option<WriteObserver>,
     b: Option<WriteObserver>,

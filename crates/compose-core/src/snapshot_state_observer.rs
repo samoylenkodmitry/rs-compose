@@ -1,3 +1,7 @@
+// Observer callbacks use Arc for shared ownership but may capture non-Send types.
+// This is safe because callbacks are always invoked on the UI thread where they were created.
+#![allow(clippy::arc_with_non_send_sync)]
+
 use crate::collections::map::HashSet;
 use crate::snapshot_v2::{register_apply_observer, ReadObserver, StateObjectId};
 use crate::state::StateObject;
@@ -236,6 +240,9 @@ impl SnapshotStateObserverInner {
         self.scopes.borrow_mut().clear();
     }
 
+    // Arc-wrapped closure captures Weak which may not be Send/Sync. This is safe because
+    // the observer callback is only invoked on the UI thread where it was registered.
+    #[allow(clippy::arc_with_non_send_sync)]
     fn start(&self, weak_self: Weak<SnapshotStateObserverInner>) {
         if self.apply_handle.borrow().is_some() {
             return;

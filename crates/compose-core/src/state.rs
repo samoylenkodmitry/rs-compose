@@ -1,4 +1,6 @@
 #![allow(private_interfaces)]
+// StateRecord uses Arc with Cell for single-threaded shared ownership in the snapshot system.
+#![allow(clippy::arc_with_non_send_sync)]
 
 use crate::collections::map::HashSet;
 use std::any::Any;
@@ -32,6 +34,13 @@ impl ObjectId {
     }
 }
 
+/// A record in the state history chain.
+///
+/// # Thread Safety
+/// Contains `Cell<T>` which is not `Send`/`Sync`. This is safe because state records
+/// are accessed only from the UI thread via thread-local snapshot system. The `Arc`
+/// is used for cheap cloning and shared ownership within a single thread.
+#[allow(clippy::arc_with_non_send_sync)]
 pub(crate) struct StateRecord {
     snapshot_id: Cell<SnapshotId>,
     tombstone: Cell<bool>,

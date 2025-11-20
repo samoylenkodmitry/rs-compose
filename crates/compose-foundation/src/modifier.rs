@@ -1064,8 +1064,7 @@ fn detach_node_tree(node: &mut dyn ModifierNode) {
 /// same type. Removed nodes detach automatically so callers do not need
 /// to manually manage their lifetimes.
 pub struct ModifierNodeChain {
-    #[allow(clippy::vec_box)]
-    entries: Vec<Box<ModifierNodeEntry>>,
+    entries: Vec<ModifierNodeEntry>,
     aggregated_capabilities: NodeCapabilities,
     head_aggregate_child_capabilities: NodeCapabilities,
     head_sentinel: Box<SentinelNode>,
@@ -1119,7 +1118,7 @@ struct EntryIndex {
 }
 
 impl EntryIndex {
-    fn build(entries: &[Box<ModifierNodeEntry>]) -> Self {
+    fn build(entries: &[ModifierNodeEntry]) -> Self {
         let mut keyed = HashMap::new();
         let mut hashed = HashMap::new();
         let mut typed = HashMap::new();
@@ -1152,7 +1151,7 @@ impl EntryIndex {
     /// 3. Type match: same type + no key (will require update)
     fn find_match(
         &self,
-        entries: &[Box<ModifierNodeEntry>],
+        entries: &[ModifierNodeEntry],
         used: &[bool],
         element_type: TypeId,
         key: Option<u64>,
@@ -1218,7 +1217,7 @@ impl ModifierNodeChain {
     ) {
         let mut old_entries = std::mem::take(&mut self.entries);
         let mut old_used = vec![false; old_entries.len()];
-        let mut new_entries: Vec<Box<ModifierNodeEntry>> = Vec::with_capacity(elements.len());
+        let mut new_entries: Vec<ModifierNodeEntry> = Vec::with_capacity(elements.len());
 
         // Build index for O(1) lookups - O(m) where m = old_entries.len()
         let index = EntryIndex::build(&old_entries);
@@ -1280,14 +1279,14 @@ impl ModifierNodeChain {
 
             } else {
                 // Create new entry and insert at correct position
-                let entry = Box::new(ModifierNodeEntry::new(
+                let entry = ModifierNodeEntry::new(
                     element_type,
                     key,
                     element.clone(),
                     element.create_node(),
                     hash_code,
                     capabilities,
-                ));
+                );
                 attach_node_tree(&mut **entry.node.borrow_mut(), context);
                 element.update_node(&mut **entry.node.borrow_mut());
                 new_entries.push(entry);
@@ -1296,7 +1295,7 @@ impl ModifierNodeChain {
 
         // Assemble final list in correct order
         // First, create a temporary list of (position, entry) pairs for matched entries
-        let mut matched_entries: Vec<(usize, Box<ModifierNodeEntry>)> = Vec::new();
+        let mut matched_entries: Vec<(usize, ModifierNodeEntry)> = Vec::new();
         for (entry, (used, order)) in old_entries.into_iter().zip(old_used.into_iter().zip(match_order)) {
             if used {
                 matched_entries.push((order.unwrap(), entry));
@@ -1310,12 +1309,11 @@ impl ModifierNodeChain {
 
         // Merge matched entries with newly created entries
         // new_entries currently only has newly created entries
-        let mut final_entries: Vec<Box<ModifierNodeEntry>> = Vec::with_capacity(elements.len());
+        let mut final_entries: Vec<ModifierNodeEntry> = Vec::with_capacity(elements.len());
         let mut matched_iter = matched_entries.into_iter();
         let mut new_iter = new_entries.into_iter();
         let mut next_matched = matched_iter.next();
         let mut next_new = new_iter.next();
-        let mut new_entry_pos = 0;
 
         for pos in 0..elements.len() {
             if let Some((matched_pos, _)) = next_matched {
@@ -1331,8 +1329,6 @@ impl ModifierNodeChain {
             if let Some(entry) = next_new.take() {
                 final_entries.push(entry);
                 next_new = new_iter.next();
-                let _ = new_entry_pos;
-                new_entry_pos += 1;
             }
         }
 
