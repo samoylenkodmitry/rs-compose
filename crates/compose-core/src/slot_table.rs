@@ -128,7 +128,9 @@ impl Default for Slot {
 
 impl SlotTable {
     const INITIAL_CAP: usize = 32;
-    #[allow(dead_code)]
+    /// Size of gap blocks to pull from tail during ensure_gap_at operation.
+    /// Reserved for future gap management strategy; currently using local scan approach.
+    #[allow(dead_code)] // Planned for global gap management heuristics
     const GAP_BLOCK: usize = 32; // tune 16/32/64
     const LOCAL_GAP_SCAN: usize = 256; // tune
 
@@ -154,9 +156,11 @@ impl SlotTable {
     }
 
     /// Ensure that at `cursor` there is at least 1 gap slot.
-    /// We do this by pulling a small block of gap slots from the tail forward,
-    /// shifting everything in between once, and fixing frames/anchors.
-    #[allow(dead_code)]
+    ///
+    /// Global gap management strategy: pulls gap blocks from tail forward and shifts
+    /// everything in between. Currently using ensure_gap_at_local (scans locally) instead
+    /// for better performance on most composition patterns.
+    #[allow(dead_code)] // Alternative gap strategy; using local scan approach
     fn ensure_gap_at(&mut self, cursor: usize) {
         // if already a gap, nothing to do
         if matches!(self.slots.get(cursor), Some(Slot::Gap { .. })) {
@@ -1159,7 +1163,11 @@ impl SlotTable {
         self.update_group_bounds();
         cursor
     }
-    #[allow(dead_code)]
+    /// Update anchor mapping for a specific slot.
+    ///
+    /// Incremental anchor update infrastructure for fine-grained anchor management.
+    /// Currently using rebuild_anchors (full rebuild) after bulk operations.
+    #[allow(dead_code)] // Planned for incremental anchor management optimization
     fn update_anchor_for_slot(&mut self, slot_index: usize) {
         let anchor_id = self.slots[slot_index].anchor_id().0;
         if anchor_id == 0 {

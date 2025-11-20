@@ -1,3 +1,4 @@
+// WIP: Layout system infrastructure - many helper types not yet fully wired up
 #![allow(dead_code)]
 
 pub mod coordinator;

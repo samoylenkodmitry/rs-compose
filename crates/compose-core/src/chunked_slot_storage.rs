@@ -61,11 +61,12 @@ pub struct ChunkedSlotStorage {
     last_start_was_gap: bool,
 }
 
-#[allow(dead_code)]
 struct GroupFrame {
+    #[allow(dead_code)] // Tracked for debugging/future inspection tools
     key: Key,
     start: usize,
     end: usize,
+    #[allow(dead_code)] // Tracked for debugging/future recomposition heuristics
     force_children_recompose: bool,
 }
 
