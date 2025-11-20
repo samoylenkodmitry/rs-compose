@@ -595,9 +595,12 @@ fn render_cell(
                 grid.set(current_grid);
             }
         },
-        move || {
-            if !text_content.is_empty() {
-                Text(text_content.clone(), Modifier::empty());
+        {
+            let text = text_content;
+            move || {
+                if !text.is_empty() {
+                    Text(&text, Modifier::empty());
+                }
             }
         },
     );
