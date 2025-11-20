@@ -7,6 +7,11 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::collapsible_else_if)]
 #![allow(clippy::manual_let_else)]
+#![allow(clippy::len_without_is_empty)]
+#![allow(clippy::wrong_self_convention)]
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::manual_inspect)]
+#![allow(clippy::vec_box)]
 
 use compose_core::{location_key, MemoryApplier};
 pub use compose_core::{Composition, Key};

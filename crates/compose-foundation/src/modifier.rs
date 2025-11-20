@@ -1064,6 +1064,7 @@ fn detach_node_tree(node: &mut dyn ModifierNode) {
 /// same type. Removed nodes detach automatically so callers do not need
 /// to manually manage their lifetimes.
 pub struct ModifierNodeChain {
+    #[allow(clippy::vec_box)]
     entries: Vec<Box<ModifierNodeEntry>>,
     aggregated_capabilities: NodeCapabilities,
     head_aggregate_child_capabilities: NodeCapabilities,

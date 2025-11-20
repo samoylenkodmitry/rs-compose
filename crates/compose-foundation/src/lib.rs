@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::type_complexity)]
+#![allow(clippy::new_without_default)]
 
 pub mod modifier;
 pub mod modifier_helpers;

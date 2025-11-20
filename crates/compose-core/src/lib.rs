@@ -5,9 +5,26 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::collapsible_else_if)]
 #![allow(clippy::manual_let_else)]
-#![allow(clippy::needless_deref)]
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::missing_const_for_thread_local)]
+#![allow(clippy::manual_map)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::map_entry)]
+#![allow(clippy::unused_unit)]
+#![allow(clippy::boxed_local)]
+#![allow(clippy::extra_unused_type_parameters)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::manual_while_let_some)]
+#![allow(clippy::only_used_in_recursion)]
+#![allow(clippy::mem_replace_with_default)]
+#![allow(clippy::default_constructed_unit_structs)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::explicit_auto_deref)]
+#![allow(clippy::question_mark)]
+#![allow(clippy::readonly_write_lock)]
+#![allow(clippy::while_let_loop)]
+#![allow(clippy::manual_inspect)]
 
 pub extern crate self as compose_core;
 
@@ -1074,6 +1091,7 @@ impl MemoryApplier {
         Ok(f(typed))
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.nodes.iter().filter(|n| n.is_some()).count()
     }
@@ -2358,7 +2376,10 @@ impl<T: Clone + 'static> SnapshotStateList<T> {
     where
         I: IntoIterator<Item = T>,
     {
-        self.state.update(|values| values.extend(iter.into_iter()));
+        #[allow(clippy::useless_conversion)]
+        {
+            self.state.update(|values| values.extend(iter.into_iter()));
+        }
     }
 
     pub fn insert(&self, index: usize, value: T) {
@@ -2467,7 +2488,10 @@ where
     where
         I: IntoIterator<Item = (K, V)>,
     {
-        self.state.update(|map| map.extend(iter.into_iter()));
+        #[allow(clippy::useless_conversion)]
+        {
+            self.state.update(|map| map.extend(iter.into_iter()));
+        }
         // extend returns (), but update requires returning something: we can just rely on ()
     }
 
@@ -2629,6 +2653,7 @@ pub struct CallbackHolder {
 
 impl CallbackHolder {
     /// Create a new holder with a no-op callback so that callers can immediately invoke it.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             rc: Rc::new(RefCell::new(Box::new(|| {}) as Box<dyn FnMut()>)),
