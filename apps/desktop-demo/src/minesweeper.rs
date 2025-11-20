@@ -1,8 +1,7 @@
 use compose_core::{self, MutableState};
-use compose_foundation::PointerEventKind;
 use compose_ui::{
-    composable, BoxSpec, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement,
-    Modifier, Point, PointerInputScope, Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
+    composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement,
+    Modifier, Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
 
 // Game difficulty levels
@@ -501,144 +500,36 @@ pub fn minesweeper_game() {
             let grid_key = grid_for_render.get();
             let grid_size_key = (grid_key.width, grid_key.height);
 
-            // Mouse pointer follower
-            let pointer_position = compose_core::useState(|| Point { x: 0.0, y: 0.0 });
-            let pointer_inside = compose_core::useState(|| false);
-
             compose_core::with_key(&grid_size_key, || {
-                let pointer_pos = pointer_position.clone();
-                let pointer_in = pointer_inside.clone();
-                let flag_mode_for_pointer = flag_mode_for_render.clone();
+                let grid_for_column = grid_for_render.clone();
+                let flag_mode_for_column = flag_mode_for_render.clone();
 
-                compose_ui::Box(
+                Column(
                     Modifier::empty()
-                        .pointer_input((), {
-                            let pointer_position = pointer_pos.clone();
-                            let pointer_inside = pointer_in.clone();
-                            move |scope: PointerInputScope| {
-                                let pointer_position = pointer_position.clone();
-                                let pointer_inside = pointer_inside.clone();
-                                async move {
-                                    scope
-                                        .await_pointer_event_scope(|await_scope| async move {
-                                            loop {
-                                                let event = await_scope.await_pointer_event().await;
-                                                match event.kind {
-                                                    PointerEventKind::Move => {
-                                                        pointer_position.set(Point {
-                                                            x: event.position.x,
-                                                            y: event.position.y,
-                                                        });
-                                                        pointer_inside.set(true);
-                                                    }
-                                                    PointerEventKind::Cancel => {
-                                                        pointer_inside.set(false);
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        })
-                                        .await;
-                                }
-                            }
-                        }),
-                    BoxSpec::default(),
+                        .padding(12.0)
+                        .background(Color(0.06, 0.08, 0.16, 0.9))
+                        .rounded_corners(20.0),
+                    ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(4.0)),
                     move || {
-                        let grid_for_column = grid_for_render.clone();
-                        let flag_mode_for_column = flag_mode_for_render.clone();
-
-                        Column(
-                            Modifier::empty()
-                                .padding(12.0)
-                                .background(Color(0.06, 0.08, 0.16, 0.9))
-                                .rounded_corners(20.0),
-                            ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(4.0)),
-                            move || {
-                                let current_grid = grid_for_column.get();
-                                for row in 0..current_grid.height {
-                                    let grid_for_row = grid_for_column.clone();
-                                    let flag_mode_for_row = flag_mode_for_column.clone();
-                                    Row(
-                                        Modifier::empty(),
-                                        RowSpec::new()
-                                            .horizontal_arrangement(LinearArrangement::SpacedBy(4.0)),
-                                        move || {
-                                            let grid_row = grid_for_row.clone();
-                                            let flag_mode_row = flag_mode_for_row.clone();
-                                            let width = grid_row.get().width;
-                                            for col in 0..width {
-                                                let grid_cell = grid_row.clone();
-                                                let flag_mode_cell = flag_mode_row.clone();
-                                                render_cell(grid_cell, flag_mode_cell, row, col);
-                                            }
-                                        },
-                                    );
-                                }
-                            },
-                        );
-
-                        // Render pointer follower if mouse is inside
-                        let is_inside = pointer_in.get();
-                        if is_inside {
-                            let pos = pointer_pos.get();
-                            let is_flag_mode = flag_mode_for_pointer.get();
-                            let grid_for_cursor = grid_for_render.clone();
-                            let current_grid = grid_for_cursor.get();
-
-                            // Snap cursor to cell centers
-                            // Account for grid padding (12.0) and cell size (35.0) + spacing (4.0)
-                            let grid_padding = 12.0;
-                            let cell_size = 35.0;
-                            let cell_spacing = 4.0;
-                            let cell_pitch = cell_size + cell_spacing;
-
-                            // Calculate which cell we're hovering over
-                            let rel_x = pos.x - grid_padding;
-                            let rel_y = pos.y - grid_padding;
-
-                            let col = (rel_x / cell_pitch).floor() as i32;
-                            let row = (rel_y / cell_pitch).floor() as i32;
-
-                            // Only show cursor if over a valid cell
-                            if row >= 0 && row < current_grid.height as i32 && col >= 0 && col < current_grid.width as i32 {
-                                // Calculate cell center position
-                                let cell_center_x = grid_padding + (col as f32) * cell_pitch + cell_size / 2.0;
-                                let cell_center_y = grid_padding + (row as f32) * cell_pitch + cell_size / 2.0;
-
-                                // Use gradient colors to indicate mode
-                                let gradient_colors = if is_flag_mode {
-                                    // Orange/red gradient for flag mode
-                                    vec![
-                                        Color(0.9, 0.6, 0.2, 0.8),
-                                        Color(0.8, 0.3, 0.1, 0.6),
-                                    ]
-                                } else {
-                                    // Blue/cyan gradient for reveal mode
-                                    vec![
-                                        Color(0.4, 0.6, 0.9, 0.8),
-                                        Color(0.2, 0.4, 0.7, 0.6),
-                                    ]
-                                };
-
-                                compose_ui::Box(
-                                    Modifier::empty()
-                                        .size_points(40.0, 40.0)
-                                        .offset(cell_center_x - 20.0, cell_center_y - 20.0)
-                                        .rounded_corners(20.0)
-                                        .draw_behind(move |scope| {
-                                            scope.draw_round_rect(
-                                                Brush::radial_gradient(
-                                                    gradient_colors.clone(),
-                                                    Point { x: 20.0, y: 20.0 },
-                                                    20.0,
-                                                ),
-                                                CornerRadii::uniform(20.0),
-                                            );
-                                        }),
-                                    BoxSpec::default(),
-                                    || {},
-                                );
-                            }
+                        let current_grid = grid_for_column.get();
+                        for row in 0..current_grid.height {
+                            let grid_for_row = grid_for_column.clone();
+                            let flag_mode_for_row = flag_mode_for_column.clone();
+                            Row(
+                                Modifier::empty(),
+                                RowSpec::new()
+                                    .horizontal_arrangement(LinearArrangement::SpacedBy(4.0)),
+                                move || {
+                                    let grid_row = grid_for_row.clone();
+                                    let flag_mode_row = flag_mode_for_row.clone();
+                                    let width = grid_row.get().width;
+                                    for col in 0..width {
+                                        let grid_cell = grid_row.clone();
+                                        let flag_mode_cell = flag_mode_row.clone();
+                                        render_cell(grid_cell, flag_mode_cell, row, col);
+                                    }
+                                },
+                            );
                         }
                     },
                 );
