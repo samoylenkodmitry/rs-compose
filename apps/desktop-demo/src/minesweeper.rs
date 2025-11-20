@@ -582,24 +582,39 @@ pub fn minesweeper_game() {
                         if is_inside {
                             let pos = pointer_pos.get();
                             let is_flag_mode = flag_mode_for_pointer.get();
-                            let icon = if is_flag_mode { "🚩" } else { "🔍" };
-                            let icon_color = if is_flag_mode {
-                                Color(0.9, 0.6, 0.2, 0.9)
+
+                            // Use gradient colors to indicate mode
+                            let gradient_colors = if is_flag_mode {
+                                // Orange/red gradient for flag mode
+                                vec![
+                                    Color(0.9, 0.6, 0.2, 0.8),
+                                    Color(0.8, 0.3, 0.1, 0.6),
+                                ]
                             } else {
-                                Color(0.4, 0.6, 0.9, 0.9)
+                                // Blue/cyan gradient for reveal mode
+                                vec![
+                                    Color(0.4, 0.6, 0.9, 0.8),
+                                    Color(0.2, 0.4, 0.7, 0.6),
+                                ]
                             };
 
                             compose_ui::Box(
                                 Modifier::empty()
-                                    .size_points(30.0, 30.0)
-                                    .offset(pos.x - 15.0, pos.y - 15.0)
-                                    .rounded_corners(15.0)
-                                    .background(icon_color)
-                                    .padding(5.0),
+                                    .size_points(40.0, 40.0)
+                                    .offset(pos.x - 20.0, pos.y - 20.0)
+                                    .rounded_corners(20.0)
+                                    .draw_behind(move |scope| {
+                                        scope.draw_round_rect(
+                                            Brush::radial_gradient(
+                                                gradient_colors.clone(),
+                                                Point { x: 20.0, y: 20.0 },
+                                                20.0,
+                                            ),
+                                            CornerRadii::uniform(20.0),
+                                        );
+                                    }),
                                 BoxSpec::default(),
-                                move || {
-                                    Text(icon, Modifier::empty());
-                                },
+                                || {},
                             );
                         }
                     },
@@ -644,6 +659,9 @@ fn render_cell(
         }
     };
 
+    let has_text = !text_content.is_empty();
+    let text_to_show = text_content.clone();
+
     Button(
         Modifier::empty()
             .size_points(35.0, 35.0)
@@ -668,11 +686,9 @@ fn render_cell(
                 grid.set(current_grid);
             }
         },
-        {
-            move || {
-                if !text_content.is_empty() {
-                    Text(text_content.clone(), Modifier::empty());
-                }
+        move || {
+            if has_text {
+                Text(text_to_show.clone(), Modifier::empty());
             }
         },
     );
