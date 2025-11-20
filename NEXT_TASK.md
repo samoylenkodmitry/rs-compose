@@ -30,6 +30,14 @@
 - ✅ Capability-based dispatch validation
 - ✅ Integration with draw, pointer input, semantics
 
+### Upstream main roadmap (Nov 2025 snapshot)
+These items reflect the priorities already present on the upstream main branch so they do not get lost while reconciling the modifier findings on this work branch.
+
+- **Performance Optimization**: benchmark modifier traversal, cache aggregated capabilities, pool allocations in `update_from_slice`, and establish a reusable benchmark suite.
+- **API Ergonomics**: builder patterns for modifiers, common helpers, clearer RefCell error messages, and richer documentation/examples.
+- **Advanced Features**: animated and conditional modifiers, modifier scopes, and custom coordinator hooks.
+- **Testing & Validation**: property-based tests, integration scenarios, stress tests for deep chains, and performance regression tracking.
+
 ---
 
 ## ⚠️ Modifier System Reality Check (work branch)

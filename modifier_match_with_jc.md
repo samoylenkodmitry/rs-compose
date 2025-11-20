@@ -12,6 +12,8 @@ This document merges the parity narrative from origin/main with the current real
 - ✅ **Capability Dispatch**: Bitflag-based capability system for traversal.
 - ✅ **Node Reuse**: Zero allocations when modifier chains remain stable across recompositions.
 
+Upstream main also tracks broader follow-ups once parity is stable: performance benchmarking of traversal, ergonomic builder helpers, animated/conditional modifiers, and richer testing (property-based, stress, and integration coverage). Those priorities remain valid and should resume after the correctness gaps below are closed.
+
 ## Reality checks on the work branch
 
 - **Flattened resolution**: `ModifierChainHandle::compute_resolved` still aggregates padding/size/offset into a single `ResolvedModifiers`, losing ordering (e.g., `padding.background.padding`).
