@@ -1,56 +1,58 @@
 # RS-Compose Development Roadmap
 
 **Last Updated**: April 2026  
-**Modifier System Status**: Upstream main claims parity; work branch has active parity fixes in flight.  
+**Modifier System Status**: `main` reports parity; the work branch is validating and fixing remaining gaps.  
 **Documentation Status**: ✅ Comprehensive internals documented
 
 ---
 
-## 🔎 Upstream Main Snapshot (Nov 2025)
-These items mirror the roadmap that already shipped on `main` so they remain visible after rebasing.
+## 🗺️ Main-Branch Milestone Snapshot (Nov 2025)
+These items mirror what shipped on `main` so they stay visible after rebasing.
 
-### Modifier System Parity Claims
-- ✅ `ModifierNodeEntry` stores `Rc<RefCell<Box<dyn ModifierNode>>>`
-- ✅ `LayoutModifierNode::measure` returns `LayoutModifierMeasureResult` with placement control
-- ✅ `LayoutModifierCoordinator` holds live node references (no proxy bypass)
-- ✅ Chain preservation intended — flattening marked as removed in `main`
-- ✅ Node lifecycle: `on_attach()`, `on_detach()`, `on_reset()`
-- ✅ Capability-based dispatch with bitflags
-- ✅ Core modifiers implemented: Padding, Size, Offset, Background, Clickable, etc.
+### ✅ Phase 1: Shared Ownership & Protocol (DONE)
+- `ModifierNodeEntry` stores `Rc<RefCell<Box<dyn ModifierNode>>>`
+- `LayoutModifierNode::measure` returns `LayoutModifierMeasureResult` with placement
+- `LayoutModifierCoordinator` holds `Rc<RefCell<dyn ModifierNode>>`
+- Direct `node.measure()` calls without proxy bypass
+- Chain traversal handles RefCell borrows correctly
 
-### Completion Milestones (main)
-- **Phase 1: Shared Ownership & Protocol** — live node references, direct coordinator calls
-- **Phase 2: Eliminating Flattening** — single measurement path, padding/offset/size handled by nodes
-- **Jetpack Compose Parity Achieved** — ordering preserved, placement control, no panicking APIs
-- **Production Ready** — 460+ workspace tests reported green in main
+### ✅ Phase 2: Eliminating Flattening (DONE, per main)
+- Flattening marked as removed; live node references drive layout
+- Node lifecycle hooks implemented: `on_attach()`, `on_detach()`, `on_reset()`
+- Capability-based dispatch via bitflags
+- Core modifiers implemented: Padding, Size, Offset, Background, Clickable, etc.
 
-### Other Main-Branch Priorities
-- **Performance Optimization**: benchmark modifier traversal, cache aggregated capabilities, pool allocations in `update_from_slice`, reusable benchmark suite
-- **API Ergonomics**: builder patterns, common helpers, clearer RefCell errors, richer documentation/examples
+### 📌 Other Main-Branch Priorities
+- **Performance**: benchmark modifier traversal, cache aggregated capabilities, pool allocations in `update_from_slice`, reusable benchmark suite
+- **API Ergonomics**: builder patterns, clearer RefCell errors, richer examples
 - **Advanced Features**: animated/conditional modifiers, modifier scopes, custom coordinator hooks
-- **Testing & Validation**: property-based tests, integration scenarios, stress tests for deep chains, performance regression tracking
+- **Testing & Validation**: property-based tests, integration scenarios, deep-chain stress tests, performance regression tracking
 
 ---
 
-## ⚠️ Reality Checks (work branch)
+## ⚠️ Reality Checks on the Work Branch
 Observed divergences that must be addressed before the parity claim is trustworthy after rebasing.
 
 - `ResolvedModifiers` still flattens padding/size/offset, losing modifier ordering (e.g., `padding.background.padding`).
 - `ModifierNodeSlices` coalesces text and graphics layers to the last writer instead of composing them.
+- `LayoutModifierCoordinator::measure` treats the absence of a measurement proxy as "skip the node" rather than measuring the live node.
 - `MeasurementProxy` remains in the public API even though coordinators measure nodes directly.
+- Placement is pass-through: `LayoutModifierNode::measure` returns only `Size`, blocking placement-aware modifiers (offset/alignment).
 
 ---
 
-## 🧭 Reconciliation Plan (merge-friendly)
-These steps combine the upstream claims with the work-branch findings so rebasing on `main` keeps both perspectives.
+## 🤝 Merge-Friendly Reconciliation Plan
+These steps combine `main`'s parity claims with the work-branch findings so rebasing keeps both perspectives.
 
-1. **Eliminate layout flattening**  
+1. **Fix layout modifier protocol**  
+   Measure live nodes (or meaningful proxies) and return placement-aware results; remove the "no proxy = skip" behavior.
+2. **Eliminate layout flattening**  
    Route padding/size/offset/intrinsics through live nodes and coordinators; add regression tests for mixed chains.
-2. **Make draw/text slices composable**  
+3. **Make draw/text slices composable**  
    Stack graphics layers and allow multiple text entries in chain order; keep pointer handlers ordered.
-3. **Resolve the measurement proxy story**  
+4. **Resolve the measurement proxy story**  
    Remove the unused surface or integrate it meaningfully (e.g., borrow-safe async measurement) and update docs/tests.
-4. **Resume upstream priorities once parity is validated**  
+5. **Resume upstream priorities once parity is validated**  
    Continue performance, ergonomics, advanced features, and testing work from the main snapshot.
 
 ---

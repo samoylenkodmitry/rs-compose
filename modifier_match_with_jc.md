@@ -1,8 +1,8 @@
 # Modifier System: Jetpack Compose Parity Checkpoint
 
-**Status**: Upstream `main` advertises parity; the work branch is validating and fixing remaining gaps.
+**Status**: `main` advertises parity; the work branch is validating and fixing remaining gaps.
 
-This version reconciles `main`'s parity claims with the outstanding correctness issues discovered locally so the rebase keeps both sets of facts.
+This edition merges `main`'s parity claims with the file-path-specific gaps previously documented so rebasing keeps both sets of facts.
 
 ## ✅ What `main` reports as complete (Nov 2025)
 - **Live Node References**: Coordinators hold `Rc<RefCell<Box<dyn ModifierNode>>>` directly, matching Kotlin's object references.
@@ -14,11 +14,16 @@ This version reconciles `main`'s parity claims with the outstanding correctness 
 Broader `main` follow-ups (performance, ergonomics, advanced modifiers, and deep testing) resume once the gaps below are closed.
 
 ## ⚠️ Reality checks on the work branch
-- **Coordinator bypass**: `LayoutModifierCoordinator::measure` still treats the absence of a measurement proxy as "skip the node" rather than measuring the live node.
-- **Missing placement API**: `LayoutModifierNode::measure` returns only `Size` in practice; placement is pass-through, preventing modifiers from affecting child placement (e.g., offset/alignment).
-- **Flattened resolution**: `ModifierChainHandle::compute_resolved` aggregates padding/size/offset into a single `ResolvedModifiers`, losing ordering (e.g., `padding.background.padding`).
-- **Slice coalescing**: `ModifierNodeSlices` collapses text content and graphics layers to last-write-wins, blocking composition of multiple layers.
+- **Coordinator bypass** (`crates/compose-ui/src/layout/coordinator.rs:120`): `LayoutModifierCoordinator::measure` still treats the absence of a measurement proxy as "skip the node" rather than measuring the live node.
+- **Missing placement API** (`crates/compose-ui/src/layout/coordinator.rs:112`): `LayoutModifierNode::measure` returns only `Size`; placement is pass-through, preventing modifiers from affecting child placement (e.g., offset/alignment).
+- **Flattened resolution** (`crates/compose-ui/src/modifier/chain.rs:188`): `ModifierChainHandle::compute_resolved` aggregates padding/size/offset into a single `ResolvedModifiers`, losing ordering (e.g., `padding.background.padding`).
+- **Slice coalescing** (`crates/compose-ui/src/modifier/slices.rs`): `ModifierNodeSlices` collapses text content and graphics layers to last-write-wins, blocking composition of multiple layers.
 - **Proxy dependency**: `MeasurementProxy` stays public even though coordinators aim to measure nodes directly, leaving an unused surface area.
+
+## 🚧 Mismatches vs Jetpack Compose (context)
+- **Live node vs snapshot proxy**: Kotlin's `LayoutModifierNodeCoordinator` measures the live `LayoutModifierNode`. The Rust implementation relies on proxies and can ignore nodes if none are provided.
+- **Placement control**: Kotlin's `measure` returns a `MeasureResult` containing a `placeChildren` lambda. Rust currently returns `Size` only, with placement handled by pass-through coordinator logic.
+- **Chain traversal**: Kotlin traverses the actual node chain for all operations. Rust flattens layout-affecting modifiers into `ResolvedModifiers`, losing ordering in complex chains.
 
 ## 🛠️ Reconciliation plan
 1. **Fix layout modifier protocol**  
