@@ -1,66 +1,24 @@
-# Modifier System Status - COMPLETE ✅
+# Modifier System Status - In Progress
 
-## ✅ Phase 1: Shared Ownership & Protocol (DONE)
-- ✅ `ModifierNodeEntry` stores `Rc<RefCell<Box<dyn ModifierNode>>>`
-- ✅ `LayoutModifierNode::measure` returns `LayoutModifierMeasureResult` with placement
-- ✅ `LayoutModifierCoordinator` holds `Rc<RefCell<dyn ModifierNode>>`
-- ✅ Direct `node.measure()` calls without proxy bypass
-- ✅ All chain traversal properly handles RefCell borrows
+## ✅ What is done
+- `LayoutModifierNode::measure` returns `LayoutModifierMeasureResult` with placement offsets, enabling padding/offset implementations to drive placement.
+- `LayoutModifierCoordinator` measures nodes directly via `Rc<RefCell<Box<dyn ModifierNode>>>` and applies the captured placement offset during `place`.
 
-## ✅ Phase 2: Eliminating Flattening (DONE)
-- ✅ Removed `ResolvedModifiers` fallback path entirely
-- ✅ All nodes measured through coordinator chain
-- ✅ `PaddingNode` implements measure with placement offsets
-- ✅ `OffsetNode` implements measure with placement offsets
-- ✅ `SizeNode` implements measure protocol
-- ✅ Single measurement path for ALL nodes
+## ⚠️ Gaps to close
+- `ResolvedModifiers` flatten padding/size/offset into aggregated values, losing modifier ordering.
+- `ModifierNodeSlices` coalesces text and graphics layers to the rightmost entry instead of composing multiple layers.
+- `MeasurementProxy` remains in the public API even though the coordinator never uses it, leaving dead surface area to maintain.
 
-## ✅ Jetpack Compose Parity Achieved
-- ✅ Rc<RefCell<>> shared ownership (mirrors Kotlin references)
-- ✅ Direct node access in coordinators (no proxies)
-- ✅ Placement control through MeasureResult
-- ✅ Proper delegate chain traversal
-- ✅ No modifier flattening - order preserved
-- ✅ Clean API - removed panicking methods
+## Next Tasks
 
-## Current Status: Production Ready 🚀
+### 1) Remove layout flattening
+- Route padding/size/offset/intrinsic behavior through layout nodes (and their coordinators) rather than the `ResolvedModifiers` accumulator.
+- Add regression tests for mixed chains (`padding.background.padding`, overlapping offsets, etc.) to lock in ordering semantics.
 
-All 460+ workspace tests passing. The modifier system has achieved true 1:1 parity with Jetpack Compose's architecture.
+### 2) Make draw/text slices composable
+- Allow multiple text nodes and graphics layers to stack instead of overwriting each other.
+- Preserve chain order when emitting draw commands and pointer handlers.
 
----
-
-# Next Major Tasks
-
-## 1. Performance Optimization
-- **Benchmark hot paths**: Measure performance of modifier chain traversal
-- **Cache aggregated capabilities**: Avoid recomputing on every traversal
-- **Pool allocations**: Reuse Vec/Box allocations in update_from_slice
-- **Lazy evaluation**: Defer work until actually needed
-
-## 2. API Ergonomics
-- **Builder patterns**: Make modifier construction more ergonomic
-- **Common modifier helpers**: Provide convenient wrappers for common cases
-- **Better error messages**: Add context to RefCell borrow failures
-- **Documentation**: Add comprehensive examples and guides
-
-## 3. Advanced Features
-- **Animated modifiers**: Support transitions between modifier states
-- **Conditional modifiers**: Better patterns for dynamic modifier lists
-- **Modifier scopes**: Provide contextual APIs for specific modifier types
-- **Custom coordinators**: Allow users to implement custom layout strategies
-
-## 4. Testing & Validation
-- **Property-based tests**: Use proptest for modifier chain behavior
-- **Benchmark suite**: Track performance regressions
-- **Integration tests**: Real-world usage scenarios
-- **Stress tests**: Large modifier chains, deep nesting
-
-## Immediate Next Task Recommendation
-
-Start with **Performance Optimization** - specifically:
-1. Add benchmarks to measure current performance baseline
-2. Profile modifier chain traversal and update operations
-3. Identify and optimize hot spots
-4. Measure improvements
-
-This ensures the system is not just correct but also fast.
+### 3) Decide the measurement proxy story
+- Either remove `MeasurementProxy` and proxy implementations or integrate them meaningfully (e.g., to support borrow-safe async measurement).
+- Update documentation and tests once the direction is chosen so the API surface matches runtime behavior.
