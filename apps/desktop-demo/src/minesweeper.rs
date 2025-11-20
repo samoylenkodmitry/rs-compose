@@ -654,69 +654,68 @@ fn render_cell(
     row: usize,
     col: usize,
 ) {
-    let grid = grid_state.get();
+    // Use with_key to ensure each cell has a unique identity
+    compose_core::with_key(&(row, col), || {
+        let grid = grid_state.get();
 
-    // Safety check: ensure we're within grid bounds
-    if row >= grid.height || col >= grid.width {
-        return;
-    }
+        // Safety check: ensure we're within grid bounds
+        if row >= grid.height || col >= grid.width {
+            return;
+        }
 
-    let cell_state = grid.states[row][col];
-    let is_mine = grid.mines[row][col];
-    let adjacent_count = grid.adjacent_counts[row][col];
+        let cell_state = grid.states[row][col];
+        let is_mine = grid.mines[row][col];
+        let adjacent_count = grid.adjacent_counts[row][col];
 
-    let bg_color = match cell_state {
-        CellState::Hidden => Color(0.3, 0.35, 0.45, 1.0),
-        CellState::Flagged => Color(0.9, 0.6, 0.2, 1.0),
-        CellState::Revealed => Color(0.15, 0.18, 0.25, 1.0),
-    };
+        let bg_color = match cell_state {
+            CellState::Hidden => Color(0.3, 0.35, 0.45, 1.0),
+            CellState::Flagged => Color(0.9, 0.6, 0.2, 1.0),
+            CellState::Revealed => Color(0.15, 0.18, 0.25, 1.0),
+        };
 
-    // Special color for mines
-    let bg_color = if cell_state == CellState::Revealed && is_mine {
-        Color(0.8, 0.2, 0.2, 1.0)
-    } else {
-        bg_color
-    };
+        // Special color for mines
+        let bg_color = if cell_state == CellState::Revealed && is_mine {
+            Color(0.8, 0.2, 0.2, 1.0)
+        } else {
+            bg_color
+        };
 
-    Button(
-        Modifier::empty()
-            .size_points(35.0, 35.0)
-            .rounded_corners(6.0)
-            .draw_behind(move |scope| {
-                scope.draw_round_rect(Brush::solid(bg_color), CornerRadii::uniform(6.0));
-            })
-            .padding(2.0),
-        {
-            let grid = grid_state.clone();
-            let flag_mode = flag_mode.clone();
+        Button(
+            Modifier::empty()
+                .size_points(35.0, 35.0)
+                .rounded_corners(6.0)
+                .draw_behind(move |scope| {
+                    scope.draw_round_rect(Brush::solid(bg_color), CornerRadii::uniform(6.0));
+                })
+                .padding(2.0),
+            {
+                let grid = grid_state.clone();
+                let flag_mode = flag_mode.clone();
+                move || {
+                    let mut current_grid = grid.get();
+                    let is_flag_mode = flag_mode.get();
+
+                    if is_flag_mode {
+                        current_grid.toggle_flag(row, col);
+                    } else {
+                        current_grid.reveal(row, col);
+                    }
+
+                    grid.set(current_grid);
+                }
+            },
             move || {
-                let mut current_grid = grid.get();
-                let is_flag_mode = flag_mode.get();
-
-                if is_flag_mode {
-                    current_grid.toggle_flag(row, col);
-                } else {
-                    current_grid.reveal(row, col);
-                }
-
-                grid.set(current_grid);
-            }
-        },
-        move || {
-            // Determine text content based on cell state
-            match cell_state {
-                CellState::Flagged => {
+                // Determine text content based on cell state
+                if cell_state == CellState::Flagged {
                     Text("🚩", Modifier::empty());
-                }
-                CellState::Revealed => {
+                } else if cell_state == CellState::Revealed {
                     if is_mine {
                         Text("💣", Modifier::empty());
                     } else if adjacent_count > 0 {
                         Text(adjacent_count.to_string(), Modifier::empty());
                     }
                 }
-                CellState::Hidden => {}
-            }
-        },
-    );
+            },
+        );
+    });
 }
