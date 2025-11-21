@@ -21,9 +21,6 @@ static FONT: Lazy<Font<'static>> = Lazy::new(|| {
     f
 });
 
-#[allow(dead_code)]
-pub(crate) struct RusttypeTextMeasurer;
-
 pub struct CachedRusttypeTextMeasurer {
     cache: Mutex<TextMetricsCache>,
 }
@@ -149,12 +146,6 @@ fn clip_rect_to_bounds(
 
 fn clip_bounds_from_clip(clip: Option<Rect>, width: u32, height: u32) -> Option<ClipBounds> {
     clip.and_then(|rect| clip_rect_to_bounds(rect, None, width, height))
-}
-
-impl TextMeasurer for RusttypeTextMeasurer {
-    fn measure(&self, text: &str) -> TextMetrics {
-        measure_text_impl(text)
-    }
 }
 
 impl TextMeasurer for CachedRusttypeTextMeasurer {

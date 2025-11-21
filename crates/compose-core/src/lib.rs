@@ -718,18 +718,6 @@ pub fn pop_parent() {
     with_current_composer(|composer| composer.pop_parent());
 }
 
-#[allow(dead_code)]
-#[derive(Default)]
-struct GroupFrame {
-    key: Key,
-    start: usize, // Physical position (will be phased out)
-    end: usize,   // Physical position (will be phased out)
-    force_children_recompose: bool,
-}
-
-#[allow(dead_code)]
-const INVALID_ANCHOR_POS: usize = usize::MAX;
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Public SlotStorage trait and newtypes
 // ═══════════════════════════════════════════════════════════════════════════

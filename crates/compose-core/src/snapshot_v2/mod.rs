@@ -326,8 +326,7 @@ impl AnySnapshot {
 
 thread_local! {
     // Thread-local storage for the current snapshot.
-    #[allow(clippy::missing_const_for_thread_local)] // RefCell::new is not const-stable yet
-    static CURRENT_SNAPSHOT: RefCell<Option<AnySnapshot>> = RefCell::new(None);
+    static CURRENT_SNAPSHOT: RefCell<Option<AnySnapshot>> = const { RefCell::new(None) };
 }
 
 /// Get the current snapshot, or None if not in a snapshot context.

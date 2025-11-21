@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use super::{inspector_metadata, Modifier, PointerEvent};
 use compose_foundation::{
@@ -371,7 +370,6 @@ impl ArcWake for PointerInputTaskWaker {
 }
 
 pub struct SuspendingPointerInputNode {
-    node_id: u64,
     keys: Vec<KeyToken>,
     handler: PointerInputHandler,
     dispatcher: PointerEventDispatcher,
@@ -381,10 +379,7 @@ pub struct SuspendingPointerInputNode {
 
 impl SuspendingPointerInputNode {
     fn new(keys: Vec<KeyToken>, handler: PointerInputHandler) -> Self {
-        static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
-        let node_id = NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed);
         Self {
-            node_id,
             keys,
             handler,
             dispatcher: PointerEventDispatcher::new(),

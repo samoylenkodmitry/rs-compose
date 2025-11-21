@@ -4,7 +4,6 @@
 //! focus system. Focus nodes participate in focus traversal, track focus state,
 //! and integrate with the modifier chain lifecycle.
 
-#![allow(dead_code)]
 
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
@@ -17,6 +16,7 @@ use compose_foundation::{
 
 /// Focus direction for navigation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[allow(dead_code)] // TODO: used in future focus manager integration
 pub enum FocusDirection {
     /// Enter focus from outside.
     Enter,
@@ -78,6 +78,7 @@ impl FocusTargetNode {
     }
 
     /// Requests focus for this node.
+    #[allow(dead_code)] // TODO: used in future focus manager integration
     pub fn request_focus(&self) -> bool {
         // This will be wired up to the focus manager in the next phase
         true
@@ -236,6 +237,7 @@ impl FocusRequesterNode {
     }
 
     /// Requests focus for the associated target.
+    #[allow(dead_code)] // TODO: used in future focus manager integration
     pub fn request_focus(&self) -> bool {
         // This will be wired up to the focus manager in the next phase
         true

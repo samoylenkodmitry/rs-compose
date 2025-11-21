@@ -48,8 +48,7 @@ impl GlobalSnapshot {
 }
 
 thread_local! {
-    #[allow(clippy::missing_const_for_thread_local)] // RefCell::new is not const-stable yet
-    static GLOBAL_SNAPSHOT: RefCell<Option<Arc<GlobalSnapshot>>> = RefCell::new(None);
+    static GLOBAL_SNAPSHOT: RefCell<Option<Arc<GlobalSnapshot>>> = const { RefCell::new(None) };
 }
 
 /// Clear the global snapshot (for testing only).
@@ -198,7 +197,7 @@ pub fn advance_global_snapshot(new_id: SnapshotId) {
 }
 
 /// Get the current global snapshot ID.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn global_snapshot_id() -> SnapshotId {
     let global = GlobalSnapshot::get_or_create();
     global.snapshot_id()

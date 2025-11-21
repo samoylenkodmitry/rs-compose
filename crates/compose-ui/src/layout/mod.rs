@@ -1,5 +1,4 @@
 // WIP: Layout system infrastructure - many helper types not yet fully wired up
-#![allow(dead_code)]
 
 pub mod coordinator;
 pub mod core;
@@ -201,16 +200,6 @@ impl SemanticsOwner {
             .borrow_mut()
             .insert(node_id, config.clone());
         config
-    }
-
-    /// Invalidates the cached configuration for a specific node.
-    pub fn invalidate(&self, node_id: NodeId) {
-        self.configurations.borrow_mut().remove(&node_id);
-    }
-
-    /// Clears all cached configurations.
-    pub fn clear(&self) {
-        self.configurations.borrow_mut().clear();
     }
 }
 
@@ -465,17 +454,6 @@ struct LayoutBuilder {
 }
 
 impl LayoutBuilder {
-    /// Creates a new LayoutBuilder with a fresh epoch.
-    /// This always increments the global epoch counter to ensure cache invalidation.
-    /// For selective measure optimization, use `new_with_epoch()` instead.
-    fn new(applier: Rc<ConcreteApplierHost<MemoryApplier>>) -> Self {
-        let epoch = NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
-        Self {
-            state: Rc::new(RefCell::new(LayoutBuilderState::new_with_epoch(
-                applier, epoch,
-            ))),
-        }
-    }
 
     fn new_with_epoch(applier: Rc<ConcreteApplierHost<MemoryApplier>>, epoch: u64) -> Self {
         Self {
@@ -795,7 +773,7 @@ impl LayoutBuilderState {
         // Create the inner coordinator that wraps the measure policy
         let policy_result = Rc::new(RefCell::new(None));
         let inner_coordinator: Box<dyn NodeCoordinator + '_> = Box::new(
-            crate::layout::coordinator::InnerCoordinator::new(
+            coordinator::InnerCoordinator::new(
                 Rc::clone(measure_policy),
                 measurables,
                 Rc::clone(&policy_result),
@@ -804,12 +782,9 @@ impl LayoutBuilderState {
 
         // Wrap each layout modifier node in a coordinator, building the chain
         let mut current_coordinator = inner_coordinator;
-        for (node_index, node_rc) in layout_node_data {
+        for (_node_index, node_rc) in layout_node_data {
             current_coordinator = Box::new(
-                crate::layout::coordinator::LayoutModifierCoordinator::new(
-                    Rc::clone(state_rc),
-                    node_id,
-                    node_index,
+                coordinator::LayoutModifierCoordinator::new(
                     node_rc,
                     current_coordinator,
                     Rc::clone(&shared_context),
@@ -871,7 +846,6 @@ impl LayoutBuilderState {
             state.cache_epoch
         };
         let LayoutNodeSnapshot {
-            modifier: _,
             resolved_modifiers,
             measure_policy,
             children,
@@ -1061,7 +1035,6 @@ impl LayoutBuilderState {
 /// selective measure optimization at the individual node level. Even if the tree is partially
 /// dirty (some nodes changed), clean nodes can skip measure and use cached results.
 struct LayoutNodeSnapshot {
-    modifier: Modifier,
     resolved_modifiers: ResolvedModifiers,
     measure_policy: Rc<dyn MeasurePolicy>,
     children: Vec<NodeId>,
@@ -1073,7 +1046,6 @@ struct LayoutNodeSnapshot {
 impl LayoutNodeSnapshot {
     fn from_layout_node(node: &LayoutNode) -> Self {
         Self {
-            modifier: node.modifier.clone(),
             resolved_modifiers: node.resolved_modifiers(),
             measure_policy: Rc::clone(&node.measure_policy),
             children: node.children.iter().copied().collect(),
@@ -1476,129 +1448,6 @@ impl Placeable for LayoutChildPlaceable {
     }
 }
 
-/// Simple measurable that wraps a fixed size.
-/// Used in the modifier coordinator chain to pass measurement results between nodes.
-struct SizeMeasurable {
-    size: Size,
-}
-
-impl Measurable for SizeMeasurable {
-    fn measure(&self, _constraints: Constraints) -> Box<dyn Placeable> {
-        Box::new(SizePlaceable { size: self.size })
-    }
-
-    fn min_intrinsic_width(&self, _height: f32) -> f32 {
-        self.size.width
-    }
-
-    fn max_intrinsic_width(&self, _height: f32) -> f32 {
-        self.size.width
-    }
-
-    fn min_intrinsic_height(&self, _width: f32) -> f32 {
-        self.size.height
-    }
-
-    fn max_intrinsic_height(&self, _width: f32) -> f32 {
-        self.size.height
-    }
-}
-
-struct SizePlaceable {
-    size: Size,
-}
-
-impl Placeable for SizePlaceable {
-    fn place(&self, _x: f32, _y: f32) {}
-
-    fn width(&self) -> f32 {
-        self.size.width
-    }
-
-    fn height(&self) -> f32 {
-        self.size.height
-    }
-
-    fn node_id(&self) -> NodeId {
-        0
-    }
-}
-
-/// Measurable that wraps the content (measure_policy + children) for use in modifier chain.
-struct ContentMeasurable {
-    measure_policy: Rc<dyn MeasurePolicy>,
-    measurables: Vec<Box<dyn Measurable>>,
-    policy_result: Rc<RefCell<Option<MeasureResult>>>,
-}
-
-impl ContentMeasurable {
-    fn new(measure_policy: Rc<dyn MeasurePolicy>, measurables: Vec<Box<dyn Measurable>>) -> Self {
-        Self {
-            measure_policy,
-            measurables,
-            policy_result: Rc::new(RefCell::new(None)),
-        }
-    }
-
-    fn get_policy_result(&self) -> Option<MeasureResult> {
-        self.policy_result.borrow().clone()
-    }
-}
-
-impl Measurable for ContentMeasurable {
-    fn measure(&self, constraints: Constraints) -> Box<dyn Placeable> {
-        let result = self.measure_policy.measure(&self.measurables, constraints);
-        *self.policy_result.borrow_mut() = Some(result.clone());
-        Box::new(ContentPlaceable {
-            size: result.size,
-            policy_result: Rc::clone(&self.policy_result),
-        })
-    }
-
-    fn min_intrinsic_width(&self, height: f32) -> f32 {
-        self.measure_policy
-            .min_intrinsic_width(&self.measurables, height)
-    }
-
-    fn max_intrinsic_width(&self, height: f32) -> f32 {
-        self.measure_policy
-            .max_intrinsic_width(&self.measurables, height)
-    }
-
-    fn min_intrinsic_height(&self, width: f32) -> f32 {
-        self.measure_policy
-            .min_intrinsic_height(&self.measurables, width)
-    }
-
-    fn max_intrinsic_height(&self, width: f32) -> f32 {
-        self.measure_policy
-            .max_intrinsic_height(&self.measurables, width)
-    }
-}
-
-struct ContentPlaceable {
-    size: Size,
-    policy_result: Rc<RefCell<Option<MeasureResult>>>,
-}
-
-impl Placeable for ContentPlaceable {
-    fn place(&self, _x: f32, _y: f32) {
-        // Content placement is handled by the measure policy result
-    }
-
-    fn width(&self) -> f32 {
-        self.size.width
-    }
-
-    fn height(&self) -> f32 {
-        self.size.height
-    }
-
-    fn node_id(&self) -> NodeId {
-        0 // Not used for content placeable
-    }
-}
-
 fn measure_node_with_host(
     applier: Rc<ConcreteApplierHost<MemoryApplier>>,
     runtime_handle: Option<RuntimeHandle>,
@@ -1615,51 +1464,12 @@ fn measure_node_with_host(
     builder.measure_node(node_id, constraints)
 }
 
-fn measure_leaf(
-    node_id: NodeId,
-    resolved_modifiers: ResolvedModifiers,
-    base_size: Size,
-    constraints: Constraints,
-) -> Rc<MeasuredNode> {
-    let props = resolved_modifiers.layout_properties();
-    let padding = resolved_modifiers.padding();
-    let offset = resolved_modifiers.offset();
-
-    let mut width = base_size.width + padding.horizontal_sum();
-    let mut height = base_size.height + padding.vertical_sum();
-
-    width = resolve_dimension(
-        width,
-        props.width(),
-        props.min_width(),
-        props.max_width(),
-        constraints.min_width,
-        constraints.max_width,
-    );
-    height = resolve_dimension(
-        height,
-        props.height(),
-        props.min_height(),
-        props.max_height(),
-        constraints.min_height,
-        constraints.max_height,
-    );
-
-    Rc::new(MeasuredNode::new(
-        node_id,
-        Size { width, height },
-        offset,
-        Vec::new(),
-    ))
-}
-
 #[derive(Clone)]
 struct RuntimeNodeMetadata {
     modifier: Modifier,
     resolved_modifiers: ResolvedModifiers,
     modifier_slices: ModifierNodeSlices,
     role: SemanticsRole,
-    actions: Vec<SemanticsAction>,
     button_handler: Option<Rc<RefCell<dyn FnMut()>>>,
 }
 
@@ -1670,7 +1480,6 @@ impl Default for RuntimeNodeMetadata {
             resolved_modifiers: ResolvedModifiers::default(),
             modifier_slices: ModifierNodeSlices::default(),
             role: SemanticsRole::Unknown,
-            actions: Vec::new(),
             button_handler: None,
         }
     }
@@ -1775,7 +1584,6 @@ fn runtime_metadata_for(
             resolved_modifiers: layout.resolved_modifiers(),
             modifier_slices: layout.modifier_slices_snapshot(),
             role,
-            actions: Vec::new(),
             button_handler: None,
         });
     }
@@ -1792,7 +1600,6 @@ fn runtime_metadata_for(
             resolved_modifiers,
             modifier_slices,
             role: SemanticsRole::Subcompose,
-            actions: Vec::new(),
             button_handler: None,
         });
     }
