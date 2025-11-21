@@ -4,6 +4,7 @@ use compose_ui::{
     Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::app::mineswapper2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MineswapperTool {
