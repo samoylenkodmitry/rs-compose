@@ -153,8 +153,16 @@ fn android_main(app: android_activity::AndroidApp) {
 
     android_logger::init_once(
         android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Debug)
-            .with_tag("ComposeRS"),
+            .with_max_level(log::LevelFilter::Info)  // Reduce log spam
+            .with_tag("ComposeRS")
+            .with_filter(
+                android_logger::FilterBuilder::new()
+                    .filter_level(log::LevelFilter::Info)
+                    .filter_module("wgpu_core", log::LevelFilter::Warn)
+                    .filter_module("wgpu_hal", log::LevelFilter::Warn)
+                    .filter_module("naga", log::LevelFilter::Warn)
+                    .build()
+            ),
     );
 
     log::info!("Starting Compose-RS Android Demo");
