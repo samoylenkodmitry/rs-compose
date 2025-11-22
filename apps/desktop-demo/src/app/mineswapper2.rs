@@ -506,10 +506,10 @@ pub fn mineswapper2_tab() {
                                                 }
                                             },
                                             {
-                                                let display = display;
+                                                let display_text = display;
                                                 move || {
                                                     Text(
-                                                        display.clone(),
+                                                        display_text.clone(),
                                                         Modifier::empty().padding(4.0),
                                                     );
                                                 }

@@ -390,7 +390,7 @@ where
 
 #[allow(non_snake_case)]
 pub fn useState<T: Clone + 'static>(init: impl FnOnce() -> T) -> MutableState<T> {
-    remember(|| mutableStateOf(init())).with(|state| state.clone())
+    remember(|| mutableStateOf(init())).with(|state| *state)
 }
 
 #[allow(deprecated)]
@@ -1742,7 +1742,7 @@ impl Composer {
         let state = self
             .slots_mut()
             .remember(|| MutableState::with_runtime(init(), runtime.clone()));
-        state.with(|state| state.clone())
+        state.with(|state| *state)
     }
 
     pub fn emit_node<N: Node + 'static>(&self, init: impl FnOnce() -> N) -> NodeId {
@@ -2299,10 +2299,6 @@ impl<T: Clone + 'static> MutableState<T> {
         self.value()
     }
 
-    fn schedule_invalidation(&self) {
-        self.with_inner(|inner| inner.invalidate_watchers());
-    }
-
     #[cfg(test)]
     pub(crate) fn watcher_count(&self) -> usize {
         self.with_inner(|inner| inner.watchers.borrow().len())
@@ -2342,7 +2338,7 @@ impl<T: Clone + 'static> SnapshotStateList<T> {
     }
 
     pub fn as_mutable_state(&self) -> MutableState<Vec<T>> {
-        self.state.clone()
+        self.state
     }
 
     pub fn len(&self) -> usize {
@@ -2463,7 +2459,7 @@ where
     }
 
     pub fn as_mutable_state(&self) -> MutableState<HashMap<K, V>> {
-        self.state.clone()
+        self.state
     }
 
     pub fn len(&self) -> usize {

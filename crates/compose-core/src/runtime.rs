@@ -2,13 +2,13 @@ use crate::collections::map::HashMap;
 use crate::collections::map::HashSet;
 use crate::MutableStateInner;
 use std::any::Any;
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::{HashMap as StdHashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::task::{Context, Poll, Waker};
 use std::thread::ThreadId;
 use std::thread_local;
@@ -27,7 +27,6 @@ type UiContinuationMap = HashMap<u64, UiContinuation>;
 
 trait AnyStateCell {
     fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 struct TypedStateCell<T: Clone + 'static> {
@@ -37,10 +36,6 @@ struct TypedStateCell<T: Clone + 'static> {
 impl<T: Clone + 'static> AnyStateCell for TypedStateCell<T> {
     fn as_any(&self) -> &dyn Any {
         &self.inner
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        &mut self.inner
     }
 }
 
@@ -69,15 +64,6 @@ impl StateArena {
         })
     }
 
-    fn get_cell_mut(&self, id: StateId) -> RefMut<'_, Box<dyn AnyStateCell>> {
-        RefMut::map(self.cells.borrow_mut(), |cells| {
-            cells
-                .get_mut(id.0 as usize)
-                .and_then(|cell| cell.as_mut())
-                .expect("state cell missing")
-        })
-    }
-
     pub(crate) fn get_typed<T: Clone + 'static>(
         &self,
         id: StateId,
@@ -97,17 +83,6 @@ impl StateArena {
             cell.as_any().downcast_ref::<MutableStateInner<T>>()
         })
         .ok()
-    }
-
-    pub(crate) fn get_typed_mut<T: Clone + 'static>(
-        &self,
-        id: StateId,
-    ) -> RefMut<'_, MutableStateInner<T>> {
-        RefMut::map(self.get_cell_mut(id), |cell| {
-            cell.as_any_mut()
-                .downcast_mut::<MutableStateInner<T>>()
-                .expect("state cell type mismatch")
-        })
     }
 }
 

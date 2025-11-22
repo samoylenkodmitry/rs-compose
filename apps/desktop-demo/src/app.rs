@@ -115,40 +115,43 @@ pub fn combined_app() {
                 Modifier::empty().fill_max_width().padding(8.0),
                 RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(8.0)),
                 move || {
-                    let tab_state = tab_state_for_row;
-                    let render_tab_button = move |tab: DemoTab| {
-                        let tab_state = tab_state;
-                        let is_active = tab_state.get() == tab;
-                        Button(
-                            Modifier::empty()
-                                .rounded_corners(12.0)
-                                .draw_behind(move |scope| {
-                                    scope.draw_round_rect(
-                                        Brush::solid(if is_active {
-                                            Color(0.2, 0.45, 0.9, 1.0)
-                                        } else {
-                                            Color(0.3, 0.3, 0.3, 0.5)
-                                        }),
-                                        CornerRadii::uniform(12.0),
-                                    );
-                                })
-                                .padding(10.0),
-                            {
-                                let tab_state = tab_state;
-                                move || {
-                                    if tab_state.get() != tab {
-                                        println!("{} button clicked", tab.label());
-                                        tab_state.set(tab);
+                    let render_tab_button = {
+                        let tab_state_for_row = tab_state_for_row;
+                        move |tab: DemoTab| {
+                            let tab_state_for_tab = tab_state_for_row;
+                            let is_active = tab_state_for_tab.get() == tab;
+
+                            Button(
+                                Modifier::empty()
+                                    .rounded_corners(12.0)
+                                    .draw_behind(move |scope| {
+                                        scope.draw_round_rect(
+                                            Brush::solid(if is_active {
+                                                Color(0.2, 0.45, 0.9, 1.0)
+                                            } else {
+                                                Color(0.3, 0.3, 0.3, 0.5)
+                                            }),
+                                            CornerRadii::uniform(12.0),
+                                        );
+                                    })
+                                    .padding(10.0),
+                                {
+                                    let tab_state = tab_state_for_tab;
+                                    move || {
+                                        if tab_state.get() != tab {
+                                            println!("{} button clicked", tab.label());
+                                            tab_state.set(tab);
+                                        }
                                     }
-                                }
-                            },
-                            {
-                                let label = tab.label();
-                                move || {
-                                    Text(label, Modifier::empty().padding(4.0));
-                                }
-                            },
-                        );
+                                },
+                                {
+                                    let label = tab.label();
+                                    move || {
+                                        Text(label, Modifier::empty().padding(4.0));
+                                    }
+                                },
+                            );
+                        }
                     };
 
                     render_tab_button(DemoTab::Counter);
@@ -777,12 +780,12 @@ fn counter_app() {
     let wave_state = animateFloatAsState(target_wave, "wave");
     let fetch_key = fetch_request.get();
     {
-        let async_message = async_message;
+        let async_message_state = async_message;
         LaunchedEffect!(fetch_key, move |scope| {
             if fetch_key == 0 {
                 return;
             }
-            let message_for_ui = async_message;
+            let message_for_ui = async_message_state;
             scope.launch_background(
                 move |token| {
                     use std::thread;
@@ -987,11 +990,11 @@ fn counter_app() {
                                 }
                             })
                             .pointer_input((), {
-                                let pointer_position = pointer_position;
-                                let pointer_down = pointer_down;
+                                let pointer_position_state = pointer_position;
+                                let pointer_down_state = pointer_down;
                                 move |scope: PointerInputScope| {
-                                    let pointer_position = pointer_position;
-                                    let pointer_down = pointer_down;
+                                    let pointer_position_state = pointer_position_state;
+                                    let pointer_down_state = pointer_down_state;
                                     async move {
                                         scope
                                             .await_pointer_event_scope(|await_scope| async move {
@@ -1004,19 +1007,19 @@ fn counter_app() {
                                                 );
                                                     match event.kind {
                                                         PointerEventKind::Down => {
-                                                            pointer_down.set(true)
+                                                            pointer_down_state.set(true)
                                                         }
                                                         PointerEventKind::Up => {
-                                                            pointer_down.set(false)
+                                                            pointer_down_state.set(false)
                                                         }
                                                         PointerEventKind::Move => {
-                                                            pointer_position.set(Point {
+                                                            pointer_position_state.set(Point {
                                                                 x: event.position.x,
                                                                 y: event.position.y,
                                                             });
                                                         }
                                                         PointerEventKind::Cancel => {
-                                                            pointer_down.set(false)
+                                                            pointer_down_state.set(false)
                                                         }
                                                     }
                                                 }
