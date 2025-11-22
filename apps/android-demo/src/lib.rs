@@ -174,10 +174,12 @@ fn android_main(app: android_activity::AndroidApp) {
     )> = None;
 
     let mut window_size = (0u32, 0u32);
+    let mut needs_redraw = false;
 
-    // Main event loop
+    // Main event loop - process events quickly, render outside callback
     loop {
-        app.poll_events(Some(std::time::Duration::from_millis(16)), |event| {
+        // Poll events with very short timeout to avoid blocking input
+        app.poll_events(Some(std::time::Duration::from_millis(1)), |event| {
             match event {
                 PollEvent::Main(main_event) => match main_event {
                     MainEvent::InitWindow { .. } => {
@@ -310,67 +312,53 @@ fn android_main(app: android_activity::AndroidApp) {
                         }
                     }
                     MainEvent::RedrawNeeded { .. } => {
-                        if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
-                            // Update app state
-                            app_shell.update();
-
-                            // Render frame
-                            match surface.get_current_texture() {
-                                Ok(frame) => {
-                                    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                                    let (width, height) = app_shell.buffer_size();
-
-                                    if let Err(e) = app_shell.renderer().render(&view, width, height) {
-                                        log::error!("Render error: {:?}", e);
-                                    }
-
-                                    frame.present();
-                                }
-                                Err(wgpu::SurfaceError::Lost) => {
-                                    log::warn!("Surface lost, reconfiguring");
-                                    // Surface lost, will be reconfigured on next resize
-                                }
-                                Err(wgpu::SurfaceError::OutOfMemory) => {
-                                    log::error!("Out of memory!");
-                                    return;
-                                }
-                                Err(e) => {
-                                    log::warn!("Surface error: {:?}", e);
-                                }
-                            }
-                        }
+                        needs_redraw = true;
                     }
                     _ => {}
                 },
                 PollEvent::Timeout => {
-                    // Request redraw on timeout to keep rendering
-                    if surface_state.is_some() {
-                        // Trigger a redraw by processing the RedrawNeeded event
-                        if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
-                            if app_shell.should_render() {
-                                app_shell.update();
-
-                                match surface.get_current_texture() {
-                                    Ok(frame) => {
-                                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                                        let (width, height) = app_shell.buffer_size();
-
-                                        if let Err(e) = app_shell.renderer().render(&view, width, height) {
-                                            log::error!("Render error: {:?}", e);
-                                        }
-
-                                        frame.present();
-                                    }
-                                    Err(e) => {
-                                        log::debug!("Surface error during timeout render: {:?}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // Check if we should render
+                    needs_redraw = true;
                 }
                 _ => {}
             }
         });
+
+        // Do actual rendering outside the event callback to avoid blocking input
+        if needs_redraw && surface_state.is_some() {
+            if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
+                // Only render if there's actually something to update
+                if app_shell.should_render() {
+                    app_shell.update();
+
+                    match surface.get_current_texture() {
+                        Ok(frame) => {
+                            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                            let (width, height) = app_shell.buffer_size();
+
+                            if let Err(e) = app_shell.renderer().render(&view, width, height) {
+                                log::error!("Render error: {:?}", e);
+                            }
+
+                            frame.present();
+                        }
+                        Err(wgpu::SurfaceError::Lost) => {
+                            log::warn!("Surface lost, will be reconfigured");
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                            log::error!("Out of memory!");
+                            break;
+                        }
+                        Err(e) => {
+                            log::debug!("Surface error: {:?}", e);
+                        }
+                    }
+                }
+            }
+            needs_redraw = false;
+        }
+
+        // Small sleep to avoid busy loop when not rendering
+        std::thread::sleep(std::time::Duration::from_millis(8));
     }
 }
