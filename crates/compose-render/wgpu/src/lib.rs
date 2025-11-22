@@ -80,15 +80,17 @@ impl SharedTextBuffer {
         width: f32,
         height: f32,
     ) -> bool {
-        // Check if anything changed that requires reshaping
+        // Always update buffer size to match rendering viewport
+        self.buffer.set_size(font_system, width, height);
+
+        // Check if text or font_size changed (requires reshaping)
         if self.text == text && self.font_size == font_size {
-            return false; // No reshaping needed!
+            return false; // No reshaping needed, just size update!
         }
 
         // Something changed, need to reshape
         let metrics = Metrics::new(font_size, font_size * 1.4);
         self.buffer.set_metrics(font_system, metrics);
-        self.buffer.set_size(font_system, width, height);
         self.buffer
             .set_text(font_system, text, attrs, Shaping::Advanced);
         self.buffer.shape_until_scroll(font_system);
