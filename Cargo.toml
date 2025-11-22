@@ -13,10 +13,12 @@ members = [
     "crates/compose-ui",
     "crates/compose-testing",
     "crates/compose-platform/desktop-winit",
+    "crates/compose-platform/android",
     "crates/compose-render/common",
     "crates/compose-render/pixels",
     "crates/compose-render/wgpu",
     "apps/desktop-demo",
     "apps/minimal-single-file",
+    "apps/android-demo",
 ]
 resolver = "2"
