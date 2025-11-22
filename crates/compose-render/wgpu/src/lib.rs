@@ -147,9 +147,22 @@ impl WgpuRenderer {
     pub fn new() -> Self {
         let mut font_system = FontSystem::new();
 
-        // Load Roboto font into the system
-        let font_data = include_bytes!("../../../../assets/Roboto-Light.ttf");
-        font_system.db_mut().load_font_data(font_data.to_vec());
+        // Load Roboto fonts into the system
+        let font_light = include_bytes!("../../../../assets/Roboto-Light.ttf");
+        let font_regular = include_bytes!("../../../../assets/Roboto-Regular.ttf");
+
+        log::info!("Loading Roboto Light font, size: {} bytes", font_light.len());
+        font_system.db_mut().load_font_data(font_light.to_vec());
+
+        log::info!("Loading Roboto Regular font, size: {} bytes", font_regular.len());
+        font_system.db_mut().load_font_data(font_regular.to_vec());
+
+        let face_count = font_system.db().faces().count();
+        log::info!("Total font faces loaded: {}", face_count);
+
+        if face_count == 0 {
+            log::error!("No fonts loaded! Text rendering will fail!");
+        }
 
         let font_system = Arc::new(Mutex::new(font_system));
 
