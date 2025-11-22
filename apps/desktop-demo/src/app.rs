@@ -102,7 +102,7 @@ fn random() -> i32 {
 pub fn combined_app() {
     let active_tab = compose_core::useState(|| DemoTab::Counter);
     TEST_ACTIVE_TAB_STATE.with(|cell| {
-        *cell.borrow_mut() = Some(active_tab.clone());
+        *cell.borrow_mut() = Some(active_tab);
     });
 
     Column(
@@ -117,7 +117,6 @@ pub fn combined_app() {
                 move || {
                     let tab_state = tab_state_for_row;
                     let render_tab_button = move |tab: DemoTab| {
-                        let tab_state = tab_state;
                         let is_active = tab_state.get() == tab;
                         Button(
                             Modifier::empty()
@@ -134,7 +133,6 @@ pub fn combined_app() {
                                 })
                                 .padding(10.0),
                             {
-                                let tab_state = tab_state;
                                 move || {
                                     if tab_state.get() != tab {
                                         println!("{} button clicked", tab.label());
@@ -360,7 +358,7 @@ pub fn composition_local_example() {
     let counter = compose_core::useState(|| 0);
 
     TEST_COMPOSITION_LOCAL_COUNTER.with(|cell| {
-        *cell.borrow_mut() = Some(counter.clone());
+        *cell.borrow_mut() = Some(counter);
     });
 
     Column(
@@ -777,7 +775,6 @@ fn counter_app() {
     let wave_state = animateFloatAsState(target_wave, "wave");
     let fetch_key = fetch_request.get();
     {
-        let async_message = async_message;
         LaunchedEffect!(fetch_key, move |scope| {
             if fetch_key == 0 {
                 return;
@@ -987,11 +984,7 @@ fn counter_app() {
                                 }
                             })
                             .pointer_input((), {
-                                let pointer_position = pointer_position;
-                                let pointer_down = pointer_down;
                                 move |scope: PointerInputScope| {
-                                    let pointer_position = pointer_position;
-                                    let pointer_down = pointer_down;
                                     async move {
                                         scope
                                             .await_pointer_event_scope(|await_scope| async move {
