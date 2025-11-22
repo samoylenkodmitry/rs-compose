@@ -25,6 +25,7 @@ log = "0.4"
 jni = "0.21"
 ndk = "0.9"
 ndk-context = "0.1"
+ndk-glue = "0.7"
 
 [dev-dependencies]
 compose-macros = { path = "../../crates/compose-macros" }

@@ -141,10 +141,10 @@ fn grid_example() {
     );
 }
 
-// Android JNI entry point
+// Android entry point using ndk-glue
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn android_main(app: ndk::native_activity::NativeActivity) {
+fn android_main(app: ndk_glue::AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
@@ -152,12 +152,6 @@ pub extern "C" fn android_main(app: ndk::native_activity::NativeActivity) {
     );
 
     log::info!("Starting Compose-RS Android Demo");
-
-    // Set the Android context for ndk-context
-    // SAFETY: This is called once at app startup with valid JNI pointers from NativeActivity
-    unsafe {
-        ndk_context::initialize_android_context(app.vm().cast(), app.activity().cast());
-    }
 
     // For now, just log that we started and keep the app running
     // Full Android integration with wgpu surface will be implemented later
@@ -184,12 +178,14 @@ pub extern "C" fn android_main(app: ndk::native_activity::NativeActivity) {
 
     log::info!("Initial composition completed");
 
-    // Keep the activity alive
+    // Keep the activity alive by handling events
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        app.poll_events(Some(std::time::Duration::from_millis(100)), |event| {
+            log::debug!("Received event: {:?}", event);
+        });
     }
 }
 
-// Export the android_main for NativeActivity
+// Export the ndk-glue entry point
 #[cfg(target_os = "android")]
-pub use ndk::native_activity::*;
+ndk_glue::ndk_glue!(android_main);
