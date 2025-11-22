@@ -24,7 +24,8 @@ pub use launched_effect::{
 pub use owned::Owned;
 pub use platform::{Clock, RuntimeScheduler};
 pub use runtime::{
-    schedule_frame, schedule_node_update, DefaultScheduler, Runtime, RuntimeHandle, TaskHandle,
+    schedule_frame, schedule_node_update, DefaultScheduler, Runtime, RuntimeHandle, StateId,
+    TaskHandle,
 };
 pub use snapshot_state_observer::SnapshotStateObserver;
 
@@ -46,6 +47,7 @@ pub use runtime::{TestRuntime, TestScheduler};
 
 use crate::collections::map::HashMap;
 use crate::collections::map::HashSet;
+use crate::runtime::{runtime_handle_for, RuntimeId};
 use crate::state::{NeverEqual, SnapshotMutableState, UpdateScope};
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -2091,7 +2093,7 @@ struct LocalContext {
     values: HashMap<LocalKey, Rc<dyn Any>>,
 }
 
-struct MutableStateInner<T: Clone + 'static> {
+pub(crate) struct MutableStateInner<T: Clone + 'static> {
     state: Arc<SnapshotMutableState<T>>,
     watchers: RefCell<Vec<Weak<RecomposeScopeInner>>>, // FUTURE(no_std): move to stack-allocated subscription list.
     runtime: RuntimeHandle,
@@ -2106,16 +2108,16 @@ impl<T: Clone + 'static> MutableStateInner<T> {
         }
     }
 
-    fn install_snapshot_observer(this: &Rc<Self>) {
-        let runtime_handle = this.runtime.clone();
-        let weak_inner = Rc::downgrade(this);
-        this.state.add_apply_observer(Box::new(move || {
+    fn install_snapshot_observer(&self, state_id: StateId) {
+        let runtime_handle = self.runtime.clone();
+        self.state.add_apply_observer(Box::new(move || {
             let runtime = runtime_handle.clone();
-            let weak_for_task = weak_inner.clone();
-            runtime.enqueue_ui_task(Box::new(move || {
-                if let Some(inner) = weak_for_task.upgrade() {
-                    inner.invalidate_watchers();
-                }
+            runtime_handle.enqueue_ui_task(Box::new(move || {
+                runtime.with_state_arena(|arena| {
+                    if let Some(inner) = arena.get_typed_opt::<T>(state_id) {
+                        inner.invalidate_watchers();
+                    }
+                });
             }));
         }));
     }
@@ -2142,56 +2144,111 @@ impl<T: Clone + 'static> MutableStateInner<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct State<T: Clone + 'static> {
-    inner: Rc<MutableStateInner<T>>, // FUTURE(no_std): replace Rc with arena-managed state handles.
+    id: StateId,
+    runtime_id: RuntimeId,
+    _marker: PhantomData<fn() -> T>,
 }
 
+impl<T: Clone + 'static> Copy for State<T> {}
+
+#[derive(Clone)]
 pub struct MutableState<T: Clone + 'static> {
-    inner: Rc<MutableStateInner<T>>, // FUTURE(no_std): replace Rc with arena-managed state handles.
+    id: StateId,
+    runtime_id: RuntimeId,
+    _marker: PhantomData<fn() -> T>,
 }
+
+impl<T: Clone + 'static> Copy for MutableState<T> {}
 
 impl<T: Clone + 'static> PartialEq for State<T> {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
+        self.id == other.id && self.runtime_id == other.runtime_id
     }
 }
 
 impl<T: Clone + 'static> Eq for State<T> {}
 
-impl<T: Clone + 'static> Clone for State<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Rc::clone(&self.inner),
-        }
-    }
-}
-
 impl<T: Clone + 'static> PartialEq for MutableState<T> {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
+        self.id == other.id && self.runtime_id == other.runtime_id
     }
 }
 
 impl<T: Clone + 'static> Eq for MutableState<T> {}
 
-impl<T: Clone + 'static> Clone for MutableState<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Rc::clone(&self.inner),
+impl<T: Clone + 'static> State<T> {
+    fn runtime_handle(&self) -> RuntimeHandle {
+        runtime_handle_for(self.runtime_id).expect("runtime handle missing")
+    }
+
+    fn with_inner<R>(&self, f: impl FnOnce(&MutableStateInner<T>) -> R) -> R {
+        self.runtime_handle().with_state_arena(|arena| {
+            let inner = arena.get_typed::<T>(self.id);
+            f(&inner)
+        })
+    }
+
+    fn subscribe_current_scope(&self) {
+        if let Some(Some(scope)) =
+            with_current_composer_opt(|composer| composer.current_recompose_scope())
+        {
+            self.with_inner(|inner| {
+                let mut watchers = inner.watchers.borrow_mut();
+                watchers.retain(|w| w.strong_count() > 0);
+                let id = scope.id();
+                let already_registered = watchers
+                    .iter()
+                    .any(|w| w.upgrade().map(|inner| inner.id == id).unwrap_or(false));
+                if !already_registered {
+                    watchers.push(scope.downgrade());
+                }
+            });
         }
+    }
+
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.subscribe_current_scope();
+        self.with_inner(|inner| inner.with_value(f))
+    }
+
+    pub fn value(&self) -> T {
+        self.subscribe_current_scope();
+        self.with(|value| value.clone())
+    }
+
+    pub fn get(&self) -> T {
+        self.value()
     }
 }
 
 impl<T: Clone + 'static> MutableState<T> {
     pub fn with_runtime(value: T, runtime: RuntimeHandle) -> Self {
-        let inner = Rc::new(MutableStateInner::new(value, runtime));
-        MutableStateInner::install_snapshot_observer(&inner);
-        Self { inner }
+        let id = runtime.alloc_state(value);
+        Self {
+            id,
+            runtime_id: runtime.id(),
+            _marker: PhantomData,
+        }
+    }
+
+    fn runtime_handle(&self) -> RuntimeHandle {
+        runtime_handle_for(self.runtime_id).expect("runtime handle missing")
+    }
+
+    fn with_inner<R>(&self, f: impl FnOnce(&MutableStateInner<T>) -> R) -> R {
+        self.runtime_handle().with_state_arena(|arena| {
+            let inner = arena.get_typed::<T>(self.id);
+            f(&inner)
+        })
     }
 
     pub fn as_state(&self) -> State<T> {
         State {
-            inner: Rc::clone(&self.inner),
+            id: self.id,
+            runtime_id: self.runtime_id,
+            _marker: PhantomData,
         }
     }
 
@@ -2200,22 +2257,30 @@ impl<T: Clone + 'static> MutableState<T> {
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        self.inner.runtime.assert_ui_thread();
-        let mut value = self.inner.state.get();
-        let tracker = UpdateScope::new(self.inner.state.id());
-        let result = f(&mut value);
-        let wrote_elsewhere = tracker.finish();
-        if !wrote_elsewhere {
-            self.inner.state.set(value);
-        }
-        self.schedule_invalidation();
-        result
+        let runtime = self.runtime_handle();
+        runtime.assert_ui_thread();
+        runtime.with_state_arena(|arena| {
+            let inner = arena.get_typed::<T>(self.id);
+            let mut value = inner.state.get();
+            let tracker = UpdateScope::new(inner.state.id());
+            let result = f(&mut value);
+            let wrote_elsewhere = tracker.finish();
+            if !wrote_elsewhere {
+                inner.state.set(value);
+            }
+            inner.invalidate_watchers();
+            result
+        })
     }
 
     pub fn replace(&self, value: T) {
-        self.inner.runtime.assert_ui_thread();
-        self.inner.state.set(value);
-        self.schedule_invalidation();
+        let runtime = self.runtime_handle();
+        runtime.assert_ui_thread();
+        runtime.with_state_arena(|arena| {
+            let inner = arena.get_typed::<T>(self.id);
+            inner.state.set(value);
+            inner.invalidate_watchers();
+        });
     }
 
     pub fn set_value(&self, value: T) {
@@ -2235,21 +2300,23 @@ impl<T: Clone + 'static> MutableState<T> {
     }
 
     fn schedule_invalidation(&self) {
-        self.inner.invalidate_watchers();
+        self.with_inner(|inner| inner.invalidate_watchers());
     }
 
     #[cfg(test)]
     pub(crate) fn watcher_count(&self) -> usize {
-        self.inner.watchers.borrow().len()
+        self.with_inner(|inner| inner.watchers.borrow().len())
     }
 }
 
 impl<T: fmt::Debug + Clone + 'static> fmt::Debug for MutableState<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.with_value(|value| {
-            f.debug_struct("MutableState")
-                .field("value", value)
-                .finish()
+        self.with_inner(|inner| {
+            inner.with_value(|value| {
+                f.debug_struct("MutableState")
+                    .field("value", value)
+                    .finish()
+            })
         })
     }
 }
@@ -2486,42 +2553,11 @@ impl<T: Clone + 'static> DerivedState<T> {
     }
 }
 
-impl<T: Clone + 'static> State<T> {
-    fn subscribe_current_scope(&self) {
-        if let Some(Some(scope)) =
-            with_current_composer_opt(|composer| composer.current_recompose_scope())
-        {
-            let mut watchers = self.inner.watchers.borrow_mut();
-            watchers.retain(|w| w.strong_count() > 0);
-            let id = scope.id();
-            let already_registered = watchers
-                .iter()
-                .any(|w| w.upgrade().map(|inner| inner.id == id).unwrap_or(false));
-            if !already_registered {
-                watchers.push(scope.downgrade());
-            }
-        }
-    }
-
-    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        self.subscribe_current_scope();
-        self.inner.with_value(f)
-    }
-
-    pub fn value(&self) -> T {
-        self.subscribe_current_scope();
-        self.inner.state.get()
-    }
-
-    pub fn get(&self) -> T {
-        self.value()
-    }
-}
-
 impl<T: fmt::Debug + Clone + 'static> fmt::Debug for State<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner
-            .with_value(|value| f.debug_struct("State").field("value", value).finish())
+        self.with_inner(|inner| {
+            inner.with_value(|value| f.debug_struct("State").field("value", value).finish())
+        })
     }
 }
 

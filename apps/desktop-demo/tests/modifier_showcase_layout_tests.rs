@@ -443,13 +443,12 @@ fn test_dynamic_modifiers_size_changes() {
 #[test]
 fn test_dynamic_modifiers_frame_advancement() {
     let mut rule = ComposeTestRule::new();
-    let runtime = rule.runtime_handle();
-    let frame = MutableState::with_runtime(0i32, runtime.clone());
+    let frame = MutableState::with_runtime(0i32, rule.runtime_handle());
 
     rule.set_content({
-        let frame = frame.clone();
+        let frame = frame;
         move || {
-            let frame_inner = frame.clone();
+            let frame_inner = frame;
             dynamic_modifiers_showcase_with_frame(frame_inner);
         }
     })

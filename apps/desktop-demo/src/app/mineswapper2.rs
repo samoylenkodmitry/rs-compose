@@ -40,7 +40,7 @@ const GRID_PRESETS: [GridPreset; 3] = [
     },
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct MineswapperCell {
     is_mine: bool,
     is_revealed: bool,
@@ -249,11 +249,11 @@ pub fn mineswapper2_tab() {
             .padding(20.0),
         ColumnSpec::default(),
         {
-            let header_game_state = game_state.clone();
-            let header_flag_mode = flag_mode.clone();
-            let header_preset_state = preset_state.clone();
-            let content_game_state = game_state.clone();
-            let content_flag_mode = flag_mode.clone();
+            let header_game_state = game_state;
+            let header_flag_mode = flag_mode;
+            let header_preset_state = preset_state;
+            let content_game_state = game_state;
+            let content_flag_mode = flag_mode;
             move || {
                 Row(
                     Modifier::empty().fill_max_width().padding(8.0),
@@ -261,9 +261,9 @@ pub fn mineswapper2_tab() {
                         .horizontal_arrangement(LinearArrangement::SpacedBy(12.0))
                         .vertical_alignment(VerticalAlignment::CenterVertically),
                     {
-                        let game_state = header_game_state.clone();
-                        let flag_mode = header_flag_mode.clone();
-                        let preset_state = header_preset_state.clone();
+                        let game_state = header_game_state;
+                        let flag_mode = header_flag_mode;
+                        let preset_state = header_preset_state;
                         move || {
                             Text(
                                 "Mineswapper 2",
@@ -284,13 +284,13 @@ pub fn mineswapper2_tab() {
                                     .horizontal_arrangement(LinearArrangement::SpacedBy(8.0))
                                     .vertical_alignment(VerticalAlignment::CenterVertically),
                                 {
-                                    let game_state = game_state.clone();
-                                    let preset_state = preset_state.clone();
+                                    let game_state = game_state;
+                                    let preset_state = preset_state;
                                     move || {
                                         for preset in GRID_PRESETS {
                                             let is_active = preset_state.get() == preset;
-                                            let game_state = game_state.clone();
-                                            let preset_state = preset_state.clone();
+                                            let game_state = game_state;
+                                            let preset_state = preset_state;
                                             Button(
                                                 Modifier::empty()
                                                     .rounded_corners(12.0)
@@ -337,8 +337,8 @@ pub fn mineswapper2_tab() {
                                     })
                                     .padding(10.0),
                                 {
-                                    let game_state = game_state.clone();
-                                    let preset_state = preset_state.clone();
+                                    let game_state = game_state;
+                                    let preset_state = preset_state;
                                     move || {
                                         let preset = preset_state.get();
                                         game_state.set(MineswapperGame::new_from_preset(
@@ -352,7 +352,7 @@ pub fn mineswapper2_tab() {
                                 },
                             );
 
-                            let mode_toggle = flag_mode.clone();
+                            let mode_toggle = flag_mode;
                             Button(
                                 Modifier::empty()
                                     .rounded_corners(14.0)
@@ -371,7 +371,7 @@ pub fn mineswapper2_tab() {
                                     mode_toggle.set(next_mode);
                                 },
                                 {
-                                    let mode_label = flag_mode.clone();
+                                    let mode_label = flag_mode;
                                     move || {
                                         let label = match mode_label.get() {
                                             MineswapperTool::Flag => "Flag mode",
@@ -436,8 +436,8 @@ pub fn mineswapper2_tab() {
 
                 let grid_width = game.width;
                 let grid_height = game.height;
-                let grid_state = content_game_state.clone();
-                let grid_flag_mode = content_flag_mode.clone();
+                let grid_state = content_game_state;
+                let grid_flag_mode = content_flag_mode;
 
                 Column(
                     Modifier::empty()
@@ -447,8 +447,8 @@ pub fn mineswapper2_tab() {
                     ColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(6.0)),
                     move || {
                         for y in 0..grid_height {
-                            let game_state = grid_state.clone();
-                            let flag_mode = grid_flag_mode.clone();
+                            let game_state = grid_state;
+                            let flag_mode = grid_flag_mode;
                             Row(
                                 Modifier::empty().fill_max_width().padding(2.0),
                                 RowSpec::new()
@@ -457,7 +457,7 @@ pub fn mineswapper2_tab() {
                                 move || {
                                     for x in 0..grid_width {
                                         let game_snapshot = game_state.get();
-                                        let cell = game_snapshot.cell_at(x, y).clone();
+                                        let cell = *game_snapshot.cell_at(x, y);
                                         let display = if cell.is_revealed {
                                             if cell.is_mine {
                                                 "💣".to_string()
@@ -484,8 +484,8 @@ pub fn mineswapper2_tab() {
                                             Color(0.12, 0.14, 0.22, 0.9)
                                         };
 
-                                        let game_action = game_state.clone();
-                                        let mode_state = flag_mode.clone();
+                                        let game_action = game_state;
+                                        let mode_state = flag_mode;
                                         Button(
                                             Modifier::empty()
                                                 .size_points(36.0, 36.0)
@@ -506,7 +506,7 @@ pub fn mineswapper2_tab() {
                                                 }
                                             },
                                             {
-                                                let display = display.clone();
+                                                let display = display;
                                                 move || {
                                                     Text(
                                                         display.clone(),
