@@ -19,5 +19,5 @@ compose-render-wgpu = { path = "../compose-render/wgpu", optional = true }
 pixels = { version = "0.15", optional = true }
 wgpu = { version = "0.19", optional = true }
 pollster = { version = "0.3", optional = true }
-winit = { version = "0.29", optional = true }
+winit = { version = "0.29", optional = true, features = ["android-native-activity"] }
 log = "0.4"
