@@ -141,10 +141,10 @@ fn grid_example() {
     );
 }
 
-// Android entry point using ndk-glue
+// Android entry point using android-activity
 #[cfg(target_os = "android")]
 #[no_mangle]
-fn android_main(app: ndk_glue::AndroidApp) {
+fn android_main(app: android_activity::AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
@@ -185,7 +185,3 @@ fn android_main(app: ndk_glue::AndroidApp) {
         });
     }
 }
-
-// Export the ndk-glue entry point
-#[cfg(target_os = "android")]
-ndk_glue::ndk_glue!(android_main);
