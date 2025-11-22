@@ -228,6 +228,14 @@ impl SnapshotStateObserverInner {
         self.scopes
             .borrow_mut()
             .retain(|entry| !entry.borrow().matches_scope(scope));
+
+        self.fast_scopes.borrow_mut().iter_mut().for_each(|entry| {
+            if let Some(scope_entry) = entry {
+                if scope_entry.borrow().matches_scope(scope) {
+                    *entry = None;
+                }
+            }
+        });
     }
 
     fn clear_if(&self, predicate: impl Fn(&dyn Any) -> bool) {
@@ -235,10 +243,19 @@ impl SnapshotStateObserverInner {
             let entry_ref = entry.borrow();
             !predicate(entry_ref.scope())
         });
+
+        self.fast_scopes.borrow_mut().iter_mut().for_each(|entry| {
+            if let Some(scope_entry) = entry {
+                if predicate(scope_entry.borrow().scope()) {
+                    *entry = None;
+                }
+            }
+        });
     }
 
     fn clear_all(&self) {
         self.scopes.borrow_mut().clear();
+        self.fast_scopes.borrow_mut().clear();
     }
 
     // Arc-wrapped closure captures Weak which may not be Send/Sync. This is safe because
@@ -284,6 +301,7 @@ impl SnapshotStateObserverInner {
 
             let entry = Rc::new(RefCell::new(ScopeEntry::new(scope, on_changed)));
             fast[id] = Some(entry.clone());
+            self.scopes.borrow_mut().push(entry.clone());
             return entry;
         }
 
@@ -329,24 +347,42 @@ impl SnapshotStateObserverInner {
             modified_ids.push(state.object_id().as_usize());
         }
 
-        let scopes = self.scopes.borrow();
         let mut to_notify: Vec<Rc<RefCell<ScopeEntry>>> = Vec::new();
         let mut seen: HashSet<usize> = HashSet::default();
 
-        for entry in scopes.iter() {
-            let entry_ref = entry.borrow();
-            if entry_ref
-                .observed
-                .iter()
-                .any(|id| modified_ids.contains(id))
-            {
-                let ptr = Rc::as_ptr(entry) as usize;
-                if seen.insert(ptr) {
-                    to_notify.push(entry.clone());
+        {
+            let scopes = self.scopes.borrow();
+            for entry in scopes.iter() {
+                let entry_ref = entry.borrow();
+                if entry_ref
+                    .observed
+                    .iter()
+                    .any(|id| modified_ids.contains(id))
+                {
+                    let ptr = Rc::as_ptr(entry) as usize;
+                    if seen.insert(ptr) {
+                        to_notify.push(entry.clone());
+                    }
                 }
             }
         }
-        drop(scopes);
+
+        {
+            let fast_scopes = self.fast_scopes.borrow();
+            for entry in fast_scopes.iter().flatten() {
+                let entry_ref = entry.borrow();
+                if entry_ref
+                    .observed
+                    .iter()
+                    .any(|id| modified_ids.contains(id))
+                {
+                    let ptr = Rc::as_ptr(entry) as usize;
+                    if seen.insert(ptr) {
+                        to_notify.push(entry.clone());
+                    }
+                }
+            }
+        }
 
         if to_notify.is_empty() {
             return;
