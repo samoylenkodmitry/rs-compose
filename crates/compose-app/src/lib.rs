@@ -2,14 +2,19 @@
 
 //! High level utilities for running Compose applications with minimal boilerplate.
 
-#[cfg(not(feature = "desktop"))]
-compile_error!("compose-app must be built with the `desktop` feature enabled.");
+#[cfg(not(any(feature = "desktop", feature = "android")))]
+compile_error!("compose-app must be built with either the `desktop` or `android` feature enabled.");
 
 #[cfg(not(any(feature = "renderer-pixels", feature = "renderer-wgpu")))]
 compile_error!("compose-app requires either the `renderer-pixels` or `renderer-wgpu` feature.");
 
 use compose_app_shell::{default_root_key, AppShell};
+
+#[cfg(feature = "desktop")]
 use compose_platform_desktop_winit::DesktopWinitPlatform;
+
+#[cfg(feature = "android")]
+use compose_platform_android::AndroidPlatform;
 
 #[cfg(feature = "renderer-pixels")]
 use compose_render_pixels::{draw_scene, PixelsRenderer};
@@ -21,9 +26,13 @@ use compose_render_wgpu::WgpuRenderer;
 
 use std::sync::Arc;
 
+#[cfg(feature = "desktop")]
 use winit::dpi::LogicalSize;
+#[cfg(feature = "desktop")]
 use winit::event::{ElementState, Event, MouseButton, WindowEvent};
+#[cfg(feature = "desktop")]
 use winit::event_loop::{ControlFlow, EventLoopBuilder};
+#[cfg(feature = "desktop")]
 use winit::window::WindowBuilder;
 
 /// Builder used to configure and launch a Compose application.
@@ -180,13 +189,20 @@ macro_rules! composeApp {
 }
 
 fn run_app(options: ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
-    #[cfg(feature = "renderer-wgpu")]
+    #[cfg(all(feature = "renderer-wgpu", feature = "desktop"))]
     {
         run_wgpu_app(&options, content)
     }
-    #[cfg(all(feature = "renderer-pixels", not(feature = "renderer-wgpu")))]
+    #[cfg(all(feature = "renderer-pixels", feature = "desktop", not(feature = "renderer-wgpu")))]
     {
         run_pixels_app(&options, content)
+    }
+    #[cfg(feature = "android")]
+    {
+        // Android apps use NativeActivity and don't use this entry point.
+        // The compose UI should be set up in the android_main function using NativeActivity.
+        log::error!("ComposeApp!() macro is not supported on Android. Please use NativeActivity directly.");
+        std::process::exit(1);
     }
 }
 
@@ -321,7 +337,7 @@ fn run_pixels_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) 
     std::process::exit(0);
 }
 
-#[cfg(feature = "renderer-wgpu")]
+#[cfg(all(feature = "renderer-wgpu", feature = "desktop"))]
 fn run_wgpu_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     let event_loop = EventLoopBuilder::new()
         .build()

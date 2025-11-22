@@ -69,7 +69,7 @@ pub(crate) struct SharedTextBuffer {
 }
 
 impl SharedTextBuffer {
-    /// Ensure the buffer has the correct text and font_size, only reshaping if needed
+    /// Ensure the buffer has the correct text, font_size, and size, only reshaping if needed
     /// Returns true if reshaping occurred
     pub(crate) fn ensure(
         &mut self,
@@ -77,10 +77,15 @@ impl SharedTextBuffer {
         text: &str,
         font_size: f32,
         attrs: Attrs,
+        width: f32,
+        height: f32,
     ) -> bool {
-        // Check if anything changed that requires reshaping
+        // Always update buffer size to match rendering viewport
+        self.buffer.set_size(font_system, width, height);
+
+        // Check if text or font_size changed (requires reshaping)
         if self.text == text && self.font_size == font_size {
-            return false; // No reshaping needed!
+            return false; // No reshaping needed, just size update!
         }
 
         // Something changed, need to reshape
@@ -147,9 +152,29 @@ impl WgpuRenderer {
     pub fn new() -> Self {
         let mut font_system = FontSystem::new();
 
-        // Load Roboto font into the system
-        let font_data = include_bytes!("../../../../apps/desktop-demo/assets/Roboto-Light.ttf");
-        font_system.db_mut().load_font_data(font_data.to_vec());
+        // On Android, load system fonts from /system/fonts
+        #[cfg(target_os = "android")]
+        {
+            log::info!("Loading Android system fonts from /system/fonts");
+            font_system.db_mut().load_fonts_dir("/system/fonts");
+        }
+
+        // Load embedded Roboto fonts as additional fonts
+        let font_light = include_bytes!("../../../../assets/Roboto-Light.ttf");
+        let font_regular = include_bytes!("../../../../assets/Roboto-Regular.ttf");
+
+        log::info!("Loading Roboto Light font, size: {} bytes", font_light.len());
+        font_system.db_mut().load_font_data(font_light.to_vec());
+
+        log::info!("Loading Roboto Regular font, size: {} bytes", font_regular.len());
+        font_system.db_mut().load_font_data(font_regular.to_vec());
+
+        let face_count = font_system.db().faces().count();
+        log::info!("Total font faces loaded: {}", face_count);
+
+        if face_count == 0 {
+            log::error!("No fonts loaded! Text rendering will fail!");
+        }
 
         let font_system = Arc::new(Mutex::new(font_system));
 
@@ -283,15 +308,17 @@ impl TextMeasurer for WgpuTextMeasurer {
         let mut text_cache = self.text_cache.lock().unwrap();
 
         // Get or create cached buffer and measure it
+        // Use large dimensions for measurement (text can be any size during layout)
+        const MEASURE_SIZE: f32 = 10000.0;
         let size = if let Some(cached) = text_cache.get_mut(&cache_key) {
             // Shared cache hit - use ensure() to only reshape if needed
-            cached.ensure(&mut font_system, text, font_size, Attrs::new());
+            cached.ensure(&mut font_system, text, font_size, Attrs::new(), MEASURE_SIZE, MEASURE_SIZE);
             cached.size(font_size)
         } else {
             // Cache miss - create new buffer and add to shared cache
             let mut new_buffer =
                 Buffer::new(&mut font_system, Metrics::new(font_size, font_size * 1.4));
-            new_buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
+            new_buffer.set_size(&mut font_system, MEASURE_SIZE, MEASURE_SIZE);
             new_buffer.set_text(&mut font_system, text, Attrs::new(), Shaping::Advanced);
             new_buffer.shape_until_scroll(&mut font_system);
 
