@@ -16,9 +16,6 @@ use compose_ui_layout::{
 
 #[composable]
 fn combined_app() {
-    use compose_foundation::layout::TabRow;
-    use compose_ui_layout::modifier::FillMaxWidth;
-
     let selected_tab = compose_core::useState(|| 0);
 
     Column(
@@ -30,12 +27,6 @@ fn combined_app() {
         {
             let selected_tab = selected_tab.clone();
             move || {
-                TabRow(
-                    Modifier::empty().fill_max_width(),
-                    selected_tab.clone(),
-                    vec!["Counter".to_string(), "Grid".to_string()],
-                );
-
                 Spacer(Size {
                     width: 0.0,
                     height: 16.0,
@@ -175,10 +166,32 @@ pub extern "C" fn android_main(app: ndk::native_activity::NativeActivity) {
     // Set the Android context for ndk-context
     ndk_context::initialize_android_context(app.vm().cast(), app.activity().cast());
 
-    // Run the compose app
-    compose_app::ComposeApp!(|| {
+    // For now, just log that we started and keep the app running
+    // Full Android integration with wgpu surface will be implemented later
+    log::info!("Android app initialized successfully");
+    log::info!("Note: Full UI rendering support is work in progress");
+
+    // TODO: Implement proper Android event loop and wgpu surface creation
+    // This will require:
+    // 1. Creating an Android surface from the NativeActivity window
+    // 2. Setting up wgpu with the Android surface
+    // 3. Implementing the render loop with Android lifecycle events
+    // 4. Handling input events from the native activity
+
+    // For now, just run the composable function once to verify it compiles
+    // In a real implementation, this would be called in the render loop
+    use compose_core::CompositionRoot;
+    let mut root = CompositionRoot::new(|| {
         combined_app();
     });
+    root.recompose();
+
+    log::info!("Initial composition completed");
+
+    // Keep the activity alive
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
 
 // Export the android_main for NativeActivity

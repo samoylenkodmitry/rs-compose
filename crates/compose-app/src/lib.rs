@@ -189,13 +189,20 @@ macro_rules! composeApp {
 }
 
 fn run_app(options: ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
-    #[cfg(feature = "renderer-wgpu")]
+    #[cfg(all(feature = "renderer-wgpu", feature = "desktop"))]
     {
         run_wgpu_app(&options, content)
     }
-    #[cfg(all(feature = "renderer-pixels", not(feature = "renderer-wgpu")))]
+    #[cfg(all(feature = "renderer-pixels", feature = "desktop", not(feature = "renderer-wgpu")))]
     {
         run_pixels_app(&options, content)
+    }
+    #[cfg(feature = "android")]
+    {
+        // Android apps use NativeActivity and don't use this entry point.
+        // The compose UI should be set up in the android_main function using NativeActivity.
+        log::error!("ComposeApp!() macro is not supported on Android. Please use NativeActivity directly.");
+        std::process::exit(1);
     }
 }
 
@@ -330,7 +337,7 @@ fn run_pixels_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) 
     std::process::exit(0);
 }
 
-#[cfg(feature = "renderer-wgpu")]
+#[cfg(all(feature = "renderer-wgpu", feature = "desktop"))]
 fn run_wgpu_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     let event_loop = EventLoopBuilder::new()
         .build()
