@@ -33,7 +33,22 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125  # Adjust version as nee
 export PATH=$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools
 ```
 
-## Building
+## Opening in Android Studio
+
+The easiest way to build and run the Android app is to open it in Android Studio:
+
+1. Open Android Studio
+2. Click "Open an Existing Project"
+3. Navigate to and select the `apps/android-demo/android` directory
+4. Wait for Gradle sync to complete (Android Studio will automatically download dependencies)
+5. Click the Run button or press Shift+F10
+
+Android Studio will automatically:
+- Download the Gradle wrapper JAR
+- Sync Gradle dependencies
+- Build the Rust library using cargo-ndk (if you have the prerequisites installed)
+
+## Building from Command Line
 
 ### Option 1: Build with Gradle (Recommended)
 
@@ -45,6 +60,8 @@ cd android
 ```
 
 The APK will be generated at: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+**Note:** If `gradlew` fails the first time, run it again - it will download the Gradle wrapper JAR on the first run.
 
 ### Option 2: Build Rust Library Manually
 
@@ -82,9 +99,7 @@ adb install android/app/build/outputs/apk/debug/app-debug.apk
 
 ### Run from Android Studio
 
-1. Open the `android` directory in Android Studio
-2. Let Gradle sync complete
-3. Click the Run button or press Shift+F10
+See the "Opening in Android Studio" section above for the complete workflow.
 
 ## Features
 
