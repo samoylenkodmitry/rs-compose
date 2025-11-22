@@ -68,10 +68,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "android-app"
+version = "0.1.0"
+dependencies = [
+ "android_logger",
+ "compose-animation",
+ "compose-app",
+ "compose-core",
+ "compose-foundation",
+ "compose-ui",
+ "compose-ui-graphics",
+ "compose-ui-layout",
+ "desktop-app",
+ "log",
+]
+
+[[package]]
 name = "android-properties"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7eb209b1518d6bb87b283c20095f5228ecda460da70b44f0802523dea6da04"
+
+[[package]]
+name = "android_log-sys"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84521a3cf562bc62942e294181d9eef17eb38ceb8c68677bc49f144e4c3d4f8d"
+
+[[package]]
+name = "android_logger"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c494134f746c14dc653a35a4ea5aca24ac368529da5370ecf41fe0341c35772f"
+dependencies = [
+ "android_log-sys",
+ "env_logger",
+ "log",
+ "once_cell",
+]
 
 [[package]]
 name = "android_system_properties"
@@ -412,6 +446,7 @@ name = "compose-app"
 version = "0.1.0"
 dependencies = [
  "compose-app-shell",
+ "compose-platform-android-winit",
  "compose-platform-desktop-winit",
  "compose-render-pixels",
  "compose-render-wgpu",
@@ -471,6 +506,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "compose-platform-android-winit"
+version = "0.1.0"
+dependencies = [
+ "compose-foundation",
+ "compose-ui-graphics",
+ "winit",
 ]
 
 [[package]]

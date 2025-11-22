@@ -2,13 +2,29 @@
 
 //! High level utilities for running Compose applications with minimal boilerplate.
 
-#[cfg(not(feature = "desktop"))]
-compile_error!("compose-app must be built with the `desktop` feature enabled.");
+#[cfg(all(not(feature = "desktop"), not(feature = "android")))]
+compile_error!("compose-app must be built with either the `desktop` or `android` feature enabled.");
 
 #[cfg(not(any(feature = "renderer-pixels", feature = "renderer-wgpu")))]
 compile_error!("compose-app requires either the `renderer-pixels` or `renderer-wgpu` feature.");
 
+#[cfg(all(target_os = "android", feature = "renderer-pixels"))]
+compile_error!("The pixels renderer is not supported on Android.");
+
+#[cfg(all(
+    target_os = "android",
+    feature = "android",
+    not(feature = "renderer-wgpu"),
+))]
+compile_error!("Android builds currently require the `renderer-wgpu` feature.");
+
 use compose_app_shell::{default_root_key, AppShell};
+#[cfg(all(feature = "android", target_os = "android"))]
+use compose_platform_android_winit::AndroidWinitPlatform;
+#[cfg(all(
+    feature = "desktop",
+    not(all(feature = "android", target_os = "android"))
+))]
 use compose_platform_desktop_winit::DesktopWinitPlatform;
 
 #[cfg(feature = "renderer-pixels")]
@@ -22,16 +38,35 @@ use compose_render_wgpu::WgpuRenderer;
 use std::sync::Arc;
 
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, MouseButton, WindowEvent};
+#[cfg(target_os = "android")]
+use winit::event::TouchPhase;
+#[cfg(all(feature = "desktop", not(target_os = "android")))]
+use winit::event::{ElementState, MouseButton};
+use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoopBuilder};
+#[cfg(all(feature = "android", target_os = "android"))]
+pub use winit::platform::android::activity::AndroidApp;
+#[cfg(target_os = "android")]
+use winit::platform::android::EventLoopBuilderExtAndroid;
 use winit::window::WindowBuilder;
 
+#[cfg(all(feature = "android", target_os = "android"))]
+type WinitPlatform = AndroidWinitPlatform;
+
+#[cfg(all(
+    feature = "desktop",
+    not(all(feature = "android", target_os = "android"))
+))]
+type WinitPlatform = DesktopWinitPlatform;
+
 /// Builder used to configure and launch a Compose application.
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[derive(Debug, Clone, Default)]
 pub struct ComposeAppBuilder {
     options: ComposeAppOptions,
 }
 
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 impl ComposeAppBuilder {
     /// Creates a new builder with default configuration.
     #[allow(non_snake_case)]
@@ -122,36 +157,60 @@ impl ComposeAppOptions {
     }
 }
 
-/// Launches a Compose application using the default options.
+/// Launches a Compose application using the default options. Available on non-Android targets.
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[allow(non_snake_case)]
 pub fn ComposeApp(content: impl FnMut() + 'static) -> ! {
     ComposeAppBuilder::New().Run(content)
 }
 
-/// Launches a Compose application using the provided options.
+/// Launches a Compose application using the provided options. Available on non-Android targets.
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[allow(non_snake_case)]
 pub fn ComposeAppWithOptions(options: ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     run_app(options, content)
 }
 
 /// Alias with Kotlin-inspired casing for use in DSL-like code.
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub fn composeApp(content: impl FnMut() + 'static) -> ! {
     ComposeApp(content)
 }
 
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[doc(hidden)]
 pub fn compose_app(content: impl FnMut() + 'static) -> ! {
     ComposeApp(content)
 }
 
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[doc(hidden)]
 pub fn compose_app_with_options(options: ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     ComposeAppWithOptions(options, content)
 }
 
+/// Launches a Compose application on Android using the default options.
+#[cfg(all(target_os = "android", feature = "android"))]
+#[allow(non_snake_case)]
+pub fn ComposeAndroidApp(android_app: AndroidApp, content: impl FnMut() + 'static) -> ! {
+    ComposeAndroidAppWithOptions(android_app, ComposeAppOptions::default(), content)
+}
+
+/// Launches a Compose application on Android with explicit options.
+#[cfg(all(target_os = "android", feature = "android"))]
+#[allow(non_snake_case)]
+pub fn ComposeAndroidAppWithOptions(
+    android_app: AndroidApp,
+    options: ComposeAppOptions,
+    content: impl FnMut() + 'static,
+) -> ! {
+    run_android_app(android_app, options, content)
+}
+
 /// Macro helper that allows calling [`ComposeApp`] using a block without a closure wrapper.
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[macro_export]
 macro_rules! ComposeApp {
     (options: $options:expr, { $($body:tt)* }) => {
@@ -171,6 +230,7 @@ macro_rules! ComposeApp {
     };
 }
 
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 #[macro_export]
 #[doc(hidden)]
 macro_rules! composeApp {
@@ -179,6 +239,7 @@ macro_rules! composeApp {
     };
 }
 
+#[cfg(all(not(target_os = "android"), feature = "desktop"))]
 fn run_app(options: ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     #[cfg(feature = "renderer-wgpu")]
     {
@@ -190,7 +251,186 @@ fn run_app(options: ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     }
 }
 
-#[cfg(feature = "renderer-pixels")]
+#[cfg(all(target_os = "android", feature = "android", feature = "renderer-wgpu"))]
+fn run_android_app(
+    android_app: AndroidApp,
+    options: ComposeAppOptions,
+    content: impl FnMut() + 'static,
+) -> ! {
+    run_android_wgpu_app(android_app, &options, content)
+}
+
+#[cfg(all(target_os = "android", feature = "android", feature = "renderer-wgpu"))]
+fn run_android_wgpu_app(
+    android_app: AndroidApp,
+    options: &ComposeAppOptions,
+    content: impl FnMut() + 'static,
+) -> ! {
+    let event_loop = EventLoopBuilder::new()
+        .with_android_app(android_app)
+        .build()
+        .expect("failed to create event loop");
+    let frame_proxy = event_loop.create_proxy();
+
+    let window = Arc::new(
+        WindowBuilder::new()
+            .with_inner_size(LogicalSize::new(
+                options.initial_size.0 as f64,
+                options.initial_size.1 as f64,
+            ))
+            .build(&event_loop)
+            .expect("failed to create window"),
+    );
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+
+    let surface = instance
+        .create_surface(window.clone())
+        .expect("failed to create surface");
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .expect("failed to find suitable adapter");
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("Main Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+        },
+        None,
+    ))
+    .expect("failed to create device");
+
+    let size = window.inner_size();
+    let surface_caps = surface.get_capabilities(&adapter);
+    let surface_format = surface_caps
+        .formats
+        .iter()
+        .copied()
+        .find(|f| f.is_srgb())
+        .unwrap_or(surface_caps.formats[0]);
+
+    let mut surface_config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: surface_format,
+        width: size.width.max(1),
+        height: size.height.max(1),
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: surface_caps.alpha_modes[0],
+        view_formats: vec![],
+        desired_maximum_frame_latency: 2,
+    };
+
+    surface.configure(&device, &surface_config);
+
+    let mut renderer = WgpuRenderer::new();
+    renderer.init_gpu(Arc::new(device), Arc::new(queue), surface_format);
+
+    let mut app = AppShell::new(renderer, default_root_key(), content);
+    let mut platform = WinitPlatform::default();
+
+    app.set_frame_waker({
+        let proxy = frame_proxy.clone();
+        move || {
+            let _ = proxy.send_event(());
+        }
+    });
+
+    app.set_buffer_size(surface_config.width, surface_config.height);
+    app.set_viewport(surface_config.width as f32, surface_config.height as f32);
+
+    let window_for_event_loop = window.clone();
+    let _ = event_loop.run(move |event, elwt| {
+        elwt.set_control_flow(ControlFlow::Wait);
+        match event {
+            Event::WindowEvent { window_id, event } if window_id == window_for_event_loop.id() => {
+                match event {
+                    WindowEvent::Resized(new_size) => {
+                        if new_size.width > 0 && new_size.height > 0 {
+                            surface_config.width = new_size.width;
+                            surface_config.height = new_size.height;
+                            let device = app.renderer().device();
+                            surface.configure(device, &surface_config);
+                            app.set_buffer_size(new_size.width, new_size.height);
+                            app.set_viewport(new_size.width as f32, new_size.height as f32);
+                        }
+                    }
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        platform.set_scale_factor(scale_factor);
+                        let new_size = window_for_event_loop.inner_size();
+                        if new_size.width > 0 && new_size.height > 0 {
+                            surface_config.width = new_size.width;
+                            surface_config.height = new_size.height;
+                            let device = app.renderer().device();
+                            surface.configure(device, &surface_config);
+                            app.set_buffer_size(new_size.width, new_size.height);
+                            app.set_viewport(new_size.width as f32, new_size.height as f32);
+                        }
+                    }
+                    WindowEvent::Touch(touch) => {
+                        let logical = platform.pointer_position(touch.location);
+                        app.set_cursor(logical.x, logical.y);
+                        match touch.phase {
+                            TouchPhase::Started => app.pointer_pressed(),
+                            TouchPhase::Moved => {
+                                if app.should_render() {
+                                    app.update();
+                                    window_for_event_loop.request_redraw();
+                                }
+                            }
+                            TouchPhase::Ended | TouchPhase::Cancelled => app.pointer_released(),
+                        }
+                    }
+                    WindowEvent::RedrawRequested => {
+                        app.update();
+
+                        let output = match surface.get_current_texture() {
+                            Ok(output) => output,
+                            Err(err) => {
+                                log::error!("failed to get surface texture: {err}");
+                                return;
+                            }
+                        };
+
+                        let view = output
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+
+                        if let Err(err) = app.renderer().render(
+                            &view,
+                            surface_config.width,
+                            surface_config.height,
+                        ) {
+                            log::error!("render failed: {err:?}");
+                            return;
+                        }
+
+                        output.present();
+                    }
+                    _ => {}
+                }
+            }
+            Event::AboutToWait | Event::UserEvent(()) => {
+                if app.should_render() {
+                    window_for_event_loop.request_redraw();
+                    elwt.set_control_flow(ControlFlow::Poll);
+                }
+            }
+            _ => {}
+        }
+    });
+
+    std::process::exit(0);
+}
+
+#[cfg(all(feature = "renderer-pixels", feature = "desktop"))]
 #[allow(dead_code)]
 fn run_pixels_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     let event_loop = EventLoopBuilder::new()
@@ -219,7 +459,7 @@ fn run_pixels_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) 
 
     let renderer = PixelsRenderer::new();
     let mut app = AppShell::new(renderer, default_root_key(), content);
-    let mut platform = DesktopWinitPlatform::default();
+    let mut platform = WinitPlatform::default();
     // Defer updating the platform scale factor until winit notifies us of a
     // change. Using the window's current scale factor here causes pointer
     // coordinates to be scaled twice on high-DPI setups, which breaks
@@ -321,7 +561,11 @@ fn run_pixels_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) 
     std::process::exit(0);
 }
 
-#[cfg(feature = "renderer-wgpu")]
+#[cfg(all(
+    feature = "renderer-wgpu",
+    feature = "desktop",
+    not(target_os = "android")
+))]
 fn run_wgpu_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) -> ! {
     let event_loop = EventLoopBuilder::new()
         .build()
@@ -396,7 +640,7 @@ fn run_wgpu_app(options: &ComposeAppOptions, content: impl FnMut() + 'static) ->
     renderer.init_gpu(Arc::new(device), Arc::new(queue), surface_format);
 
     let mut app = AppShell::new(renderer, default_root_key(), content);
-    let mut platform = DesktopWinitPlatform::default();
+    let mut platform = WinitPlatform::default();
 
     app.set_frame_waker({
         let proxy = frame_proxy.clone();

@@ -1,0 +1,29 @@
+[package]
+name = "android-app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "android_app"
+crate-type = ["cdylib"]
+
+[dependencies]
+android_logger = "0.13"
+log = "0.4"
+compose-app = { path = "../../crates/compose-app", default-features = false, features = ["android", "renderer-wgpu"] }
+compose-animation = { path = "../../crates/compose-animation" }
+compose-core = { path = "../../crates/compose-core" }
+compose-foundation = { path = "../../crates/compose-foundation" }
+compose-ui = { path = "../../crates/compose-ui" }
+compose-ui-graphics = { path = "../../crates/compose-ui-graphics" }
+compose-ui-layout = { path = "../../crates/compose-ui-layout" }
+desktop-app = { path = "../desktop-demo", default-features = false }
+
+[package.metadata.android]
+apk_label = "Compose RS Demo"
+target_sdk_version = 34
+min_sdk_version = 24
+manifest = "AndroidManifest.xml"
+
+[package.metadata.android.activity_attributes]
+"android:exported" = "true"

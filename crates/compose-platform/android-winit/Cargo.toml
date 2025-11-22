@@ -1,0 +1,9 @@
+[package]
+name = "compose-platform-android-winit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+compose-foundation = { path = "../../compose-foundation" }
+compose-ui-graphics = { path = "../../compose-ui-graphics" }
+winit = { version = "0.29", features = ["android-native-activity"] }

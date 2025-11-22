@@ -11,6 +11,11 @@ Run the interactive desktop example:
 ```bash
 cargo run --bin desktop-app
 ```
+
+The same demo UI is also available on Android through `cargo-apk`:
+```bash
+cargo apk run -p android-app --target aarch64-linux-android
+```
 ```rust
 
 fn main() {
