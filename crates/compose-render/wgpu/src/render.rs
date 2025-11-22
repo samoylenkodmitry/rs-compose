@@ -709,6 +709,11 @@ impl GpuRenderer {
         // Create text areas using cached buffers
         let mut text_areas = Vec::new();
         let text_cache = self.text_cache.lock().unwrap();
+
+        if !text_data.is_empty() {
+            log::info!("Preparing {} text areas for rendering", text_data.len());
+        }
+
         for (text_draw, key) in &text_data {
             let cached = text_cache.get(key).expect("Text should be in cache");
             let color = GlyphonColor::rgba(
@@ -717,6 +722,10 @@ impl GpuRenderer {
                 (text_draw.color.b() * 255.0) as u8,
                 (text_draw.color.a() * 255.0) as u8,
             );
+
+            log::debug!("Text '{}' at ({}, {}) color: {:?}",
+                text_draw.text.chars().take(20).collect::<String>(),
+                text_draw.rect.x, text_draw.rect.y, color);
 
             text_areas.push(TextArea {
                 buffer: &cached.buffer,
@@ -740,17 +749,24 @@ impl GpuRenderer {
         }
 
         // Prepare all text at once
-        self.text_renderer
-            .prepare(
-                &self.device,
-                &self.queue,
-                &mut font_system,
-                &mut self.text_atlas,
-                Resolution { width, height },
-                text_areas.iter().cloned(),
-                &mut self.swash_cache,
-            )
-            .map_err(|e| format!("Text prepare error: {:?}", e))?;
+        if !text_areas.is_empty() {
+            self.text_renderer
+                .prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut font_system,
+                    &mut self.text_atlas,
+                    Resolution { width, height },
+                    text_areas.iter().cloned(),
+                    &mut self.swash_cache,
+                )
+                .map_err(|e| {
+                    log::error!("Text prepare error: {:?}", e);
+                    format!("Text prepare error: {:?}", e)
+                })?;
+
+            log::info!("Text prepared successfully, {} areas ready", text_areas.len());
+        }
 
         // Trim the atlas after preparing
         self.text_atlas.trim();
@@ -782,7 +798,14 @@ impl GpuRenderer {
 
             self.text_renderer
                 .render(&self.text_atlas, &mut text_pass)
-                .map_err(|e| format!("Text render error: {:?}", e))?;
+                .map_err(|e| {
+                    log::error!("Text render error: {:?}", e);
+                    format!("Text render error: {:?}", e)
+                })?;
+        }
+
+        if !text_areas.is_empty() {
+            log::info!("Text rendered successfully");
         }
 
         self.queue.submit(std::iter::once(text_encoder.finish()));
