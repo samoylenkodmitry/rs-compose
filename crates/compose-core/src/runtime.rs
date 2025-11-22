@@ -438,7 +438,16 @@ impl Runtime {
     pub fn new(scheduler: Arc<dyn RuntimeScheduler>) -> Self {
         let inner = Rc::new(RuntimeInner::new(scheduler));
         RuntimeInner::init_task_waker(&inner);
-        Self { inner }
+        let runtime = Self { inner };
+
+        // Register this runtime in thread-local storage so state can be accessed
+        // even outside of composition context
+        let handle = runtime.handle();
+        LAST_RUNTIME.with(|slot| {
+            *slot.borrow_mut() = Some(handle);
+        });
+
+        runtime
     }
 
     pub fn handle(&self) -> RuntimeHandle {
