@@ -1,17 +1,7 @@
-use compose_core::composable;
-use compose_foundation::{
-    layout::{Column, ColumnSpec, Row, RowSpec, Spacer},
-    widgets::{Button, Text},
-};
-use compose_ui::modifier::Modifier;
-use compose_ui_graphics::{
-    brush::Brush,
-    color::Color,
-    drawing::CornerRadii,
-    geometry::Size,
-};
-use compose_ui_layout::{
-    arrangement::{LinearArrangement, VerticalAlignment},
+use compose_core::Composition;
+use compose_ui::{
+    composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement,
+    Modifier, Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
 
 #[composable]
@@ -180,11 +170,10 @@ pub extern "C" fn android_main(app: ndk::native_activity::NativeActivity) {
 
     // For now, just run the composable function once to verify it compiles
     // In a real implementation, this would be called in the render loop
-    use compose_core::CompositionRoot;
-    let mut root = CompositionRoot::new(|| {
+    let mut composition = Composition::new(|| {
         combined_app();
     });
-    root.recompose();
+    composition.recompose();
 
     log::info!("Initial composition completed");
 
