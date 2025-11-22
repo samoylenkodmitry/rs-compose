@@ -327,31 +327,29 @@ fn android_main(app: android_activity::AndroidApp) {
         // Do actual rendering outside the event callback to avoid blocking input
         if needs_redraw && surface_state.is_some() {
             if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
-                // Only render if there's actually something to update
-                if app_shell.should_render() {
-                    app_shell.update();
+                // Always update and render to ensure continuous display
+                app_shell.update();
 
-                    match surface.get_current_texture() {
-                        Ok(frame) => {
-                            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                            let (width, height) = app_shell.buffer_size();
+                match surface.get_current_texture() {
+                    Ok(frame) => {
+                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let (width, height) = app_shell.buffer_size();
 
-                            if let Err(e) = app_shell.renderer().render(&view, width, height) {
-                                log::error!("Render error: {:?}", e);
-                            }
+                        if let Err(e) = app_shell.renderer().render(&view, width, height) {
+                            log::error!("Render error: {:?}", e);
+                        }
 
-                            frame.present();
-                        }
-                        Err(wgpu::SurfaceError::Lost) => {
-                            log::warn!("Surface lost, will be reconfigured");
-                        }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            log::error!("Out of memory!");
-                            break;
-                        }
-                        Err(e) => {
-                            log::debug!("Surface error: {:?}", e);
-                        }
+                        frame.present();
+                    }
+                    Err(wgpu::SurfaceError::Lost) => {
+                        log::warn!("Surface lost, will be reconfigured");
+                    }
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        log::error!("Out of memory!");
+                        break;
+                    }
+                    Err(e) => {
+                        log::debug!("Surface error: {:?}", e);
                     }
                 }
             }
