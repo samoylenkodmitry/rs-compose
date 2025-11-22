@@ -147,7 +147,14 @@ impl WgpuRenderer {
     pub fn new() -> Self {
         let mut font_system = FontSystem::new();
 
-        // Load Roboto fonts into the system
+        // On Android, load system fonts from /system/fonts
+        #[cfg(target_os = "android")]
+        {
+            log::info!("Loading Android system fonts from /system/fonts");
+            font_system.db_mut().load_fonts_dir("/system/fonts");
+        }
+
+        // Load embedded Roboto fonts as additional fonts
         let font_light = include_bytes!("../../../../assets/Roboto-Light.ttf");
         let font_regular = include_bytes!("../../../../assets/Roboto-Regular.ttf");
 
