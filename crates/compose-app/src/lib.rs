@@ -45,11 +45,14 @@ pub use winit::platform::android::activity::AndroidApp;
 use winit::platform::android::EventLoopBuilderExtAndroid;
 use winit::window::WindowBuilder;
 
-#[cfg(feature = "desktop")]
-type WinitPlatform = DesktopWinitPlatform;
-
 #[cfg(all(feature = "android", target_os = "android"))]
 type WinitPlatform = AndroidWinitPlatform;
+
+#[cfg(all(
+    feature = "desktop",
+    not(all(feature = "android", target_os = "android"))
+))]
+type WinitPlatform = DesktopWinitPlatform;
 
 /// Builder used to configure and launch a Compose application.
 #[cfg(all(not(target_os = "android"), feature = "desktop"))]
@@ -279,7 +282,7 @@ fn run_android_wgpu_app(
         ..Default::default()
     });
 
-    let mut surface = instance
+    let surface = instance
         .create_surface(window.clone())
         .expect("failed to create surface");
 
