@@ -1,4 +1,5 @@
-use compose_core::Composition;
+// Composition is no longer needed since we use AppShell
+// use compose_core::Composition;
 use compose_ui::{
     composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement,
     Modifier, Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
@@ -145,6 +146,11 @@ fn grid_example() {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
+    use android_activity::{MainEvent, PollEvent};
+    use compose_app_shell::{default_root_key, AppShell};
+    use compose_render_wgpu::WgpuRenderer;
+    use std::sync::Arc;
+
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
@@ -153,35 +159,218 @@ fn android_main(app: android_activity::AndroidApp) {
 
     log::info!("Starting Compose-RS Android Demo");
 
-    // For now, just log that we started and keep the app running
-    // Full Android integration with wgpu surface will be implemented later
-    log::info!("Android app initialized successfully");
-    log::info!("Note: Full UI rendering support is work in progress");
+    // Initialize wgpu instance
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
 
-    // TODO: Implement proper Android event loop and wgpu surface creation
-    // This will require:
-    // 1. Creating an Android surface from the NativeActivity window
-    // 2. Setting up wgpu with the Android surface
-    // 3. Implementing the render loop with Android lifecycle events
-    // 4. Handling input events from the native activity
+    let mut surface_state: Option<(
+        wgpu::Surface<'static>,
+        Arc<wgpu::Device>,
+        Arc<wgpu::Queue>,
+        wgpu::SurfaceConfiguration,
+        AppShell<WgpuRenderer>,
+    )> = None;
 
-    // For now, just run the composable function once to verify it compiles
-    // In a real implementation, this would be called in the render loop
-    use compose_core::{location_key, MemoryApplier};
+    let mut window_size = (0u32, 0u32);
 
-    let mut composition = Composition::new(MemoryApplier::new());
-    if let Err(err) = composition.render(location_key(file!(), line!(), column!()), || {
-        combined_app();
-    }) {
-        log::error!("Composition render failed: {err}");
-    }
-
-    log::info!("Initial composition completed");
-
-    // Keep the activity alive by handling events
+    // Main event loop
     loop {
-        app.poll_events(Some(std::time::Duration::from_millis(100)), |event| {
-            log::debug!("Received event: {:?}", event);
+        app.poll_events(Some(std::time::Duration::from_millis(16)), |event| {
+            match event {
+                PollEvent::Main(main_event) => match main_event {
+                    MainEvent::InitWindow { .. } => {
+                        log::info!("Window initialized, setting up rendering");
+
+                        // Get the native window
+                        if let Some(native_window) = app.native_window() {
+                            use raw_window_handle::{
+                                AndroidDisplayHandle, AndroidNdkWindowHandle,
+                                RawDisplayHandle, RawWindowHandle,
+                            };
+
+                            // Create surface from the Android window using raw window handle
+                            let surface = unsafe {
+                                // Manually create raw handles for Android
+                                let window_handle = AndroidNdkWindowHandle::new(
+                                    std::ptr::NonNull::new(native_window.ptr().as_ptr() as *mut _)
+                                        .expect("Null window pointer"),
+                                );
+                                let display_handle = AndroidDisplayHandle::new();
+
+                                let raw_window_handle = RawWindowHandle::AndroidNdk(window_handle);
+                                let raw_display_handle = RawDisplayHandle::Android(display_handle);
+
+                                let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+                                    raw_display_handle,
+                                    raw_window_handle,
+                                };
+
+                                instance
+                                    .create_surface_unsafe(target)
+                                    .expect("Failed to create surface")
+                            };
+
+                            // Request adapter
+                            let adapter = pollster::block_on(instance.request_adapter(
+                                &wgpu::RequestAdapterOptions {
+                                    power_preference: wgpu::PowerPreference::HighPerformance,
+                                    compatible_surface: Some(&surface),
+                                    force_fallback_adapter: false,
+                                },
+                            ))
+                            .expect("Failed to find suitable adapter");
+
+                            log::info!("Found adapter: {:?}", adapter.get_info());
+
+                            // Request device and queue
+                            let (device, queue) = pollster::block_on(adapter.request_device(
+                                &wgpu::DeviceDescriptor {
+                                    label: Some("Android Device"),
+                                    required_features: wgpu::Features::empty(),
+                                    required_limits: wgpu::Limits::default(),
+                                },
+                                None,
+                            ))
+                            .expect("Failed to create device");
+
+                            let device = Arc::new(device);
+                            let queue = Arc::new(queue);
+
+                            // Get surface capabilities and format
+                            let surface_caps = surface.get_capabilities(&adapter);
+                            let surface_format = surface_caps
+                                .formats
+                                .iter()
+                                .copied()
+                                .find(|f| f.is_srgb())
+                                .unwrap_or(surface_caps.formats[0]);
+
+                            log::info!("Surface format: {:?}", surface_format);
+
+                            // Configure surface
+                            let (width, height) = window_size;
+                            let width = width.max(1);
+                            let height = height.max(1);
+
+                            let surface_config = wgpu::SurfaceConfiguration {
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                format: surface_format,
+                                width,
+                                height,
+                                present_mode: wgpu::PresentMode::Fifo,
+                                alpha_mode: surface_caps.alpha_modes[0],
+                                view_formats: vec![],
+                                desired_maximum_frame_latency: 2,
+                            };
+
+                            surface.configure(&device, &surface_config);
+
+                            // Create renderer
+                            let mut renderer = WgpuRenderer::new();
+                            renderer.init_gpu(device.clone(), queue.clone(), surface_format);
+
+                            // Create app shell with our combined_app
+                            let mut app_shell = AppShell::new(renderer, default_root_key(), || {
+                                combined_app();
+                            });
+
+                            app_shell.set_buffer_size(width, height);
+                            app_shell.set_viewport(width as f32, height as f32);
+
+                            surface_state = Some((surface, device, queue, surface_config, app_shell));
+
+                            log::info!("Rendering initialized successfully");
+                        }
+                    }
+                    MainEvent::TerminateWindow { .. } => {
+                        log::info!("Window terminated");
+                        surface_state = None;
+                    }
+                    MainEvent::WindowResized { .. } => {
+                        if let Some(native_window) = app.native_window() {
+                            let width = native_window.width() as u32;
+                            let height = native_window.height() as u32;
+                            window_size = (width, height);
+
+                            log::info!("Window resized to {}x{}", width, height);
+
+                            if let Some((surface, device, _, surface_config, app_shell)) =
+                                &mut surface_state
+                            {
+                                if width > 0 && height > 0 {
+                                    surface_config.width = width;
+                                    surface_config.height = height;
+                                    surface.configure(device, surface_config);
+                                    app_shell.set_buffer_size(width, height);
+                                    app_shell.set_viewport(width as f32, height as f32);
+                                }
+                            }
+                        }
+                    }
+                    MainEvent::RedrawNeeded { .. } => {
+                        if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
+                            // Update app state
+                            app_shell.update();
+
+                            // Render frame
+                            match surface.get_current_texture() {
+                                Ok(frame) => {
+                                    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                                    let (width, height) = app_shell.buffer_size();
+
+                                    if let Err(e) = app_shell.renderer().render(&view, width, height) {
+                                        log::error!("Render error: {:?}", e);
+                                    }
+
+                                    frame.present();
+                                }
+                                Err(wgpu::SurfaceError::Lost) => {
+                                    log::warn!("Surface lost, reconfiguring");
+                                    // Surface lost, will be reconfigured on next resize
+                                }
+                                Err(wgpu::SurfaceError::OutOfMemory) => {
+                                    log::error!("Out of memory!");
+                                    return;
+                                }
+                                Err(e) => {
+                                    log::warn!("Surface error: {:?}", e);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                PollEvent::Timeout => {
+                    // Request redraw on timeout to keep rendering
+                    if surface_state.is_some() {
+                        // Trigger a redraw by processing the RedrawNeeded event
+                        if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
+                            if app_shell.should_render() {
+                                app_shell.update();
+
+                                match surface.get_current_texture() {
+                                    Ok(frame) => {
+                                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                                        let (width, height) = app_shell.buffer_size();
+
+                                        if let Err(e) = app_shell.renderer().render(&view, width, height) {
+                                            log::error!("Render error: {:?}", e);
+                                        }
+
+                                        frame.present();
+                                    }
+                                    Err(e) => {
+                                        log::debug!("Surface error during timeout render: {:?}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
         });
     }
 }

@@ -75,9 +75,11 @@ dependencies = [
  "android_logger",
  "compose-animation",
  "compose-app",
+ "compose-app-shell",
  "compose-core",
  "compose-foundation",
  "compose-macros",
+ "compose-render-wgpu",
  "compose-testing",
  "compose-ui",
  "compose-ui-graphics",
@@ -86,6 +88,9 @@ dependencies = [
  "log",
  "ndk 0.9.0",
  "ndk-context",
+ "pollster",
+ "raw-window-handle",
+ "wgpu",
 ]
 
 [[package]]

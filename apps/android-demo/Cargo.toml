@@ -20,12 +20,17 @@ compose-foundation = { path = "../../crates/compose-foundation" }
 compose-ui = { path = "../../crates/compose-ui" }
 compose-ui-graphics = { path = "../../crates/compose-ui-graphics" }
 compose-ui-layout = { path = "../../crates/compose-ui-layout" }
+compose-app-shell = { path = "../../crates/compose-app-shell" }
+compose-render-wgpu = { path = "../../crates/compose-render/wgpu" }
 android_logger = "0.14"
 log = "0.4"
 jni = "0.21"
 ndk = "0.9"
 ndk-context = "0.1"
 android-activity = { workspace = true }
+wgpu = "0.19"
+pollster = "0.3"
+raw-window-handle = "0.6"
 
 [dev-dependencies]
 compose-macros = { path = "../../crates/compose-macros" }
