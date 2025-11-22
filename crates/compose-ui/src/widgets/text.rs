@@ -76,7 +76,7 @@ where
     T: ToString + Clone + 'static,
 {
     fn into_text_source(self) -> TextSource {
-        let state = self.clone();
+        let state = self;
         TextSource::Dynamic(DynamicTextSource::new(move || state.value().to_string()))
     }
 }
@@ -86,7 +86,7 @@ where
     T: ToString + Clone + 'static,
 {
     fn into_text_source(self) -> TextSource {
-        let state = self.clone();
+        let state = self;
         TextSource::Dynamic(DynamicTextSource::new(move || state.value().to_string()))
     }
 }

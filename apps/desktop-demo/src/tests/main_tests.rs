@@ -11,15 +11,15 @@ fn async_runtime_test_content(
     reset_signal: MutableState<u64>,
 ) {
     {
-        let animation_state = animation.clone();
-        let stats_state = stats.clone();
-        let running_state = is_running.clone();
-        let reset_state = reset_signal.clone();
+        let animation_state = animation;
+        let stats_state = stats;
+        let running_state = is_running;
+        let reset_state = reset_signal;
         LaunchedEffectAsync!((), move |scope| {
-            let animation = animation_state.clone();
-            let stats = stats_state.clone();
-            let running = running_state.clone();
-            let reset = reset_state.clone();
+            let animation = animation_state;
+            let stats = stats_state;
+            let running = running_state;
+            let reset = reset_state;
             Box::pin(async move {
                 let clock = scope.runtime().frame_clock();
                 let mut last_time: Option<u64> = None;
@@ -178,20 +178,7 @@ fn async_runtime_freezes_without_conditional_key() {
     let is_running = MutableState::with_runtime(true, runtime.clone());
     let reset_signal = MutableState::with_runtime(0u64, runtime.clone());
 
-    let mut render = {
-        let animation = animation.clone();
-        let stats = stats.clone();
-        let is_running = is_running.clone();
-        let reset_signal = reset_signal.clone();
-        move || {
-            async_runtime_test_content(
-                animation.clone(),
-                stats.clone(),
-                is_running.clone(),
-                reset_signal.clone(),
-            )
-        }
-    };
+    let mut render = move || async_runtime_test_content(animation, stats, is_running, reset_signal);
 
     composition
         .render(location_key(file!(), line!(), column!()), &mut render)

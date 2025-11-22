@@ -1,12 +1,13 @@
 use crate::collections::map::HashMap;
 use crate::collections::map::HashSet;
+use crate::MutableStateInner;
 use std::any::Any;
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::cell::{Cell, Ref, RefCell};
+use std::collections::{HashMap as StdHashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::task::{Context, Poll, Waker};
 use std::thread::ThreadId;
@@ -23,6 +24,95 @@ enum UiMessage {
 
 type UiContinuation = Box<dyn Fn(Box<dyn Any>) + 'static>;
 type UiContinuationMap = HashMap<u64, UiContinuation>;
+
+trait AnyStateCell {
+    fn as_any(&self) -> &dyn Any;
+}
+
+struct TypedStateCell<T: Clone + 'static> {
+    inner: MutableStateInner<T>,
+}
+
+impl<T: Clone + 'static> AnyStateCell for TypedStateCell<T> {
+    fn as_any(&self) -> &dyn Any {
+        &self.inner
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct StateArena {
+    cells: RefCell<Vec<Option<Box<dyn AnyStateCell>>>>,
+}
+
+impl StateArena {
+    pub(crate) fn alloc<T: Clone + 'static>(&self, value: T, runtime: RuntimeHandle) -> StateId {
+        let mut cells = self.cells.borrow_mut();
+        let id = StateId(cells.len() as u32);
+        let inner = MutableStateInner::new(value, runtime.clone());
+        inner.install_snapshot_observer(id);
+        let cell: Box<dyn AnyStateCell> = Box::new(TypedStateCell { inner });
+        cells.push(Some(cell));
+        id
+    }
+
+    fn get_cell(&self, id: StateId) -> Ref<'_, Box<dyn AnyStateCell>> {
+        Ref::map(self.cells.borrow(), |cells| {
+            cells
+                .get(id.0 as usize)
+                .and_then(|cell| cell.as_ref())
+                .expect("state cell missing")
+        })
+    }
+
+    pub(crate) fn get_typed<T: Clone + 'static>(
+        &self,
+        id: StateId,
+    ) -> Ref<'_, MutableStateInner<T>> {
+        Ref::map(self.get_cell(id), |cell| {
+            cell.as_any()
+                .downcast_ref::<MutableStateInner<T>>()
+                .expect("state cell type mismatch")
+        })
+    }
+
+    pub(crate) fn get_typed_opt<T: Clone + 'static>(
+        &self,
+        id: StateId,
+    ) -> Option<Ref<'_, MutableStateInner<T>>> {
+        Ref::filter_map(self.get_cell(id), |cell| {
+            cell.as_any().downcast_ref::<MutableStateInner<T>>()
+        })
+        .ok()
+    }
+}
+
+thread_local! {
+    static RUNTIME_HANDLES: RefCell<StdHashMap<RuntimeId, RuntimeHandle>> =
+        RefCell::new(StdHashMap::new());
+}
+
+fn register_runtime_handle(handle: &RuntimeHandle) {
+    RUNTIME_HANDLES.with(|registry| {
+        registry.borrow_mut().insert(handle.id, handle.clone());
+    });
+}
+
+pub(crate) fn runtime_handle_for(id: RuntimeId) -> Option<RuntimeHandle> {
+    RUNTIME_HANDLES.with(|registry| registry.borrow().get(&id).cloned())
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StateId(pub(crate) u32);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RuntimeId(u32);
+
+impl RuntimeId {
+    fn next() -> Self {
+        static NEXT_RUNTIME_ID: AtomicU32 = AtomicU32::new(1);
+        Self(NEXT_RUNTIME_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 struct UiDispatcherInner {
     scheduler: Arc<dyn RuntimeScheduler>,
@@ -116,6 +206,8 @@ struct RuntimeInner {
     tasks: RefCell<Vec<TaskEntry>>, // FUTURE(no_std): migrate to smallvec-backed storage.
     next_task_id: Cell<u64>,
     task_waker: RefCell<Option<Waker>>,
+    state_arena: StateArena,
+    runtime_id: RuntimeId,
 }
 
 struct TaskEntry {
@@ -144,6 +236,8 @@ impl RuntimeInner {
             tasks: RefCell::new(Vec::new()),
             next_task_id: Cell::new(1),
             task_waker: RefCell::new(None),
+            state_arena: StateArena::default(),
+            runtime_id: RuntimeId::next(),
         }
     }
 
@@ -431,7 +525,9 @@ impl Runtime {
     pub fn new(scheduler: Arc<dyn RuntimeScheduler>) -> Self {
         let inner = Rc::new(RuntimeInner::new(scheduler));
         RuntimeInner::init_task_waker(&inner);
-        Self { inner }
+        let runtime = Self { inner };
+        register_runtime_handle(&runtime.handle());
+        runtime
     }
 
     pub fn handle(&self) -> RuntimeHandle {
@@ -439,6 +535,7 @@ impl Runtime {
             inner: Rc::downgrade(&self.inner),
             dispatcher: UiDispatcher::new(self.inner.ui_dispatcher.clone()),
             ui_thread_id: self.inner.ui_thread_id,
+            id: self.inner.runtime_id,
         }
     }
 
@@ -481,10 +578,17 @@ pub struct TestRuntime {
 }
 
 #[cfg(test)]
+impl Default for TestRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
 impl TestRuntime {
     pub fn new() -> Self {
         Self {
-            runtime: Runtime::new(Arc::new(TestScheduler::default())),
+            runtime: Runtime::new(Arc::new(TestScheduler)),
         }
     }
 
@@ -498,6 +602,7 @@ pub struct RuntimeHandle {
     inner: Weak<RuntimeInner>,
     dispatcher: UiDispatcher,
     ui_thread_id: ThreadId,
+    id: RuntimeId,
 }
 
 pub struct TaskHandle {
@@ -506,6 +611,21 @@ pub struct TaskHandle {
 }
 
 impl RuntimeHandle {
+    pub fn id(&self) -> RuntimeId {
+        self.id
+    }
+
+    pub(crate) fn alloc_state<T: Clone + 'static>(&self, value: T) -> StateId {
+        self.with_state_arena(|arena| arena.alloc(value, self.clone()))
+    }
+
+    pub(crate) fn with_state_arena<R>(&self, f: impl FnOnce(&StateArena) -> R) -> R {
+        self.inner
+            .upgrade()
+            .map(|inner| f(&inner.state_arena))
+            .unwrap_or_else(|| panic!("runtime dropped"))
+    }
+
     pub fn schedule(&self) {
         if let Some(inner) = self.inner.upgrade() {
             inner.schedule();

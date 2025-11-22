@@ -28,7 +28,7 @@ fn test_conditional_text_reactivity() {
     use std::cell::RefCell;
 
     thread_local! {
-        static TEST_COUNTER: RefCell<Option<MutableState<i32>>> = RefCell::new(None);
+        static TEST_COUNTER: RefCell<Option<MutableState<i32>>> = const { RefCell::new(None) };
     }
 
     // Helper function to drain recompositions
@@ -45,7 +45,7 @@ fn test_conditional_text_reactivity() {
     let mut composition = run_test_composition(|| {
         let counter = compose_core::useState(|| 0);
         TEST_COUNTER.with(|cell| {
-            *cell.borrow_mut() = Some(counter.clone());
+            *cell.borrow_mut() = Some(counter);
         });
         conditional_text_with_external_state(counter);
     });
@@ -56,7 +56,9 @@ fn test_conditional_text_reactivity() {
     println!("Initial node count: {}", initial_node_count);
 
     // Get the counter state and increment it
-    let counter = TEST_COUNTER.with(|cell| cell.borrow().clone().expect("counter state not set"));
+    let counter = TEST_COUNTER
+        .with(|cell| *cell.borrow())
+        .expect("counter state not set");
 
     // Increment the counter to 1 (odd)
     counter.set(1);

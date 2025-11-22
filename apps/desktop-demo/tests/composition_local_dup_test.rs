@@ -9,11 +9,7 @@ where
     F: FnOnce(&MutableState<DemoTab>),
 {
     TEST_ACTIVE_TAB_STATE.with(|cell| {
-        let state = cell
-            .borrow()
-            .as_ref()
-            .expect("active tab state registered")
-            .clone();
+        let state = *cell.borrow().as_ref().expect("active tab state registered");
         f(&state);
     });
 }
@@ -24,11 +20,10 @@ fn set_active_tab(tab: DemoTab) {
 
 fn increment_composition_local_counter() {
     TEST_COMPOSITION_LOCAL_COUNTER.with(|cell| {
-        let state = cell
+        let state = *cell
             .borrow()
             .as_ref()
-            .expect("composition local counter state not registered")
-            .clone();
+            .expect("composition local counter state not registered");
         state.set(state.get() + 1);
     });
 }
@@ -55,7 +50,7 @@ fn composition_local_view_duplicates_regression() {
     TEST_COMPOSITION_LOCAL_COUNTER.with(|cell| cell.borrow_mut().take());
 
     let mut rule = ComposeTestRule::new();
-    rule.set_content(|| combined_app())
+    rule.set_content(combined_app)
         .expect("install combined app content");
     rule.pump_until_idle()
         .expect("initial idle after counter view");

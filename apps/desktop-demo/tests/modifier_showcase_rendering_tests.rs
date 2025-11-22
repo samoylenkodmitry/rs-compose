@@ -206,12 +206,9 @@ fn test_positioned_boxes_renders_correctly() {
 #[test]
 fn test_dynamic_modifiers_recomposition_preserves_structure() {
     let mut rule = ComposeTestRule::new();
-    let runtime = rule.runtime_handle();
-
-    let frame = MutableState::with_runtime(0, runtime.clone());
+    let frame = MutableState::with_runtime(0, rule.runtime_handle());
 
     rule.set_content({
-        let frame = frame.clone();
         move || {
             dynamic_modifiers_showcase(frame.get());
         }
@@ -412,14 +409,11 @@ fn test_long_list_performance_and_structure() {
 fn test_modifier_showcase_recomposition_stability() {
     // Test that changing between different showcases maintains stable node counts
     let mut rule = ComposeTestRule::new();
-    let runtime = rule.runtime_handle();
-
-    let showcase_index = MutableState::with_runtime(0, runtime.clone());
+    let showcase_index = MutableState::with_runtime(0, rule.runtime_handle());
 
     rule.set_content({
-        let showcase_index = showcase_index.clone();
         move || {
-            let showcase_index_inner = showcase_index.clone();
+            let showcase_index_inner = showcase_index;
             Column(Modifier::empty(), ColumnSpec::default(), move || {
                 let current_index = showcase_index_inner.get();
                 compose_core::with_key(&current_index, || match current_index {
@@ -468,7 +462,7 @@ fn test_modifier_showcase_recomposition_stability() {
         let idx = i % 3;
         showcase_index.set(idx);
         rule.pump_until_idle()
-            .expect(&format!("Rapid switch {}", i));
+            .unwrap_or_else(|_| panic!("Rapid switch {}", i));
 
         let current_count = rule.applier_mut().len();
 

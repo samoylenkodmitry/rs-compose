@@ -252,7 +252,7 @@ fn count_children(applier: &mut MemoryApplier, node_id: usize) -> Option<usize> 
 fn collect_all_nodes(applier: &mut MemoryApplier, node_id: usize) -> Vec<usize> {
     let mut nodes = vec![node_id];
     if let Ok(children) = applier.with_node(node_id, |node: &mut compose_ui::LayoutNode| {
-        node.children.clone()
+        node.children.iter().copied().collect::<Vec<_>>()
     }) {
         for child_id in children {
             nodes.extend(collect_all_nodes(applier, child_id));

@@ -443,13 +443,11 @@ fn test_dynamic_modifiers_size_changes() {
 #[test]
 fn test_dynamic_modifiers_frame_advancement() {
     let mut rule = ComposeTestRule::new();
-    let runtime = rule.runtime_handle();
-    let frame = MutableState::with_runtime(0i32, runtime.clone());
+    let frame = MutableState::with_runtime(0i32, rule.runtime_handle());
 
     rule.set_content({
-        let frame = frame.clone();
         move || {
-            let frame_inner = frame.clone();
+            let frame_inner = frame;
             dynamic_modifiers_showcase_with_frame(frame_inner);
         }
     })
@@ -581,14 +579,14 @@ fn test_all_showcases_have_valid_layouts() {
 
         let mut rule = ComposeTestRule::new();
         rule.set_content(showcase_fn)
-            .expect(&format!("{} should render", name));
+            .unwrap_or_else(|_| panic!("{} should render", name));
 
         let layout = compute_layout_from_rule(&mut rule, 800.0, 600.0)
-            .expect(&format!("{} should compute layout", name));
+            .unwrap_or_else(|_| panic!("{} should compute layout", name));
 
         // Validate hierarchy - all showcases should now have valid hierarchies
         validate_layout_hierarchy(layout.root())
-            .expect(&format!("{} layout hierarchy should be valid", name));
+            .unwrap_or_else(|_| panic!("{} layout hierarchy should be valid", name));
 
         // Ensure root has non-zero size
         assert!(
