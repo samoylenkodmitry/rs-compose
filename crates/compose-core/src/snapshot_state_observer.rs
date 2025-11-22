@@ -225,12 +225,38 @@ impl SnapshotStateObserverInner {
     where
         T: Any + PartialEq + 'static,
     {
+        // Clear from fast_scopes if it's a RecomposeScope
+        if let Some(rc_scope) = (scope as &dyn Any).downcast_ref::<RecomposeScope>() {
+            let id = rc_scope.id();
+            let mut fast = self.fast_scopes.borrow_mut();
+            if id < fast.len() {
+                fast[id] = None;
+            }
+        }
+
+        // Clear from scopes
         self.scopes
             .borrow_mut()
             .retain(|entry| !entry.borrow().matches_scope(scope));
     }
 
     fn clear_if(&self, predicate: impl Fn(&dyn Any) -> bool) {
+        // Clear from fast_scopes for any RecomposeScope entries that match predicate
+        let mut fast = self.fast_scopes.borrow_mut();
+        for slot in fast.iter_mut() {
+            if let Some(entry) = slot {
+                let should_clear = {
+                    let entry_ref = entry.borrow();
+                    predicate(entry_ref.scope())
+                };
+                if should_clear {
+                    *slot = None;
+                }
+            }
+        }
+        drop(fast);
+
+        // Clear from scopes
         self.scopes.borrow_mut().retain(|entry| {
             let entry_ref = entry.borrow();
             !predicate(entry_ref.scope())
@@ -238,6 +264,7 @@ impl SnapshotStateObserverInner {
     }
 
     fn clear_all(&self) {
+        self.fast_scopes.borrow_mut().clear();
         self.scopes.borrow_mut().clear();
     }
 
@@ -284,6 +311,9 @@ impl SnapshotStateObserverInner {
 
             let entry = Rc::new(RefCell::new(ScopeEntry::new(scope, on_changed)));
             fast[id] = Some(entry.clone());
+            // CRITICAL: Also add to scopes Vec so handle_apply and clear* methods work correctly
+            drop(fast);
+            self.scopes.borrow_mut().push(entry.clone());
             return entry;
         }
 
