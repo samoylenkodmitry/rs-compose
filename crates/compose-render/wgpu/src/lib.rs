@@ -148,7 +148,7 @@ impl WgpuRenderer {
         let mut font_system = FontSystem::new();
 
         // Load Roboto font into the system
-        let font_data = include_bytes!("../../../../apps/desktop-demo/assets/Roboto-Light.ttf");
+        let font_data = include_bytes!("../../../../assets/Roboto-Light.ttf");
         font_system.db_mut().load_font_data(font_data.to_vec());
 
         let font_system = Arc::new(Mutex::new(font_system));
