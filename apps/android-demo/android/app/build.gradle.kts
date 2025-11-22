@@ -14,7 +14,7 @@ android {
         versionName = "1.0"
 
         ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
         }
     }
 
@@ -44,28 +44,16 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
 }
 
-// Task to build Rust library
+// Task to build Rust library for Android
 tasks.register<Exec>("buildRustAndroid") {
     workingDir = file("../../")
 
-    doFirst {
-        // Build for all Android ABIs
-        val abis = listOf(
-            "aarch64-linux-android" to "arm64-v8a",
-            "armv7-linux-androideabi" to "armeabi-v7a",
-            "i686-linux-android" to "x86",
-            "x86_64-linux-android" to "x86_64"
-        )
-
-        for ((target, abi) in abis) {
-            exec {
-                commandLine("cargo", "ndk", "-t", abi, "-o", "../target/android", "build", "--release")
-                workingDir = file("../../")
-            }
-        }
-    }
+    commandLine("sh", "-c", """
+        cargo ndk -o ../target/android -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 build --release
+    """)
 }
 
+// Make preBuild depend on Rust build
 tasks.named("preBuild") {
     dependsOn("buildRustAndroid")
 }
