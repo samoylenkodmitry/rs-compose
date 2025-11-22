@@ -69,7 +69,7 @@ pub(crate) struct SharedTextBuffer {
 }
 
 impl SharedTextBuffer {
-    /// Ensure the buffer has the correct text and font_size, only reshaping if needed
+    /// Ensure the buffer has the correct text, font_size, and size, only reshaping if needed
     /// Returns true if reshaping occurred
     pub(crate) fn ensure(
         &mut self,
@@ -77,6 +77,8 @@ impl SharedTextBuffer {
         text: &str,
         font_size: f32,
         attrs: Attrs,
+        width: f32,
+        height: f32,
     ) -> bool {
         // Check if anything changed that requires reshaping
         if self.text == text && self.font_size == font_size {
@@ -86,6 +88,7 @@ impl SharedTextBuffer {
         // Something changed, need to reshape
         let metrics = Metrics::new(font_size, font_size * 1.4);
         self.buffer.set_metrics(font_system, metrics);
+        self.buffer.set_size(font_system, width, height);
         self.buffer
             .set_text(font_system, text, attrs, Shaping::Advanced);
         self.buffer.shape_until_scroll(font_system);
@@ -303,15 +306,17 @@ impl TextMeasurer for WgpuTextMeasurer {
         let mut text_cache = self.text_cache.lock().unwrap();
 
         // Get or create cached buffer and measure it
+        // Use large dimensions for measurement (text can be any size during layout)
+        const MEASURE_SIZE: f32 = 10000.0;
         let size = if let Some(cached) = text_cache.get_mut(&cache_key) {
             // Shared cache hit - use ensure() to only reshape if needed
-            cached.ensure(&mut font_system, text, font_size, Attrs::new());
+            cached.ensure(&mut font_system, text, font_size, Attrs::new(), MEASURE_SIZE, MEASURE_SIZE);
             cached.size(font_size)
         } else {
             // Cache miss - create new buffer and add to shared cache
             let mut new_buffer =
                 Buffer::new(&mut font_system, Metrics::new(font_size, font_size * 1.4));
-            new_buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
+            new_buffer.set_size(&mut font_system, MEASURE_SIZE, MEASURE_SIZE);
             new_buffer.set_text(&mut font_system, text, Attrs::new(), Shaping::Advanced);
             new_buffer.shape_until_scroll(&mut font_system);
 

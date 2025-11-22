@@ -671,14 +671,16 @@ impl GpuRenderer {
             let mut text_cache = self.text_cache.lock().unwrap();
             if let Some(cached) = text_cache.get_mut(&key) {
                 // Already in cache - use ensure() to only reshape if needed
-                cached.ensure(&mut font_system, &text_draw.text, font_size, Attrs::new());
+                cached.ensure(&mut font_system, &text_draw.text, font_size, Attrs::new(), width as f32, height as f32);
             } else {
                 // Not in cache, create new buffer
                 let mut buffer = glyphon::Buffer::new(
                     &mut font_system,
                     Metrics::new(font_size, font_size * 1.4),
                 );
-                buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
+                // Use viewport dimensions for buffer size to avoid coordinate issues
+                // Setting to f32::MAX can cause rendering problems on some platforms
+                buffer.set_size(&mut font_system, width as f32, height as f32);
                 buffer.set_text(
                     &mut font_system,
                     &text_draw.text,
