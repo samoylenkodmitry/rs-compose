@@ -711,7 +711,8 @@ impl GpuRenderer {
         let text_cache = self.text_cache.lock().unwrap();
 
         if !text_data.is_empty() {
-            log::info!("Preparing {} text areas for rendering", text_data.len());
+            log::info!("Preparing {} text areas (viewport: {}x{})",
+                text_data.len(), width, height);
         }
 
         for (text_draw, key) in &text_data {
@@ -723,9 +724,11 @@ impl GpuRenderer {
                 (text_draw.color.a() * 255.0) as u8,
             );
 
-            log::debug!("Text '{}' at ({}, {}) color: {:?}",
-                text_draw.text.chars().take(20).collect::<String>(),
-                text_draw.rect.x, text_draw.rect.y, color);
+            log::info!("  Text '{}' pos:({:.0},{:.0}) size:{:.0}x{:.0} color:rgba({},{},{},{})",
+                text_draw.text.chars().take(15).collect::<String>(),
+                text_draw.rect.x, text_draw.rect.y,
+                text_draw.rect.width, text_draw.rect.height,
+                color.r(), color.g(), color.b(), color.a());
 
             text_areas.push(TextArea {
                 buffer: &cached.buffer,

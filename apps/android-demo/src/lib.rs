@@ -325,8 +325,8 @@ fn android_main(app: android_activity::AndroidApp) {
                     _ => {}
                 },
                 PollEvent::Timeout => {
-                    // Check if we should render
-                    needs_redraw = true;
+                    // Only set needs_redraw if app_shell actually needs to render
+                    // This prevents continuous rendering when nothing has changed
                 }
                 _ => {}
             }
