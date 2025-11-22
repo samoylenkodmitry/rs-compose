@@ -170,10 +170,14 @@ pub extern "C" fn android_main(app: ndk::native_activity::NativeActivity) {
 
     // For now, just run the composable function once to verify it compiles
     // In a real implementation, this would be called in the render loop
-    let mut composition = Composition::new(|| {
+    use compose_core::{location_key, MemoryApplier};
+
+    let mut composition = Composition::new(MemoryApplier::new());
+    if let Err(err) = composition.render(location_key(file!(), line!(), column!()), || {
         combined_app();
-    });
-    composition.recompose();
+    }) {
+        log::error!("Composition render failed: {err}");
+    }
 
     log::info!("Initial composition completed");
 
