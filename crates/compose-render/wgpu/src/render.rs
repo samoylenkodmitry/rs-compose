@@ -721,13 +721,9 @@ impl GpuRenderer {
         let mut text_areas = Vec::new();
         let text_cache = self.text_cache.lock().unwrap();
 
-        // Log once at debug level to reduce spam
-        if !text_data.is_empty() && log::log_enabled!(log::Level::Debug) {
-            log::debug!("Preparing {} text areas (viewport: {}x{})",
-                text_data.len(), width, height);
-        }
+        log::info!("=== Creating {} text areas ===", text_data.len());
 
-        for (text_draw, key) in &text_data {
+        for (idx, (text_draw, key)) in text_data.iter().enumerate() {
             let cached = text_cache.get(key).expect("Text should be in cache");
             let color = GlyphonColor::rgba(
                 (text_draw.color.r() * 255.0) as u8,
@@ -736,32 +732,42 @@ impl GpuRenderer {
                 (text_draw.color.a() * 255.0) as u8,
             );
 
+            let bounds = TextBounds {
+                left: text_draw.clip.map(|c| c.x as i32).unwrap_or(0),
+                top: text_draw.clip.map(|c| c.y as i32).unwrap_or(0),
+                right: text_draw
+                    .clip
+                    .map(|c| (c.x + c.width) as i32)
+                    .unwrap_or(width as i32),
+                bottom: text_draw
+                    .clip
+                    .map(|c| (c.y + c.height) as i32)
+                    .unwrap_or(height as i32),
+            };
+
+            log::info!("  Text {}: '{}' pos=({:.1}, {:.1}) scale={:.2} color=({}, {}, {}, {}) bounds=({}, {}, {}, {})",
+                idx,
+                text_draw.text.chars().take(10).collect::<String>(),
+                text_draw.rect.x, text_draw.rect.y,
+                text_draw.scale,
+                color.r, color.g, color.b, color.a,
+                bounds.left, bounds.top, bounds.right, bounds.bottom);
+
             text_areas.push(TextArea {
                 buffer: &cached.buffer,
                 left: text_draw.rect.x,
                 top: text_draw.rect.y,
                 scale: text_draw.scale,
-                bounds: TextBounds {
-                    left: text_draw.clip.map(|c| c.x as i32).unwrap_or(0),
-                    top: text_draw.clip.map(|c| c.y as i32).unwrap_or(0),
-                    right: text_draw
-                        .clip
-                        .map(|c| (c.x + c.width) as i32)
-                        .unwrap_or(width as i32),
-                    bottom: text_draw
-                        .clip
-                        .map(|c| (c.y + c.height) as i32)
-                        .unwrap_or(height as i32),
-                },
+                bounds,
                 default_color: color,
             });
         }
 
         // Prepare all text at once
         if !text_areas.is_empty() {
-            log::info!("=== RENDERING {} text areas at viewport {}x{} ===", text_areas.len(), width, height);
+            log::info!("=== Calling text_renderer.prepare() for {} text areas ===", text_areas.len());
 
-            self.text_renderer
+            let prepare_result = self.text_renderer
                 .prepare(
                     &self.device,
                     &self.queue,
@@ -770,11 +776,15 @@ impl GpuRenderer {
                     Resolution { width, height },
                     text_areas.iter().cloned(),
                     &mut self.swash_cache,
-                )
-                .map_err(|e| {
-                    log::error!("Text prepare error: {:?}", e);
-                    format!("Text prepare error: {:?}", e)
-                })?;
+                );
+
+            match prepare_result {
+                Ok(_) => log::info!("  Text prepare SUCCESS"),
+                Err(ref e) => {
+                    log::error!("  Text prepare FAILED: {:?}", e);
+                    return Err(format!("Text prepare error: {:?}", e));
+                }
+            }
         }
 
         // Trim the atlas after preparing
@@ -805,14 +815,20 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            self.text_renderer
-                .render(&self.text_atlas, &mut text_pass)
-                .map_err(|e| {
-                    log::error!("Text render error: {:?}", e);
-                    format!("Text render error: {:?}", e)
-                })?;
+            log::info!("=== Calling text_renderer.render() ===");
+            let render_result = self.text_renderer
+                .render(&self.text_atlas, &mut text_pass);
+
+            match render_result {
+                Ok(_) => log::info!("  Text render SUCCESS"),
+                Err(ref e) => {
+                    log::error!("  Text render FAILED: {:?}", e);
+                    return Err(format!("Text render error: {:?}", e));
+                }
+            }
         }
 
+        log::info!("=== Submitting text encoder ===");
         self.queue.submit(std::iter::once(text_encoder.finish()));
 
         Ok(())
