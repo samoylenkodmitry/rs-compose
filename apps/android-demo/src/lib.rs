@@ -253,7 +253,10 @@ fn android_main(app: android_activity::AndroidApp) {
     // ANDROID FIX: Force redraws for first frames to stabilize atlas
     // The text atlas needs multiple render cycles to work properly on emulator
     let mut frame_count = 0u32;
-    const WARMUP_FRAMES: u32 = 10;
+    const WARMUP_FRAMES: u32 = 30;  // Increased from 10 to 30 for better stability
+
+    // Track if we just did a recomposition in WindowResized to avoid duplicate update()
+    let mut skip_next_update = false;
 
     // Main event loop - process events quickly, render outside callback
     loop {
@@ -410,6 +413,7 @@ fn android_main(app: android_activity::AndroidApp) {
                                     // CRITICAL: Force immediate recomposition after viewport change
                                     // Without this, layout calculated at 1x1 viewport persists until user interaction
                                     app_shell.update();
+                                    skip_next_update = true;  // Avoid duplicate update() in render loop
                                     log::info!("Forced recomposition after viewport change");
                                 }
                             }
@@ -460,7 +464,13 @@ fn android_main(app: android_activity::AndroidApp) {
             }
             if let Some((surface, _, _, _, app_shell)) = &mut surface_state {
                 // Always update and render to ensure continuous display
-                app_shell.update();
+                // But skip if we just did update() in WindowResized handler
+                if skip_next_update {
+                    skip_next_update = false;
+                    log::info!("Skipping redundant update() after WindowResized");
+                } else {
+                    app_shell.update();
+                }
 
                 match surface.get_current_texture() {
                     Ok(frame) => {
