@@ -202,8 +202,9 @@ fn get_display_density(app: &android_activity::AndroidApp) -> f32 {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    use android_activity::{InputStatus, MainEvent, PollEvent};
+    use android_activity::{input::MotionAction, InputStatus, MainEvent, PollEvent};
     use compose_app_shell::{default_root_key, AppShell};
+    use compose_platform_android::AndroidPlatform;
     use compose_render_wgpu::WgpuRenderer;
     use std::sync::Arc;
 
@@ -257,6 +258,9 @@ fn android_main(app: android_activity::AndroidApp) {
 
     // Track if we just did a recomposition in WindowResized to avoid duplicate update()
     let mut skip_next_update = false;
+
+    // Platform abstraction for coordinate conversion
+    let mut platform = AndroidPlatform::new();
 
     // Main event loop - process events quickly, render outside callback
     loop {
@@ -360,6 +364,7 @@ fn android_main(app: android_activity::AndroidApp) {
                             // This must happen before composables run, or dp() will return 1.0
                             let density = get_display_density(&app);
                             DENSITY_SCALE.get_or_init(|| density);
+                            platform.set_scale_factor(density as f64);
                             log::info!("Density initialized: {:.2}x (BEFORE AppShell creation)", density);
 
                             // Create renderer
@@ -396,6 +401,7 @@ fn android_main(app: android_activity::AndroidApp) {
 
                             // Get density from Android DisplayMetrics via JNI
                             let density = get_display_density(&app);
+                            platform.set_scale_factor(density as f64);
                             log::info!("Window resized to {}x{} at {:.2}x density", width, height, density);
 
                             if let Some((surface, device, _, surface_config, app_shell)) =
@@ -431,11 +437,57 @@ fn android_main(app: android_activity::AndroidApp) {
                     if let Ok(mut iter) = app.input_events_iter() {
                         loop {
                             // next() returns true if there was an event, false if queue is empty
-                            if !iter.next(|_event| {
-                                // For now, just consume the event to prevent ANR
-                                // TODO: Actually handle touch events and trigger redraws
-                                needs_redraw = true;
-                                InputStatus::Handled
+                            if !iter.next(|event| {
+                                // Handle touch events - convert to app shell pointer events
+                                let handled = match event {
+                                    android_activity::input::InputEvent::MotionEvent(motion_event) => {
+                                        log::info!("MotionEvent received: action={:?}", motion_event.action());
+
+                                        // Get the first pointer (finger) position
+                                        // NOTE: On Android, these coordinates are already in DP (density-independent pixels),
+                                        // not physical pixels, so we don't need to scale them!
+                                        let pointer = motion_event.pointer_at_index(0);
+                                        let x = pointer.x();
+                                        let y = pointer.y();
+
+                                        // Handle the motion action
+                                        match motion_event.action() {
+                                            MotionAction::Down | MotionAction::PointerDown => {
+                                                if let Some((_, _, _, _, app_shell)) = &mut surface_state {
+                                                    app_shell.set_cursor(x, y);
+                                                    app_shell.pointer_pressed();
+                                                    log::info!("TOUCH DOWN at ({:.1}, {:.1})", x, y);
+                                                    needs_redraw = true;
+                                                }
+                                            }
+                                            MotionAction::Up | MotionAction::PointerUp => {
+                                                if let Some((_, _, _, _, app_shell)) = &mut surface_state {
+                                                    app_shell.set_cursor(x, y);
+                                                    app_shell.pointer_released();
+                                                    log::info!("TOUCH UP at ({:.1}, {:.1})", x, y);
+                                                    needs_redraw = true;
+                                                }
+                                            }
+                                            MotionAction::Move => {
+                                                if let Some((_, _, _, _, app_shell)) = &mut surface_state {
+                                                    app_shell.set_cursor(x, y);
+                                                    if app_shell.should_render() {
+                                                        needs_redraw = true;
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                        true
+                                    }
+                                    _ => false,
+                                };
+
+                                if handled {
+                                    InputStatus::Handled
+                                } else {
+                                    InputStatus::Unhandled
+                                }
                             }) {
                                 break; // No more events
                             }

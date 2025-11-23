@@ -22,6 +22,7 @@ compose-ui-graphics = { path = "../../crates/compose-ui-graphics" }
 compose-ui-layout = { path = "../../crates/compose-ui-layout" }
 compose-app-shell = { path = "../../crates/compose-app-shell" }
 compose-render-wgpu = { path = "../../crates/compose-render/wgpu" }
+compose-platform-android = { path = "../../crates/compose-platform/android" }
 android_logger = "0.14"
 log = "0.4"
 jni = "0.21"

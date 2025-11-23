@@ -79,6 +79,7 @@ dependencies = [
  "compose-core",
  "compose-foundation",
  "compose-macros",
+ "compose-platform-android",
  "compose-render-wgpu",
  "compose-testing",
  "compose-ui",
