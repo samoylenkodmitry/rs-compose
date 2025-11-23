@@ -670,8 +670,8 @@ impl GpuRenderer {
             let key = TextCacheKey::new(&text_draw.text, BASE_FONT_SIZE * text_draw.scale);
             let font_size = BASE_FONT_SIZE * text_draw.scale;
 
-            // Use large but finite dimensions (f32::MAX causes GPU precision issues on Android)
-            const MAX_LAYOUT_SIZE: f32 = 4096.0;
+            // Use moderate size for Android compatibility (4096 causes atlas corruption)
+            const MAX_LAYOUT_SIZE: f32 = 2048.0;
 
             let mut text_cache = self.text_cache.lock().unwrap();
             if let Some(cached) = text_cache.get_mut(&key) {

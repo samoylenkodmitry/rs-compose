@@ -326,8 +326,8 @@ impl TextMeasurer for WgpuTextMeasurer {
         let mut text_cache = self.text_cache.lock().unwrap();
 
         // Get or create cached buffer and measure it
-        // Use large but finite dimensions (f32::MAX causes GPU precision issues on Android)
-        const MAX_LAYOUT_SIZE: f32 = 4096.0;
+        // Use moderate size for Android compatibility (4096 causes atlas corruption)
+        const MAX_LAYOUT_SIZE: f32 = 2048.0;
         let size = if let Some(cached) = text_cache.get_mut(&cache_key) {
             // Shared cache hit - use ensure() to only reshape if needed
             cached.ensure(&mut font_system, text, font_size, Attrs::new(), MAX_LAYOUT_SIZE, MAX_LAYOUT_SIZE);
