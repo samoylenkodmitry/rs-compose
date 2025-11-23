@@ -330,13 +330,14 @@ fn android_main(app: android_activity::AndroidApp) {
                     // Process and consume all pending input events
                     if let Ok(mut iter) = app.input_events_iter() {
                         loop {
-                            if iter.next(|_event| {
+                            // next() returns true if there was an event, false if queue is empty
+                            if !iter.next(|_event| {
                                 // For now, just consume the event to prevent ANR
                                 // TODO: Actually handle touch events and trigger redraws
                                 needs_redraw = true;
                                 InputStatus::Handled
-                            }).is_none() {
-                                break;
+                            }) {
+                                break; // No more events
                             }
                         }
                     }
