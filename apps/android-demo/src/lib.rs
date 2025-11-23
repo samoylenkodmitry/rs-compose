@@ -4,6 +4,14 @@ use compose_ui::{
     composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement,
     Modifier, Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
+use std::sync::OnceLock;
+
+// Global density scale for Android DP->pixel conversion
+static DENSITY_SCALE: OnceLock<f32> = OnceLock::new();
+
+fn dp(value: f32) -> f32 {
+    value * DENSITY_SCALE.get().copied().unwrap_or(1.0)
+}
 
 #[composable]
 fn combined_app() {
@@ -11,16 +19,16 @@ fn combined_app() {
 
     Column(
         Modifier::empty()
-            .padding(16.0)
+            .padding(dp(16.0))
             .then(Modifier::empty().background(Color(0.05, 0.07, 0.15, 1.0)))
-            .then(Modifier::empty().padding(12.0)),
+            .then(Modifier::empty().padding(dp(12.0))),
         ColumnSpec::default(),
         {
             let selected_tab = selected_tab.clone();
             move || {
                 Spacer(Size {
                     width: 0.0,
-                    height: 16.0,
+                    height: dp(16.0),
                 });
 
                 match selected_tab.get() {
@@ -39,10 +47,10 @@ fn counter_example() {
 
     Column(
         Modifier::empty()
-            .padding(32.0)
+            .padding(dp(32.0))
             .then(Modifier::empty().background(Color(0.08, 0.10, 0.18, 1.0)))
-            .then(Modifier::empty().rounded_corners(24.0))
-            .then(Modifier::empty().padding(20.0)),
+            .then(Modifier::empty().rounded_corners(dp(24.0)))
+            .then(Modifier::empty().padding(dp(20.0))),
         ColumnSpec::default(),
         {
             let count_state = count_state.clone();
@@ -50,48 +58,48 @@ fn counter_example() {
                 Text(
                     "Compose Counter (Android)",
                     Modifier::empty()
-                        .padding(12.0)
+                        .padding(dp(12.0))
                         .then(Modifier::empty().background(Color(1.0, 1.0, 1.0, 0.08)))
-                        .then(Modifier::empty().rounded_corners(16.0)),
+                        .then(Modifier::empty().rounded_corners(dp(16.0))),
                 );
 
                 Spacer(Size {
                     width: 0.0,
-                    height: 24.0,
+                    height: dp(24.0),
                 });
 
                 let count = count_state.get();
                 Text(
                     format!("Count: {}", count),
                     Modifier::empty()
-                        .padding(12.0)
+                        .padding(dp(12.0))
                         .then(Modifier::empty().background(Color(0.12, 0.16, 0.28, 0.8)))
-                        .then(Modifier::empty().rounded_corners(12.0)),
+                        .then(Modifier::empty().rounded_corners(dp(12.0))),
                 );
 
                 Spacer(Size {
                     width: 0.0,
-                    height: 16.0,
+                    height: dp(16.0),
                 });
 
                 Row(
-                    Modifier::empty().fill_max_width().then(Modifier::empty().padding(8.0)),
+                    Modifier::empty().fill_max_width().then(Modifier::empty().padding(dp(8.0))),
                     RowSpec::new()
-                        .horizontal_arrangement(LinearArrangement::SpacedBy(12.0))
+                        .horizontal_arrangement(LinearArrangement::SpacedBy(dp(12.0)))
                         .vertical_alignment(VerticalAlignment::CenterVertically),
                     {
                         let count_state = count_state.clone();
                         move || {
                             Button(
                                 Modifier::empty()
-                                    .rounded_corners(16.0)
+                                    .rounded_corners(dp(16.0))
                                     .then(Modifier::empty().draw_behind(|scope| {
                                         scope.draw_round_rect(
                                             Brush::solid(Color(0.35, 0.45, 0.85, 1.0)),
-                                            CornerRadii::uniform(16.0),
+                                            CornerRadii::uniform(dp(16.0)),
                                         );
                                     }))
-                                    .then(Modifier::empty().padding(10.0)),
+                                    .then(Modifier::empty().padding(dp(10.0))),
                                 {
                                     let count_state = count_state.clone();
                                     move || {
@@ -99,20 +107,20 @@ fn counter_example() {
                                     }
                                 },
                                 || {
-                                    Text("Increment", Modifier::empty().padding(6.0));
+                                    Text("Increment", Modifier::empty().padding(dp(6.0)));
                                 },
                             );
 
                             Button(
                                 Modifier::empty()
-                                    .rounded_corners(16.0)
+                                    .rounded_corners(dp(16.0))
                                     .then(Modifier::empty().draw_behind(|scope| {
                                         scope.draw_round_rect(
                                             Brush::solid(Color(0.65, 0.35, 0.35, 1.0)),
-                                            CornerRadii::uniform(16.0),
+                                            CornerRadii::uniform(dp(16.0)),
                                         );
                                     }))
-                                    .then(Modifier::empty().padding(10.0)),
+                                    .then(Modifier::empty().padding(dp(10.0))),
                                 {
                                     let count_state = count_state.clone();
                                     move || {
@@ -120,7 +128,7 @@ fn counter_example() {
                                     }
                                 },
                                 || {
-                                    Text("Decrement", Modifier::empty().padding(6.0));
+                                    Text("Decrement", Modifier::empty().padding(dp(6.0)));
                                 },
                             );
                         }
@@ -136,9 +144,9 @@ fn grid_example() {
     Text(
         "Grid example - Coming soon!",
         Modifier::empty()
-            .padding(12.0)
+            .padding(dp(12.0))
             .then(Modifier::empty().background(Color(0.12, 0.16, 0.28, 0.8)))
-            .then(Modifier::empty().rounded_corners(12.0)),
+            .then(Modifier::empty().rounded_corners(dp(12.0))),
     );
 }
 
@@ -353,13 +361,14 @@ fn android_main(app: android_activity::AndroidApp) {
 
                             app_shell.set_buffer_size(width, height);
 
-                            // Get display density and scale viewport to DP
+                            // Get display density and set global scale for DP conversion
                             let density = get_display_density(&app);
-                            let dp_width = width as f32 / density;
-                            let dp_height = height as f32 / density;
-                            app_shell.set_viewport(dp_width, dp_height);
-                            log::info!("Initial setup: {}x{} pixels (density: {:.2}x) -> {:.1}x{:.1} dp",
-                                width, height, density, dp_width, dp_height);
+                            DENSITY_SCALE.get_or_init(|| density);
+                            log::info!("Initial setup: {}x{} pixels at {:.2}x density",
+                                width, height, density);
+
+                            // Keep viewport in pixels - density scaling happens via dp() helper
+                            app_shell.set_viewport(width as f32, height as f32);
 
                             surface_state = Some((surface, device, queue, surface_config, app_shell));
 
@@ -378,7 +387,7 @@ fn android_main(app: android_activity::AndroidApp) {
 
                             // Get density from Android DisplayMetrics via JNI
                             let density = get_display_density(&app);
-                            log::info!("Window resized to {}x{} (density: {:.2}x)", width, height, density);
+                            log::info!("Window resized to {}x{} at {:.2}x density", width, height, density);
 
                             if let Some((surface, device, _, surface_config, app_shell)) =
                                 &mut surface_state
@@ -389,11 +398,8 @@ fn android_main(app: android_activity::AndroidApp) {
                                     surface.configure(device, surface_config);
                                     app_shell.set_buffer_size(width, height);
 
-                                    // Scale viewport by density to convert pixels to DP
-                                    let dp_width = width as f32 / density;
-                                    let dp_height = height as f32 / density;
-                                    app_shell.set_viewport(dp_width, dp_height);
-                                    log::info!("  Viewport set to {:.1}x{:.1} dp", dp_width, dp_height);
+                                    // Keep viewport in pixels - density scaling should happen in UI layer
+                                    app_shell.set_viewport(width as f32, height as f32);
                                 }
                             }
                         }
