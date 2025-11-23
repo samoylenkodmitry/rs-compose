@@ -323,17 +323,16 @@ impl TextMeasurer for WgpuTextMeasurer {
         let mut text_cache = self.text_cache.lock().unwrap();
 
         // Get or create cached buffer and measure it
-        // Use large dimensions for measurement (text can be any size during layout)
-        const MEASURE_SIZE: f32 = 10000.0;
+        // Use infinite dimensions for text layout (prevents wrapping/clipping)
         let size = if let Some(cached) = text_cache.get_mut(&cache_key) {
             // Shared cache hit - use ensure() to only reshape if needed
-            cached.ensure(&mut font_system, text, font_size, Attrs::new(), MEASURE_SIZE, MEASURE_SIZE);
+            cached.ensure(&mut font_system, text, font_size, Attrs::new(), f32::MAX, f32::MAX);
             cached.size(font_size)
         } else {
             // Cache miss - create new buffer and add to shared cache
             let mut new_buffer =
                 Buffer::new(&mut font_system, Metrics::new(font_size, font_size * 1.4));
-            new_buffer.set_size(&mut font_system, MEASURE_SIZE, MEASURE_SIZE);
+            new_buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
             new_buffer.set_text(&mut font_system, text, Attrs::new(), Shaping::Advanced);
             new_buffer.shape_until_scroll(&mut font_system);
 

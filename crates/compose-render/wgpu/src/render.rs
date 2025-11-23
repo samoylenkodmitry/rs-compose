@@ -675,21 +675,20 @@ impl GpuRenderer {
                 // Already in cache - use ensure() to only reshape if needed
                 log::info!("Text '{}' found in cache, calling ensure()",
                     text_draw.text.chars().take(10).collect::<String>());
-                let reshaped = cached.ensure(&mut font_system, &text_draw.text, font_size, Attrs::new(), width as f32, height as f32);
+                let reshaped = cached.ensure(&mut font_system, &text_draw.text, font_size, Attrs::new(), f32::MAX, f32::MAX);
                 log::info!("  ensure() returned: reshaped={}", reshaped);
             } else {
                 // Not in cache, create new buffer
-                log::info!("Creating NEW text buffer '{}' at {}x{}, font_size={}",
+                log::info!("Creating NEW text buffer '{}' with infinite layout, font_size={}",
                     text_draw.text.chars().take(10).collect::<String>(),
-                    width, height, font_size);
+                    font_size);
 
                 let mut buffer = glyphon::Buffer::new(
                     &mut font_system,
                     Metrics::new(font_size, font_size * 1.4),
                 );
-                // Use viewport dimensions for buffer size to avoid coordinate issues
-                // Setting to f32::MAX can cause rendering problems on some platforms
-                buffer.set_size(&mut font_system, width as f32, height as f32);
+                // Use infinite dimensions for text layout (prevents wrapping/clipping issues)
+                buffer.set_size(&mut font_system, f32::MAX, f32::MAX);
                 buffer.set_text(
                     &mut font_system,
                     &text_draw.text,
@@ -753,7 +752,7 @@ impl GpuRenderer {
                     .unwrap_or(height as i32),
             };
 
-            log::info!("  Text {}: '{}' pos=({:.1}, {:.1}) scale={:.2} color=({}, {}, {}, {}) bounds=({}, {}, {}, {}) buffer={}x{} runs={}",
+            log::info!("  Text {}: '{}' pos=({:.1}, {:.1}) scale={:.2} color=({}, {}, {}, {}) bounds=({}, {}, {}, {}) buffer={:.0}x{:.0} runs={}",
                 idx,
                 text_draw.text.chars().take(10).collect::<String>(),
                 text_draw.rect.x, text_draw.rect.y,
@@ -772,11 +771,10 @@ impl GpuRenderer {
             });
         }
 
-        // Trim old glyphs BEFORE preparing new ones
-        // This ensures we don't clear glyphs that were just uploaded
-        log::info!("=== Calling text_atlas.trim() BEFORE prepare ===");
-        self.text_atlas.trim();
-        log::info!("  Atlas trimmed (old unused glyphs removed)");
+        // NOTE: Do NOT call text_atlas.trim() here!
+        // Calling trim() every frame causes race conditions where the GPU tries to read
+        // glyphs that have been cleared by the CPU, resulting in corrupted/missing text.
+        // The atlas will auto-grow as needed and glyphon handles memory internally.
 
         // Prepare all text at once
         if !text_areas.is_empty() {
