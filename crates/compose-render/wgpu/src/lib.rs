@@ -81,16 +81,26 @@ impl SharedTextBuffer {
         height: f32,
     ) -> bool {
         let (old_w, old_h) = self.buffer.size();
+        let size_changed = (old_w - width).abs() > 0.1 || (old_h - height).abs() > 0.1;
+        let text_changed = self.text != text;
+        let font_changed = (self.font_size - font_size).abs() > 0.1;
 
-        // Always update buffer size to match rendering viewport
-        // and force reshape to ensure glyphs are laid out correctly
-        self.buffer.set_size(font_system, width, height);
+        // Only reshape if something actually changed
+        if !size_changed && !text_changed && !font_changed {
+            return false; // Nothing changed, skip reshape
+        }
 
-        log::info!("Text buffer '{}': resize {}x{} -> {}x{}, font_size={}",
-            &self.text.chars().take(10).collect::<String>(),
-            old_w, old_h, width, height, font_size);
+        log::info!("Text buffer '{}': size_changed={}, text_changed={}, font_changed={}",
+            &text.chars().take(10).collect::<String>(),
+            size_changed, text_changed, font_changed);
 
-        // Force reshape even if text/font_size unchanged to handle size changes
+        // Update buffer size if needed
+        if size_changed {
+            self.buffer.set_size(font_system, width, height);
+            log::info!("  Resized: {}x{} -> {}x{}", old_w, old_h, width, height);
+        }
+
+        // Reshape the text
         let metrics = Metrics::new(font_size, font_size * 1.4);
         self.buffer.set_metrics(font_system, metrics);
         self.buffer
@@ -98,7 +108,7 @@ impl SharedTextBuffer {
         self.buffer.shape_until_scroll(font_system);
 
         let runs = self.buffer.layout_runs().count();
-        log::info!("  Reshaped: runs={}, metrics={:?}", runs, metrics);
+        log::info!("  Reshaped: runs={}, font_size={}", runs, font_size);
 
         // Update cached values
         self.text.clear();
