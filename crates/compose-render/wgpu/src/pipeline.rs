@@ -16,8 +16,19 @@ use style::{
     combine_layers, scale_corner_radii, DrawPlacement, NodeStyle,
 };
 
+#[allow(dead_code)]
 pub(crate) fn render_layout_tree(root: &LayoutBox, scene: &mut Scene) {
-    render_layout_node(root, GraphicsLayer::default(), scene, None, None);
+    render_layout_tree_with_scale(root, scene, 1.0);
+}
+
+pub(crate) fn render_layout_tree_with_scale(root: &LayoutBox, scene: &mut Scene, scale: f32) {
+    let root_layer = GraphicsLayer {
+        alpha: 1.0,
+        scale,
+        translation_x: 0.0,
+        translation_y: 0.0,
+    };
+    render_layout_node(root, root_layer, scene, None, None);
 }
 
 fn render_layout_node(

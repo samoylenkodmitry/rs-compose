@@ -7,10 +7,36 @@ Compose-RS is a Jetpack Compose–inspired declarative UI framework. The reposit
 
 ## Examples
 
+### Desktop
+
 Run the interactive desktop example:
 ```bash
 cargo run --bin desktop-app
 ```
+
+### Android
+
+Build and run the Android demo app:
+
+1. Install prerequisites:
+   ```bash
+   cargo install cargo-ndk
+   rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+   ```
+
+2. Set environment variables:
+   ```bash
+   export ANDROID_HOME=$HOME/Android/Sdk
+   export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125
+   ```
+
+3. Build and install:
+   ```bash
+   cd apps/android-demo/android
+   ./gradlew installDebug
+   ```
+
+For detailed Android build instructions, see [`apps/android-demo/README.md`](apps/android-demo/README.md).
 ```rust
 
 fn main() {

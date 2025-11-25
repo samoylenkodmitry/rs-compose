@@ -13,6 +13,7 @@ members = [
     "crates/compose-ui",
     "crates/compose-testing",
     "crates/compose-platform/desktop-winit",
+    "crates/compose-platform/android",
     "crates/compose-render/common",
     "crates/compose-render/pixels",
     "crates/compose-render/wgpu",
@@ -20,3 +21,7 @@ members = [
     "apps/minimal-single-file",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+# Force android-activity to use native-activity feature across all workspace crates
+android-activity = { version = "0.5", features = ["native-activity"] }
