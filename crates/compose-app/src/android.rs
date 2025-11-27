@@ -21,69 +21,27 @@ type SurfaceState = (
     AppShell<WgpuRenderer>,
 );
 
-/// Get display density from Android DisplayMetrics.
+/// Get display density from Android NDK Configuration.
 ///
-/// Common Android densities:
-/// - mdpi: 1.0 (160 dpi)
+/// Uses the NDK's AConfiguration_getDensity which returns density constants
+/// mapped to the standard Android density classes:
+/// - mdpi: 1.0 (160 dpi baseline)
 /// - hdpi: 1.5 (240 dpi)
 /// - xhdpi: 2.0 (320 dpi) - most common modern phones
 /// - xxhdpi: 3.0 (480 dpi)
 /// - xxxhdpi: 4.0 (640 dpi)
-fn get_display_density() -> f32 {
-    use jni::objects::JObject;
-    use jni::JNIEnv;
-    use ndk_context::android_context;
+///
+/// The factor is calculated as DPI / 160 per Android NDK documentation.
+fn get_display_density(app: &android_activity::AndroidApp) -> f32 {
+    let config = app.config();
+    let density = config.density();
 
-    let ctx = android_context();
-    let vm_ptr = ctx.vm();
-    let context_ptr = ctx.context();
-
-    if vm_ptr.is_null() || context_ptr.is_null() {
-        log::warn!("android_context returned null vm/context; using density 2.0");
-        return 2.0;
-    }
-
-    unsafe {
-        let vm = jni::JavaVM::from_raw(vm_ptr as *mut _)
-            .expect("JavaVM::from_raw failed");
-        let env = vm.attach_current_thread().expect("attach_current_thread failed");
-
-        let context = JObject::from_raw(context_ptr as *mut _);
-
-        let resources = env
-            .call_method(
-                &context,
-                "getResources",
-                "()Landroid/content/res/Resources;",
-                &[],
-            )
-            .expect("getResources failed")
-            .l()
-            .expect("getResources returned null");
-
-        let metrics = env
-            .call_method(
-                &resources,
-                "getDisplayMetrics",
-                "()Landroid/util/DisplayMetrics;",
-                &[],
-            )
-            .expect("getDisplayMetrics failed")
-            .l()
-            .expect("getDisplayMetrics returned null");
-
-        let density_field = env
-            .get_field(&metrics, "density", "F")
-            .expect("getField(density) failed");
-
-        let density = density_field.f().expect("density not float");
-        if density <= 0.0 {
-            log::warn!("DisplayMetrics.density <= 0; using 2.0");
-            2.0
-        } else {
-            density
-        }
-    }
+    // Use approx_hidpi_factor which computes DPI / 160
+    // This matches DisplayMetrics.density from the framework
+    density
+        .approx_hidpi_factor()
+        .unwrap_or(2.0) // Fallback if density is Any/None/Default
+        as f32
 }
 
 /// Runs an Android Compose application with wgpu rendering.
@@ -231,7 +189,7 @@ pub fn run(
                             surface.configure(&device, &surface_config);
 
                             // Get display density and update platform
-                            let density = get_display_density();
+                            let density = get_display_density(&app);
                             android_platform.set_scale_factor(density as f64);
                             log::info!("Display density: {:.2}x", density);
 
@@ -286,7 +244,7 @@ pub fn run(
                             let height = native_window.height() as u32;
                             window_size = (width, height);
 
-                            let density = get_display_density();
+                            let density = get_display_density(&app);
                             android_platform.set_scale_factor(density as f64);
                             log::info!(
                                 "Window resized to {}x{} at {:.2}x density",
