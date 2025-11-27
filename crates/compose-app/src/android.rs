@@ -46,8 +46,7 @@ fn get_display_density() -> f32 {
     unsafe {
         let vm = jni::JavaVM::from_raw(vm_ptr as *mut _)
             .expect("JavaVM::from_raw failed");
-        let mut env = vm.attach_current_thread().expect("attach_current_thread failed");
-        let env: JNIEnv<'_> = &mut env;
+        let env = vm.attach_current_thread().expect("attach_current_thread failed");
 
         let context = JObject::from_raw(context_ptr as *mut _);
 
