@@ -185,10 +185,27 @@ pub fn run(
                             let width = native_window.width() as u32;
                             let height = native_window.height() as u32;
 
-                            // Create surface using wgpu's Android-specific surface creation
+                            // Create surface using raw window handle from NativeWindow
                             let surface = unsafe {
-                                let target = wgpu::SurfaceTargetUnsafe::from_window(&native_window)
-                                    .expect("Failed to create surface target from native window");
+                                use raw_window_handle::{
+                                    AndroidNdkWindowHandle, RawWindowHandle, RawDisplayHandle,
+                                    AndroidDisplayHandle,
+                                };
+
+                                let mut window_handle = AndroidNdkWindowHandle::new(
+                                    std::ptr::NonNull::new(native_window.ptr().as_ptr() as *mut _)
+                                        .expect("NativeWindow pointer is null")
+                                );
+                                let raw_window_handle = RawWindowHandle::AndroidNdk(window_handle);
+
+                                let display_handle = AndroidDisplayHandle::new();
+                                let raw_display_handle = RawDisplayHandle::Android(display_handle);
+
+                                let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+                                    raw_display_handle,
+                                    raw_window_handle,
+                                };
+
                                 instance
                                     .create_surface_unsafe(target)
                                     .expect("Failed to create WGPU surface")
