@@ -1,5 +1,4 @@
 use compose_ui_graphics::Point;
-use std::ptr::NonNull;
 
 /// Platform abstraction for Android.
 ///
@@ -62,6 +61,7 @@ pub unsafe fn create_wgpu_surface(
     use raw_window_handle::{
         AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
     };
+    use std::ptr::NonNull;
 
     let window_handle = AndroidNdkWindowHandle::new(
         NonNull::new(native_window.ptr().as_ptr() as *mut _).expect("Null window pointer"),
