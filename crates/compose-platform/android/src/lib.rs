@@ -57,7 +57,7 @@ impl AndroidPlatform {
 /// The native window pointer must be valid for the duration of the surface's lifetime.
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
-    native_window: &android_activity::NativeWindow,
+    native_window: &ndk::native_window::NativeWindow,
 ) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
     use raw_window_handle::{
         AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
