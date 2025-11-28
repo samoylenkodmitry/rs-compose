@@ -45,36 +45,3 @@ impl AndroidPlatform {
         self.scale_factor as f32
     }
 }
-
-#[cfg(feature = "surface")]
-/// Creates a wgpu surface from an Android native window.
-///
-/// This function encapsulates all the unsafe window handle creation code.
-///
-/// # Safety
-///
-/// The native window pointer must be valid for the duration of the surface's lifetime.
-pub unsafe fn create_wgpu_surface(
-    instance: &wgpu::Instance,
-    native_window: &ndk::native_window::NativeWindow,
-) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
-    use raw_window_handle::{
-        AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
-    };
-    use std::ptr::NonNull;
-
-    let window_handle = AndroidNdkWindowHandle::new(
-        NonNull::new(native_window.ptr().as_ptr() as *mut _).expect("Null window pointer"),
-    );
-    let display_handle = AndroidDisplayHandle::new();
-
-    let raw_window_handle = RawWindowHandle::AndroidNdk(window_handle);
-    let raw_display_handle = RawDisplayHandle::Android(display_handle);
-
-    let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-        raw_display_handle,
-        raw_window_handle,
-    };
-
-    instance.create_surface_unsafe(target)
-}

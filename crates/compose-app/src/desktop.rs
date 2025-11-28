@@ -183,8 +183,28 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
 
                     let output = match surface.get_current_texture() {
                         Ok(output) => output,
+                        Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
+                            // Reconfigure surface with current window size
+                            let size = window.inner_size();
+                            if size.width > 0 && size.height > 0 {
+                                surface_config.width = size.width;
+                                surface_config.height = size.height;
+                                let device = app.renderer().device();
+                                surface.configure(device, &surface_config);
+                            }
+                            return;
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                            log::error!("Out of memory, exiting");
+                            elwt.exit();
+                            return;
+                        }
+                        Err(wgpu::SurfaceError::Timeout) => {
+                            log::debug!("Surface timeout, skipping frame");
+                            return;
+                        }
                         Err(err) => {
-                            log::error!("failed to get surface texture: {err}");
+                            log::error!("Failed to get surface texture: {err}");
                             return;
                         }
                     };

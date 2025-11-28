@@ -92,6 +92,15 @@ pub fn run(
 ) {
     use android_activity::{input::MotionAction, InputStatus, MainEvent, PollEvent};
 
+    // Install panic hook for better crash logging in Logcat
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_else(|| "unknown location".to_string());
+        let message = panic_info.payload().downcast_ref::<&str>().map(|s| *s)
+            .or_else(|| panic_info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("Box<dyn Any>");
+        log::error!("PANIC at {}: {}", location, message);
+    }));
+
     // Wrap content in Rc<RefCell> for reuse across window recreations
     let content = std::rc::Rc::new(std::cell::RefCell::new(content));
 
@@ -138,14 +147,14 @@ pub fn run(
         // Dynamic poll duration:
         // - None when no window (paused, no surface)
         // - ZERO when dirty or animating (immediate rendering)
-        // - Short timeout when idle (allows responsive input without ANR)
+        // - None when idle (event-driven sleep)
         let poll_duration = if gpu_resources.is_none() {
             None // No window, sleep until next event
         } else if let Some(shell) = &app_shell {
             if shell.needs_redraw() {
                 Some(std::time::Duration::ZERO) // Dirty or animating, tight loop
             } else {
-                Some(std::time::Duration::from_millis(16)) // Idle, ~60fps polling for input responsiveness
+                None // Idle, sleep until next event
             }
         } else {
             None
@@ -162,11 +171,10 @@ pub fn run(
                             let width = native_window.width() as u32;
                             let height = native_window.height() as u32;
 
-                            // Create surface from the Android window using platform helper
-                            let surface = unsafe {
-                                compose_platform_android::create_wgpu_surface(&instance, &native_window)
-                                    .expect("Failed to create surface")
-                            };
+                            // Create surface using standard wgpu integration with AndroidApp
+                            let surface = instance
+                                .create_surface(&app)
+                                .expect("Failed to create WGPU surface from AndroidApp");
 
                             // Request adapter
                             let adapter = pollster::block_on(instance.request_adapter(
@@ -332,6 +340,25 @@ pub fn run(
                         if let Some(shell) = &mut app_shell {
                             shell.mark_dirty();
                         }
+                    }
+                    MainEvent::Pause => {
+                        log::info!("App paused");
+                    }
+                    MainEvent::Resume { .. } => {
+                        log::info!("App resumed");
+                    }
+                    MainEvent::Start => {
+                        log::info!("App started");
+                    }
+                    MainEvent::Stop => {
+                        log::info!("App stopped");
+                    }
+                    MainEvent::SaveState { .. } => {
+                        log::info!("Save state requested (hook for future serialization)");
+                    }
+                    MainEvent::Destroy => {
+                        log::info!("App destroy requested, exiting cleanly");
+                        break;
                     }
                     _ => {}
                 },

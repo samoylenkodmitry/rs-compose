@@ -7,10 +7,3 @@ description = "Android platform adapter for Compose-RS"
 
 [dependencies]
 compose-ui-graphics = { path = "../../compose-ui-graphics" }
-wgpu = { version = "0.19", optional = true }
-ndk = { version = "0.8", optional = true }
-raw-window-handle = { version = "0.6", optional = true }
-
-[features]
-default = []
-surface = ["dep:wgpu", "dep:ndk", "dep:raw-window-handle"]
