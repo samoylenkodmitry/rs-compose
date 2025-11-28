@@ -18,10 +18,10 @@ android {
 
     buildTypes {
         debug {
-            // Debug builds use only arm64-v8a for faster iteration
-            // Match this to your dev device ABI
+            // Debug builds: x86_64 only for emulator (faster builds, smaller APK)
+            // Add "arm64-v8a" if testing on physical devices
             ndk {
-                abiFilters.add("arm64-v8a")
+                abiFilters.add("x86_64")
             }
         }
         release {
@@ -30,6 +30,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
 
             // Release builds include all supported ABIs
             ndk {
@@ -45,10 +46,10 @@ android {
 
     sourceSets {
         getByName("debug") {
-            jniLibs.srcDirs("../../../target/android/debug")
+            jniLibs.srcDirs("../../../target/android")
         }
         getByName("release") {
-            jniLibs.srcDirs("../../../target/android/release")
+            jniLibs.srcDirs("../../../target/android")
         }
     }
 }
@@ -88,14 +89,11 @@ tasks.register<Exec>("buildRustDebug") {
 
     workingDir = rootProject.projectDir
 
-    environment("CARGO_TARGET_DIR", "${rootProject.projectDir}/target/android/debug")
-
-    // Debug builds: single ABI for faster iteration
-    // Adjust arm64-v8a to match your dev device
+    // Debug builds: x86_64 only for emulator (faster iteration)
     commandLine("sh", "-c", """
         cargo ndk \
-            -t arm64-v8a \
-            -o target/android/debug \
+            -t x86_64 \
+            -o target/android \
             build \
             -p desktop-app \
             --lib \
@@ -116,8 +114,6 @@ tasks.register<Exec>("buildRustRelease") {
 
     workingDir = rootProject.projectDir
 
-    environment("CARGO_TARGET_DIR", "${rootProject.projectDir}/target/android/release")
-
     // Release builds: all supported ABIs
     commandLine("sh", "-c", """
         cargo ndk \
@@ -125,7 +121,7 @@ tasks.register<Exec>("buildRustRelease") {
             -t armeabi-v7a \
             -t x86 \
             -t x86_64 \
-            -o target/android/release \
+            -o target/android \
             build \
             --release \
             -p desktop-app \
