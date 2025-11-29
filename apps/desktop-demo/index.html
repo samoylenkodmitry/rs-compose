@@ -109,10 +109,13 @@
         async function init() {
             try {
                 // Import the WASM module
-                const { run_app } = await import('./pkg/desktop_app.js');
+                const wasm = await import('./pkg/desktop_app.js');
 
-                // Run the app
-                await run_app();
+                // Initialize the WASM module (this loads the .wasm file)
+                await wasm.default();
+
+                // Now run the app (functions are available after init)
+                await wasm.run_app();
 
                 // Hide loading message
                 document.getElementById('loading').style.display = 'none';
