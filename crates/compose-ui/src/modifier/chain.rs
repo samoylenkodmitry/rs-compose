@@ -19,6 +19,7 @@ use crate::modifier_nodes::{
 use std::any::type_name_of_val;
 use std::cell::RefCell;
 use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
 
 /// Snapshot of a modifier node inside a reconciled chain for debugging & inspector tooling.
@@ -332,8 +333,15 @@ fn apply_intrinsic_size_node(layout: &mut LayoutProperties, node: &IntrinsicSize
 }
 
 fn global_modifier_debug_flag() -> bool {
-    static ENV_DEBUG: OnceLock<bool> = OnceLock::new();
-    *ENV_DEBUG.get_or_init(|| std::env::var_os("COMPOSE_DEBUG_MODIFIERS").is_some())
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static ENV_DEBUG: OnceLock<bool> = OnceLock::new();
+        *ENV_DEBUG.get_or_init(|| std::env::var_os("COMPOSE_DEBUG_MODIFIERS").is_some())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
 }
 
 #[cfg(test)]

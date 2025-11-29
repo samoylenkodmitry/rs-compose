@@ -1779,9 +1779,11 @@ impl Composer {
                 if !parent_contains {
                     reuse_allowed = false;
                 }
+                #[cfg(not(target_arch = "wasm32"))]
                 if std::env::var("COMPOSE_DEBUG").is_ok() {
                     eprintln!("emit_node: candidate #{id} parent_contains={parent_contains}");
                 }
+                #[cfg(not(target_arch = "wasm32"))]
                 if !reuse_allowed && std::env::var("COMPOSE_DEBUG").is_ok() {
                     eprintln!(
                         "emit_node: not reusing node #{id} despite type match; creating new instance"
@@ -1790,6 +1792,7 @@ impl Composer {
 
                 if reuse_allowed {
                     self.core.last_node_reused.set(Some(true));
+                    #[cfg(not(target_arch = "wasm32"))]
                     if std::env::var("COMPOSE_DEBUG").is_ok() {
                         eprintln!(
                             "emit_node: reusing node #{id} as {}",
@@ -1826,6 +1829,7 @@ impl Composer {
         // If there was a mismatched node in this slot, schedule its removal before creating a new one.
         if let Some(old_id) = existing_id {
             if !type_matches {
+                #[cfg(not(target_arch = "wasm32"))]
                 if std::env::var("COMPOSE_DEBUG").is_ok() {
                     eprintln!(
                         "emit_node: replacing node #{old_id} with new {}",
@@ -1852,6 +1856,7 @@ impl Composer {
             applier.create(Box::new(init()))
         };
         self.core.last_node_reused.set(Some(false));
+        #[cfg(not(target_arch = "wasm32"))]
         if std::env::var("COMPOSE_DEBUG").is_ok() {
             eprintln!(
                 "emit_node: creating node #{} as {}",
@@ -1939,6 +1944,7 @@ impl Composer {
                 previous,
                 new_children,
             } = frame;
+            #[cfg(not(target_arch = "wasm32"))]
             if std::env::var("COMPOSE_DEBUG").is_ok() {
                 eprintln!("pop_parent: node #{}", id);
                 eprintln!("  previous children: {:?}", previous);

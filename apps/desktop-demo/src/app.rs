@@ -12,8 +12,11 @@ use compose_ui::{
 use std::cell::RefCell;
 
 mod mineswapper2;
+
+#[cfg(not(target_arch = "wasm32"))]
 mod web_fetch;
 
+#[cfg(not(target_arch = "wasm32"))]
 use web_fetch::web_fetch_example;
 
 thread_local! {
@@ -26,6 +29,7 @@ pub enum DemoTab {
     Counter,
     CompositionLocal,
     Async,
+    #[cfg(not(target_arch = "wasm32"))]
     WebFetch,
     Layout,
     ModifierShowcase,
@@ -38,6 +42,7 @@ impl DemoTab {
             DemoTab::Counter => "Counter App",
             DemoTab::CompositionLocal => "CompositionLocal Test",
             DemoTab::Async => "Async Runtime",
+            #[cfg(not(target_arch = "wasm32"))]
             DemoTab::WebFetch => "Web Fetch",
             DemoTab::Layout => "Recursive Layout",
             DemoTab::ModifierShowcase => "Modifiers Showcase",
@@ -161,6 +166,7 @@ pub fn combined_app() {
                     render_tab_button(DemoTab::Counter);
                     render_tab_button(DemoTab::CompositionLocal);
                     render_tab_button(DemoTab::Async);
+                    #[cfg(not(target_arch = "wasm32"))]
                     render_tab_button(DemoTab::WebFetch);
                     render_tab_button(DemoTab::Layout);
                     render_tab_button(DemoTab::ModifierShowcase);
@@ -178,6 +184,7 @@ pub fn combined_app() {
                 DemoTab::Counter => counter_app(),
                 DemoTab::CompositionLocal => composition_local_example(),
                 DemoTab::Async => async_runtime_example(),
+                #[cfg(not(target_arch = "wasm32"))]
                 DemoTab::WebFetch => web_fetch_example(),
                 DemoTab::Layout => recursive_layout_example(),
                 DemoTab::ModifierShowcase => modifier_showcase_tab(),

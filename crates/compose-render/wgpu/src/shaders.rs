@@ -58,11 +58,14 @@ struct GradientStop {
     color: vec4<f32>,
 }
 
+// Use uniform buffers for WebGL compatibility
+// Note: WebGL has a minimum uniform buffer size of 16KB
+// ShapeData is 64 bytes, so 256 shapes = 16KB
 @group(1) @binding(0)
-var<storage, read> shape_data: array<ShapeData>;
+var<uniform> shape_data: array<ShapeData, 256>;
 
 @group(1) @binding(1)
-var<storage, read> gradient_stops: array<GradientStop>;
+var<uniform> gradient_stops: array<GradientStop, 256>;
 
 fn sdf_rounded_rect(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
     var radius = r.x;

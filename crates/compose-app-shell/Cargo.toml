@@ -13,6 +13,8 @@ compose-ui = { path = "../compose-ui" }
 compose-ui-graphics = { path = "../compose-ui-graphics" }
 compose-foundation = { path = "../compose-foundation" }
 log = "0.4"
+# Use instant crate for cross-platform time support (works on native and WASM)
+instant = { version = "0.1", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 compose-macros = { path = "../compose-macros" }
