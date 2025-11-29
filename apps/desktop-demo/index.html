@@ -108,6 +108,20 @@
     <script type="module">
         async function init() {
             try {
+                // Check WebGPU availability first
+                if (!navigator.gpu) {
+                    throw new Error('WebGPU is not supported in this browser. Please use Chrome 113+, Edge 113+, or Safari 18+ with WebGPU enabled.');
+                }
+
+                // Try to request an adapter to verify WebGPU works
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    throw new Error('Failed to get WebGPU adapter. WebGPU might not be enabled or your GPU might not be supported.\n\n' +
+                        'Try enabling WebGPU in chrome://flags/#enable-unsafe-webgpu');
+                }
+
+                console.log('WebGPU adapter found:', adapter);
+
                 // Import the WASM module
                 const wasm = await import('./pkg/desktop_app.js');
 
@@ -124,11 +138,25 @@
                 document.getElementById('loading').style.display = 'none';
                 const errorDiv = document.getElementById('error');
                 errorDiv.style.display = 'block';
-                errorDiv.innerHTML = `
-                    <h3>Error Loading Application</h3>
-                    <p>${err.message}</p>
-                    <p><strong>Note:</strong> This demo requires WebGPU support. Please use a modern browser like Chrome 113+, Edge 113+, or Safari 18+ with WebGPU enabled.</p>
-                `;
+
+                let errorHtml = `<h3>Error Loading Application</h3><p>${err.message}</p>`;
+
+                if (err.message.includes('adapter') || err.message.includes('WebGPU')) {
+                    errorHtml += `
+                        <hr>
+                        <h4>WebGPU Troubleshooting:</h4>
+                        <ol style="text-align: left;">
+                            <li>Enable WebGPU in <a href="chrome://flags/#enable-unsafe-webgpu" target="_blank">chrome://flags</a></li>
+                            <li>Restart your browser</li>
+                            <li>Check support at <a href="https://webgpureport.org/" target="_blank">webgpureport.org</a></li>
+                            <li>Update your graphics drivers</li>
+                        </ol>
+                    `;
+                } else {
+                    errorHtml += `<p><strong>Note:</strong> This demo requires WebGPU support.</p>`;
+                }
+
+                errorDiv.innerHTML = errorHtml;
             }
         }
 
