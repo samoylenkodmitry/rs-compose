@@ -3,6 +3,8 @@ pub mod fonts;
 
 use crate::fonts::DEMO_FONTS;
 use compose_app::AppLauncher;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 fn create_app() -> AppLauncher {
     AppLauncher::new()
@@ -23,4 +25,11 @@ pub fn entry_point() {
 #[no_mangle]
 pub fn android_main(app: android_activity::AndroidApp) {
     create_app().run(app, app::combined_app);
+}
+
+/// Web entry point
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_entry_point() {
+    create_app().run(app::combined_app);
 }

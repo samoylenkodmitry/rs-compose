@@ -123,6 +123,12 @@ impl AppLauncher {
     pub fn run(self, app: android_activity::AndroidApp, content: impl FnMut() + 'static) {
         crate::android::run(app, self.settings, content)
     }
+
+    /// Run the application (web platform).
+    #[cfg(all(feature = "web", feature = "renderer-wgpu", target_arch = "wasm32"))]
+    pub fn run(self, content: impl FnMut() + 'static) -> ! {
+        crate::web::run(self.settings, content)
+    }
 }
 
 impl Default for AppLauncher {

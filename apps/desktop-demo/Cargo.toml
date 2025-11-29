@@ -21,6 +21,7 @@ default = ["renderer-wgpu", "desktop"]
 renderer-pixels = ["compose-app/renderer-pixels"]
 renderer-wgpu = ["compose-app/renderer-wgpu"]
 desktop = ["compose-app/desktop"]
+web = ["compose-app/web"]
 android = ["compose-app/android"]
 
 [dependencies]
@@ -32,10 +33,16 @@ compose-foundation = { path = "../../crates/compose-foundation" }
 env_logger = "0.10"
 anyhow = "1.0"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+log = "0.4"
 
 # Android-specific dependencies (only when building for Android)
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+console_log = "1.0"
 
 [dev-dependencies]
 compose-macros = { path = "../../crates/compose-macros" }
