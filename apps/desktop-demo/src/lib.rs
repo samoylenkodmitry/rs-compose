@@ -35,7 +35,7 @@ pub fn web_init() {
     // Set up logging
     wasm_logger::init(wasm_logger::Config::default());
     console_error_panic_hook::set_once();
-    log::info!("Compose demo starting in browser...");
+    log::info!("🚀 BUILD-ID-XYZ123-2047 🚀 Compose demo starting in browser...");
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
