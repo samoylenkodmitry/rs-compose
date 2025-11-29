@@ -43,6 +43,8 @@ For detailed Android build instructions, see [`apps/android-demo/README.md`](app
 
 Build and run the demo in your browser:
 
+⚠️ **Note:** Requires Chrome Canary/Dev or Safari Technology Preview due to WebGPU spec compatibility.
+
 1. Install prerequisites:
    ```bash
    rustup target add wasm32-unknown-unknown
@@ -56,9 +58,11 @@ Build and run the demo in your browser:
    python3 -m http.server 8080
    ```
 
-3. Open http://localhost:8080 in a WebGPU-compatible browser (Chrome 113+, Edge 113+, or Safari 18+)
+3. Open http://localhost:8080 in Chrome Canary/Dev (download from https://www.google.com/chrome/canary/)
 
-For detailed web build instructions, see [`apps/desktop-demo/README.md`](apps/desktop-demo/README.md).
+For detailed web build instructions and troubleshooting, see:
+- [`apps/desktop-demo/README.md`](apps/desktop-demo/README.md)
+- [`apps/desktop-demo/WEB_REQUIREMENTS.md`](apps/desktop-demo/WEB_REQUIREMENTS.md)
 
 ## Quick Start
 
