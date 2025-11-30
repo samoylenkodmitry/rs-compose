@@ -1,407 +1,384 @@
 # Robot Testing Framework
 
-The Robot Testing Framework provides a comprehensive solution for end-to-end testing of Compose-RS applications. It enables developers to write automated tests that launch real apps, perform user interactions, and validate UI state.
+The Robot Testing Framework provides automated UI testing for Compose-RS applications. Write tests that launch your app, perform user interactions, and validate UI state.
 
 ## Overview
 
-The robot testing framework is inspired by UI testing frameworks like Espresso (Android) and XCUITest (iOS). It allows you to:
+The framework supports two testing modes:
 
-- **Launch your app** in a controlled testing environment
-- **Perform interactions** such as clicks, drags, and gestures
-- **Find UI elements** by text, position, or semantics
-- **Validate UI state** including layout, text content, and visual properties
-- **Test the full lifecycle** including animations and state changes
+1. **Headless Testing** - Fast unit tests with mock rendering (no window)
+2. **Real App Testing** - Full E2E tests with actual windows and GPU rendering
 
-## Quick Start
+Both modes test THE SAME application code, ensuring your tests validate real behavior.
 
-### Basic Test Setup
+---
+
+## Quick Start - Real App Testing
+
+### Run Examples
+
+```bash
+# Watch the robot interact with your app
+cargo run --package desktop-app --example robot_demo --features robot-app
+
+# Interactive demo with detailed output
+cargo run --package desktop-app --example robot_interactive --features robot-app
+```
+
+### Write Your Own
+
+```rust
+use compose_app::AppLauncher;
+
+fn main() {
+    AppLauncher::new()
+        .with_title("My Robot Test")
+        .with_size(800, 600)
+        .with_test_driver(|robot| {
+            // Wait for app to be ready
+            robot.wait_for_idle().unwrap();
+
+            // Click a button
+            robot.click(150.0, 560.0).unwrap();
+
+            // Move cursor
+            robot.move_to(400.0, 50.0).unwrap();
+
+            // Exit when done
+            robot.exit().unwrap();
+        })
+        .run(|| {
+            // Your app content here
+            my_app_ui();
+        });
+}
+```
+
+### How It Works
+
+- **Event loop runs on main thread** (required on Linux)
+- **Test driver runs in separate thread**
+- **Communication via channels** (RobotCommand/RobotResponse)
+- **Robot commands processed during idle time**
+- **You see the window** and watch the robot interact with it!
+
+---
+
+## Quick Start - Headless Testing
+
+Headless tests run fast without creating windows - perfect for unit tests and CI/CD.
+
+### Basic Test
 
 ```rust
 use compose_testing::robot::create_headless_robot_test;
-use compose_macros::composable;
 use compose_ui::prelude::*;
 
 #[test]
 fn test_button_click() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    let clicked = Rc::new(RefCell::new(false));
-    let clicked_clone = clicked.clone();
-
-    let mut robot = create_headless_robot_test(800, 600, move || {
-        let clicked = clicked_clone.clone();
-
+    let mut robot = create_headless_robot_test(800, 600, || {
         Column(|| {
             Text("Click the button");
 
-            Box(
-                Modifier::empty()
-                    .size(100.0, 50.0)
-                    .clickable(move |_| {
-                        *clicked.borrow_mut() = true;
-                    }),
-                || {
-                    Text("Click Me");
-                }
-            );
+            Button("Click Me", || {
+                println!("Button clicked!");
+            });
         });
     });
 
-    // Wait for initial render
     robot.wait_for_idle();
 
-    // Find and click the button
-    robot.find_by_text("Click Me").click();
+    // Find button by text
+    let button = robot.find_by_text("Click Me").unwrap();
 
-    // Verify the button was clicked
-    assert!(*clicked.borrow(), "Button should be clicked");
+    // Click it
+    robot.click_at(button.bounds.center_x(), button.bounds.center_y());
+    robot.wait_for_idle();
+
+    assert!(/* verify state changed */);
 }
 ```
 
-## Core Components
+### Running Headless Tests
 
-### 1. RobotTestRule
+```bash
+# Run all robot tests
+cargo test -p desktop-app robot
 
-The main entry point for robot tests. It wraps your app in a controlled testing environment.
-
-```rust
-use compose_testing::robot::create_headless_robot_test;
-
-let mut robot = create_headless_robot_test(800, 600, || {
-    my_app(); // Your composable app
-});
+# Run specific test
+cargo test -p desktop-app test_button_click
 ```
 
-**Key Methods:**
+---
 
-- `wait_for_idle()` - Wait for all compositions, layouts, and renders to complete
-- `click_at(x, y)` - Perform a click at specific coordinates
-- `move_to(x, y)` - Move the cursor to specific coordinates
-- `drag(from_x, from_y, to_x, to_y)` - Perform a drag gesture
-- `set_viewport(width, height)` - Resize the viewport
-- `dump_screen()` - Print debug information about the current UI state
+## Robot API Reference
 
-### 2. Element Finders
-
-Find UI elements using various strategies:
+### Real App Robot (with_test_driver)
 
 ```rust
-// Find by text content
-let mut finder = robot.find_by_text("Login");
+// Click at coordinates (logical pixels)
+robot.click(x: f32, y: f32) -> Result<(), String>
 
-// Find by position
-let mut finder = robot.find_at_position(100.0, 200.0);
+// Move cursor
+robot.move_to(x: f32, y: f32) -> Result<(), String>
 
-// Find clickable elements
-let mut finder = robot.find_clickable();
+// Wait for app to be idle (no redraws, no animations)
+robot.wait_for_idle() -> Result<(), String>
+
+// Exit the application
+robot.exit() -> Result<(), String>
 ```
 
-**Finder Methods:**
-
-- `exists()` - Check if the element exists
-- `bounds()` - Get the element's bounding rectangle
-- `center()` - Get the element's center point
-- `width()` / `height()` - Get the element's dimensions
-- `click()` - Click on the element
-- `long_press()` - Perform a long press
-- `assert_exists()` - Assert the element exists (panics if not)
-- `assert_not_exists()` - Assert the element doesn't exist
-
-### 3. Validation Methods
-
-Validate the current UI state:
+### Headless Robot
 
 ```rust
-// Get all text on screen
-let texts = robot.get_all_text();
-assert!(texts.contains(&"Welcome".to_string()));
+// Click at coordinates
+robot.click_at(x: f32, y: f32)
 
-// Get all UI element bounds
-let rects = robot.get_all_rects();
-assert_eq!(rects.len(), 5, "Should have 5 elements");
+// Drag from one point to another
+robot.drag(from_x: f32, from_y: f32, to_x: f32, to_y: f32)
+
+// Move cursor without clicking
+robot.move_to(x: f32, y: f32)
+
+// Wait for all updates to process
+robot.wait_for_idle()
+
+// Find elements
+robot.find_by_text(text: &str) -> Option<Element>
+robot.find_clickable_at(x: f32, y: f32) -> Option<Element>
+
+// Get all elements
+robot.get_all_text() -> Vec<String>
+robot.get_all_rects() -> Vec<Rect>
+robot.get_all_clickable() -> Vec<Element>
+
+// Debug
+robot.dump_screen()  // Print UI tree
 ```
 
-### 4. Assertions
-
-The framework provides assertion helpers for common validation patterns:
-
-```rust
-use compose_testing::robot_assertions::*;
-
-// Approximate equality (useful for floating point comparisons)
-assert_approx_eq(actual, expected, tolerance, "width should match");
-
-// Rectangle assertions
-assert_rect_approx_eq(actual_rect, expected_rect, tolerance, "bounds should match");
-assert_rect_contains_point(rect, x, y, "point should be inside rect");
-
-// Text assertions
-assert_contains_text(&texts, "Hello", "should contain greeting");
-assert_not_contains_text(&texts, "Error", "should not have errors");
-
-// Count assertions
-assert_count(&items, 3, "should have 3 items");
-```
+---
 
 ## Testing Patterns
 
-### Pattern 1: Click and Validate
+### Pattern 1: Tab Navigation Test
+
+```rust
+AppLauncher::new()
+    .with_title("Tab Test")
+    .with_test_driver(|robot| {
+        robot.wait_for_idle().unwrap();
+
+        // Click first tab
+        robot.click(70.0, 50.0).unwrap();
+        robot.wait_for_idle().unwrap();
+
+        // Verify content changed (add assertions)
+
+        // Click second tab
+        robot.click(400.0, 50.0).unwrap();
+        robot.wait_for_idle().unwrap();
+    })
+    .run(|| { app() });
+```
+
+### Pattern 2: Counter Increment Test
 
 ```rust
 #[test]
 fn test_counter_increment() {
-    let mut robot = create_headless_robot_test(800, 600, counter_app);
+    let mut robot = create_headless_robot_test(800, 600, || {
+        counter_app();
+    });
 
-    // Initial state
-    robot.find_by_text("Count: 0").assert_exists();
-
-    // Click increment button
-    robot.find_by_text("+").click();
     robot.wait_for_idle();
 
-    // Verify state changed
-    robot.find_by_text("Count: 1").assert_exists();
+    // Find and click increment button
+    let button = robot.find_by_text("+").unwrap();
+    robot.click_at(button.bounds.center_x(), button.bounds.center_y());
+    robot.wait_for_idle();
+
+    // Verify count increased
+    let texts = robot.get_all_text();
+    assert!(texts.iter().any(|t| t.contains("1")));
 }
 ```
 
-### Pattern 2: Drag Interaction
+### Pattern 3: Drag Gesture Test
 
 ```rust
 #[test]
-fn test_slider_drag() {
-    let mut robot = create_headless_robot_test(800, 600, slider_app);
+fn test_drag_slider() {
+    let mut robot = create_headless_robot_test(800, 600, || {
+        slider_app();
+    });
+
+    robot.wait_for_idle();
 
     // Drag slider from left to right
-    robot.drag(100.0, 300.0, 400.0, 300.0);
+    robot.drag(100.0, 300.0, 500.0, 300.0);
     robot.wait_for_idle();
 
     // Verify slider value changed
-    robot.find_by_text("50%").assert_exists();
+    assert!(/* check slider value */);
 }
 ```
 
-### Pattern 3: Form Input
+---
 
-```rust
-#[test]
-fn test_login_flow() {
-    let mut robot = create_headless_robot_test(800, 600, login_app);
+## Setup
 
-    // Enter username
-    robot.find_by_text("Username").click();
-    // (Text input would require additional API)
+### Enable Robot Testing
 
-    // Enter password
-    robot.find_by_text("Password").click();
+In your app's `Cargo.toml`:
 
-    // Submit form
-    robot.find_by_text("Login").click();
-    robot.wait_for_idle();
+```toml
+[dev-dependencies]
+compose-testing = { path = "../../crates/compose-testing" }
 
-    // Verify login success
-    robot.find_by_text("Welcome!").assert_exists();
-}
+[features]
+robot-app = ["compose-app/robot"]
 ```
 
-### Pattern 4: Animation Testing
+### Project Structure
 
-```rust
-#[test]
-fn test_fade_animation() {
-    let mut robot = create_headless_robot_test(800, 600, fade_app);
-
-    // Initial state
-    robot.wait_for_idle();
-
-    // Trigger animation
-    robot.find_by_text("Animate").click();
-
-    // Advance time
-    robot.advance_time(1_000_000_000); // 1 second
-
-    // Verify animation completed
-    robot.find_by_text("Done").assert_exists();
-}
+```
+your-app/
+├── examples/
+│   └── robot_demo.rs          # Runnable robot demos
+├── src/
+│   └── tests/
+│       └── robot_test.rs      # Headless unit tests
+└── Cargo.toml
 ```
 
-### Pattern 5: Responsive Layout
-
-```rust
-#[test]
-fn test_responsive_layout() {
-    let mut robot = create_headless_robot_test(800, 600, responsive_app);
-
-    // Desktop layout
-    robot.find_by_text("Sidebar").assert_exists();
-
-    // Resize to mobile
-    robot.set_viewport(400, 800);
-    robot.wait_for_idle();
-
-    // Verify mobile layout
-    robot.find_by_text("Menu").assert_exists();
-    robot.find_by_text("Sidebar").assert_not_exists();
-}
-```
-
-## Advanced Usage
-
-### Custom Renderers
-
-For integration tests with actual rendering, you can provide a custom renderer:
-
-```rust
-use compose_testing::robot::RobotTestRule;
-use compose_render_wgpu::WgpuRenderer;
-
-// Create with a real renderer (requires more setup)
-let renderer = WgpuRenderer::new(/* ... */);
-let mut robot = RobotTestRule::new(800, 600, renderer, my_app);
-```
-
-### Accessing the App Shell
-
-For advanced scenarios, you can access the underlying `AppShell`:
-
-```rust
-let shell = robot.shell_mut();
-// Direct access to shell methods
-```
-
-### Debugging Tests
-
-When tests fail, use the debug utilities:
-
-```rust
-// Dump the entire screen state
-robot.dump_screen();
-
-// Get all text for inspection
-let texts = robot.get_all_text();
-println!("Current texts: {:?}", texts);
-
-// Get all element bounds
-let rects = robot.get_all_rects();
-println!("Elements: {} rects", rects.len());
-```
+---
 
 ## Best Practices
 
-### 1. Wait for Idle
+### ✅ Do
 
-Always call `wait_for_idle()` after interactions to ensure the UI has settled:
+- **Use headless tests** for fast feedback during development
+- **Use real app tests** for visual regression and E2E validation
+- **Test actual app code** - don't mock UI components
+- **Wait for idle** before assertions to ensure updates complete
+- **Use logical pixels** for coordinates (they're scale-independent)
+- **Test user workflows** not individual functions
 
+### ❌ Don't
+
+- Don't use `#[ignore]` tests - use runnable examples instead
+- Don't duplicate app code for testing - test the real thing
+- Don't hardcode physical pixel coordinates (breaks on HiDPI)
+- Don't forget to wait for animations to complete
+
+---
+
+## Troubleshooting
+
+### "Event loop must be on main thread" Error
+
+✅ **Fixed!** Use `with_test_driver()` which runs the event loop on the main thread.
+
+### Robot Commands Not Working
+
+Make sure you:
+1. Call `robot.wait_for_idle()` after commands
+2. Use logical pixel coordinates (not physical)
+3. Enable the `robot-app` feature
+
+### Tests Flaky
+
+Add delays between actions:
 ```rust
-robot.click_at(100.0, 100.0);
-robot.wait_for_idle(); // Wait for recomposition and layout
+robot.click(x, y).unwrap();
+std::thread::sleep(Duration::from_millis(100));
+robot.wait_for_idle().unwrap();
 ```
 
-### 2. Use Semantic Finders
-
-Prefer finding elements by text or semantics rather than positions:
-
-```rust
-// Good - resilient to layout changes
-robot.find_by_text("Submit").click();
-
-// Avoid - brittle if layout changes
-robot.click_at(123.45, 678.90);
-```
-
-### 3. Use Assertions
-
-Use the provided assertion helpers instead of raw assertions:
-
-```rust
-// Good - clear error messages
-assert_approx_eq(width, 100.0, 1.0, "button width");
-
-// Avoid - unclear errors
-assert!((width - 100.0).abs() < 1.0);
-```
-
-### 4. Test One Thing
-
-Each test should focus on a single behavior:
-
-```rust
-// Good - focused test
-#[test]
-fn test_button_increments_counter() {
-    // Single responsibility
-}
-
-// Avoid - testing multiple things
-#[test]
-fn test_entire_app() {
-    // Too broad
-}
-```
-
-### 5. Use Descriptive Names
-
-Name your tests clearly:
-
-```rust
-#[test]
-fn test_clicking_increment_button_increases_counter_by_one() {
-    // Clear what this tests
-}
-```
-
-## Limitations
-
-The current implementation has some limitations:
-
-1. **Text Extraction**: Text extraction from the layout tree is not yet fully implemented. This affects `get_all_text()` and text-based finders.
-
-2. **Semantics Queries**: Advanced semantic queries (finding by role, accessibility labels) are partially implemented.
-
-3. **Text Input**: There's no API yet for simulating text input (keyboard typing).
-
-4. **Multi-Touch**: Only single-pointer interactions are supported currently.
-
-5. **Platform-Specific**: Some features work better on desktop than Android/mobile.
-
-## Roadmap
-
-Future improvements planned:
-
-- [ ] Full text extraction from layout nodes
-- [ ] Advanced semantic queries (by role, label, etc.)
-- [ ] Text input simulation
-- [ ] Multi-touch gesture support
-- [ ] Screenshot capture for visual regression testing
-- [ ] Performance profiling in tests
-- [ ] Integration with test reporting tools
+---
 
 ## Examples
 
-See `apps/desktop-demo/src/tests/robot_test.rs` for comprehensive examples demonstrating all features of the robot testing framework.
+See working examples:
+- `apps/desktop-demo/examples/robot_demo.rs`
+- `apps/desktop-demo/examples/robot_interactive.rs`
+- `apps/desktop-demo/src/tests/robot_test.rs`
 
-## API Reference
-
-For detailed API documentation, run:
-
+Run them:
 ```bash
-cargo doc --package compose-testing --open
+cargo run --example robot_demo --features robot-app
+cargo test robot_test
 ```
 
-## Support
+---
 
-For questions or issues with the robot testing framework:
+## Architecture
 
-1. Check the examples in `apps/desktop-demo/src/tests/`
-2. Read the API documentation
-3. Open an issue on GitHub
+### Real App Mode
+
+```
+┌─────────────────┐
+│   Main Thread   │
+│  Event Loop     │ ← Runs THE actual app
+│  WGPU Rendering │
+│  Window         │
+└────────┬────────┘
+         │ Channels (RobotCommand/Response)
+         │
+┌────────▼────────┐
+│ Test Thread     │
+│ Robot Driver    │ ← Your test code
+└─────────────────┘
+```
+
+### Headless Mode
+
+```
+┌─────────────────┐
+│   Test Thread   │
+│  AppShell       │ ← Same app logic
+│  TestRenderer   │ ← Mock rendering
+│  Robot          │ ← Direct control
+└─────────────────┘
+```
+
+Both modes test THE SAME application code!
+
+---
+
+## FAQ
+
+**Q: Can I run tests in CI/CD?**
+A: Yes! Headless tests work everywhere. Real app tests need a display (use Xvfb on Linux).
+
+**Q: How do I test animations?**
+A: Use `robot.wait_for_idle()` which waits until animations complete.
+
+**Q: Can I take screenshots?**
+A: Not yet implemented, but the infrastructure is ready (see RobotCommand::Screenshot).
+
+**Q: Why two testing modes?**
+A: Headless is fast for development. Real app validates actual rendering and catches visual bugs.
+
+**Q: How do I test my real app, not examples?**
+A: Use `with_test_driver()` with your actual app code:
+```rust
+.run(|| { my_actual_app::ui() });
+```
+
+---
 
 ## Contributing
 
-Contributions to improve the robot testing framework are welcome! Areas that need work:
+To add new robot capabilities:
 
-- Text extraction implementation
-- Semantic query improvements
-- Additional assertion helpers
-- More example tests
-- Documentation improvements
+1. Add command to `RobotCommand` enum (desktop.rs)
+2. Handle it in `Event::AboutToWait` branch
+3. Add method to `Robot` struct
+4. Update documentation
+5. Add example/test
+
+---
+
+For more details, see the examples and test files in the repository.
