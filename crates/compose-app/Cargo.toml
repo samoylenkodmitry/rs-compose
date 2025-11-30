@@ -9,7 +9,7 @@ desktop = ["compose-platform-desktop-winit", "dep:winit"]
 android = ["compose-platform-android", "dep:android-activity", "dep:android_logger", "dep:raw-window-handle"]
 renderer-pixels = ["compose-render-pixels", "dep:pixels"]
 renderer-wgpu = ["compose-render-wgpu", "dep:wgpu", "dep:pollster"]
-robot = [] # Enable robot testing support
+robot = ["dep:compose-ui"] # Enable robot testing support
 
 [dependencies]
 compose-app-shell = { path = "../compose-app-shell" }
@@ -25,3 +25,4 @@ android-activity = { workspace = true, optional = true }
 android_logger = { version = "0.14", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 log = "0.4"
+compose-ui = { path = "../compose-ui", optional = true }

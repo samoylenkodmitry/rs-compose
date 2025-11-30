@@ -42,3 +42,14 @@ android-activity = { workspace = true }
 [dev-dependencies]
 compose-macros = { path = "../../crates/compose-macros" }
 compose-testing = { path = "../../crates/compose-testing", features = ["robot-app"] }
+
+# Robot test runners
+[[example]]
+name = "robot_interactive"
+path = "robot-runners/robot_interactive.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_demo"
+path = "robot-runners/robot_demo.rs"
+required-features = ["robot-app"]

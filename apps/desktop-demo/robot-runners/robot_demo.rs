@@ -32,17 +32,27 @@ fn main() {
 
             println!("Switching to Async Runtime tab...");
             robot.click(400.0, 50.0).expect("Failed to click tab");
-            robot.wait_for_idle().expect("Failed to wait");
+            match robot.wait_for_idle() {
+                Ok(_) => println!("Tab ready (idle achieved)"),
+                Err(e) => println!("Tab switched ({})", e),
+            }
             std::thread::sleep(Duration::from_secs(1));
 
             println!("Switching to Modifiers Showcase tab...");
             robot.click(800.0, 50.0).expect("Failed to click tab");
-            robot.wait_for_idle().expect("Failed to wait");
+            // Wait for idle - animations are a valid app state, so timeout is not a failure
+            match robot.wait_for_idle() {
+                Ok(_) => println!("Tab ready (idle achieved)"),
+                Err(e) => println!("Tab switched ({})", e),
+            }
             std::thread::sleep(Duration::from_secs(1));
 
             println!("Going back to Counter App tab...");
             robot.click(70.0, 50.0).expect("Failed to click tab");
-            robot.wait_for_idle().expect("Failed to wait");
+            match robot.wait_for_idle() {
+                Ok(_) => println!("Tab ready (idle achieved)"),
+                Err(e) => println!("Tab switched ({})", e),
+            }
             std::thread::sleep(Duration::from_secs(1));
 
             println!("Demo complete! Keeping window open for 5 more seconds...");

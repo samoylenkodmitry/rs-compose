@@ -20,4 +20,4 @@ pub mod desktop;
 
 // Re-export Robot type from desktop module when robot feature is enabled
 #[cfg(all(feature = "desktop", feature = "renderer-wgpu", feature = "robot"))]
-pub use desktop::Robot;
+pub use desktop::{Robot, SemanticElement, SemanticRect};

@@ -13,7 +13,44 @@ use winit::event_loop::{ControlFlow, EventLoopBuilder};
 use winit::window::WindowBuilder;
 
 #[cfg(feature = "robot")]
+use compose_ui::{LayoutBox, SemanticsAction, SemanticsNode, SemanticsRole};
+
+#[cfg(feature = "robot")]
 use std::sync::mpsc;
+
+/// Serializable semantic element combining semantics + geometry
+///
+/// This structure combines semantic information (role, text, actions) with
+/// geometric bounds from the layout tree, enabling robot scripts to find
+/// and interact with UI elements by their semantic properties.
+#[cfg(feature = "robot")]
+#[derive(Debug, Clone)]
+pub struct SemanticElement {
+    /// Semantic role (e.g., "Button", "Text", "Layout")
+    pub role: String,
+    /// Text content if available
+    pub text: Option<String>,
+    /// Geometric bounds in logical pixels
+    pub bounds: SemanticRect,
+    /// Whether this element has click actions
+    pub clickable: bool,
+    /// Child semantic elements
+    pub children: Vec<SemanticElement>,
+}
+
+/// Geometric bounds for a semantic element
+#[cfg(feature = "robot")]
+#[derive(Debug, Clone)]
+pub struct SemanticRect {
+    /// X coordinate in logical pixels
+    pub x: f32,
+    /// Y coordinate in logical pixels
+    pub y: f32,
+    /// Width in logical pixels
+    pub width: f32,
+    /// Height in logical pixels
+    pub height: f32,
+}
 
 /// Robot command for controlling the application
 #[cfg(feature = "robot")]
@@ -25,6 +62,7 @@ enum RobotCommand {
     TouchMove { x: f32, y: f32 },
     TouchUp { x: f32, y: f32 },
     WaitForIdle,
+    GetSemantics,
     Exit,
 }
 
@@ -33,6 +71,7 @@ enum RobotCommand {
 #[derive(Debug)]
 enum RobotResponse {
     Ok,
+    Semantics(Vec<SemanticElement>),
     Error(String),
 }
 
@@ -83,6 +122,7 @@ impl Robot {
         match self.rx.recv() {
             Ok(RobotResponse::Ok) => Ok(()),
             Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
             Err(e) => Err(format!("Failed to receive response: {}", e)),
         }
     }
@@ -94,6 +134,7 @@ impl Robot {
         match self.rx.recv() {
             Ok(RobotResponse::Ok) => Ok(()),
             Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
             Err(e) => Err(format!("Failed to receive response: {}", e)),
         }
     }
@@ -105,6 +146,7 @@ impl Robot {
         match self.rx.recv() {
             Ok(RobotResponse::Ok) => Ok(()),
             Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
             Err(e) => Err(format!("Failed to receive response: {}", e)),
         }
     }
@@ -116,7 +158,135 @@ impl Robot {
         match self.rx.recv() {
             Ok(RobotResponse::Ok) => Ok(()),
             Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
             Err(e) => Err(format!("Failed to receive response: {}", e)),
+        }
+    }
+
+    /// Get semantic tree with geometric bounds
+    pub fn get_semantics(&self) -> Result<Vec<SemanticElement>, String> {
+        self.tx.send(RobotCommand::GetSemantics)
+            .map_err(|e| format!("Failed to send get_semantics: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Semantics(elements)) => Ok(elements),
+            Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
+            Err(e) => Err(format!("Failed to receive: {}", e)),
+        }
+    }
+
+    /// Find any element by text content (recursive search)
+    pub fn find_by_text<'a>(elements: &'a [SemanticElement], text: &str) -> Option<&'a SemanticElement> {
+        for elem in elements {
+            if let Some(elem_text) = &elem.text {
+                if elem_text.contains(text) {
+                    return Some(elem);
+                }
+            }
+            if let Some(found) = Self::find_by_text(&elem.children, text) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Find clickable element by text content (recursive search)
+    ///
+    /// In Compose, buttons are often Layout elements with clickable actions
+    /// containing Text children. This searches for clickable elements where
+    /// either the element itself or its children contain the text.
+    pub fn find_button<'a>(elements: &'a [SemanticElement], text: &str) -> Option<&'a SemanticElement> {
+        for elem in elements {
+            if elem.clickable {
+                // Check if this clickable element or its children have the text
+                if Self::contains_text(elem, text) {
+                    return Some(elem);
+                }
+            }
+            // Recurse into children
+            if let Some(found) = Self::find_button(&elem.children, text) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Helper: check if element or any descendants contain text
+    fn contains_text(elem: &SemanticElement, text: &str) -> bool {
+        // Check element itself
+        if let Some(elem_text) = &elem.text {
+            if elem_text.contains(text) {
+                return true;
+            }
+        }
+        // Check children recursively
+        for child in &elem.children {
+            if Self::contains_text(child, text) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Click element by finding it in semantic tree
+    ///
+    /// This is a convenience method that combines `get_semantics()`, `find_button()`,
+    /// and `click()` in one call. It finds a clickable element by text and clicks
+    /// its center point.
+    ///
+    /// # Example
+    /// ```no_run
+    /// robot.click_by_text("Increment")?;
+    /// ```
+    pub fn click_by_text(&self, text: &str) -> Result<(), String> {
+        let semantics = self.get_semantics()?;
+        let elem = Self::find_button(&semantics, text)
+            .ok_or_else(|| format!("Button '{}' not found in semantic tree", text))?;
+        
+        // Click center of bounds
+        let center_x = elem.bounds.x + elem.bounds.width / 2.0;
+        let center_y = elem.bounds.y + elem.bounds.height / 2.0;
+        
+        self.click(center_x, center_y)
+    }
+
+    /// Validate that content exists in semantic tree
+    ///
+    /// Returns Ok if the text is found anywhere in the semantic tree,
+    /// Err otherwise. Useful for assertions in tests.
+    ///
+    /// # Example
+    /// ```no_run
+    /// robot.validate_content("Expected Text")?;
+    /// ```
+    pub fn validate_content(&self, expected: &str) -> Result<(), String> {
+        let semantics = self.get_semantics()?;
+        if Self::find_by_text(&semantics, expected).is_some() {
+            Ok(())
+        } else {
+            Err(format!("Validation failed: '{}' not found", expected))
+        }
+    }
+
+    /// Print semantic tree structure for debugging
+    ///
+    /// Prints a hierarchical view of the semantic tree showing roles,
+    /// text content, and clickable elements.
+    ///
+    /// # Example
+    /// ```no_run
+    /// let semantics = robot.get_semantics()?;
+    /// Robot::print_semantics(&semantics, 0);
+    /// ```
+    pub fn print_semantics(elements: &[SemanticElement], indent: usize) {
+        for elem in elements {
+            let prefix = "  ".repeat(indent);
+            let text_info = elem.text.as_ref()
+                .map(|t| format!(" text=\"{}\"", t))
+                .unwrap_or_default();
+            let clickable = if elem.clickable { " [CLICKABLE]" } else { "" };
+            println!("{}role={}{}{}", prefix, elem.role, text_info, clickable);
+            Self::print_semantics(&elem.children, indent + 1);
         }
     }
 }
@@ -155,7 +325,7 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
     };
 
     #[cfg(not(feature = "robot"))]
-    let robot_controller: Option<()> = None;
+    let _robot_controller: Option<()> = None;
 
     let initial_width = settings.initial_width;
     let initial_height = settings.initial_height;
@@ -387,6 +557,10 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
                                 app.pointer_released();
                                 let _ = controller.tx.send(RobotResponse::Ok);
                             }
+                            RobotCommand::GetSemantics => {
+                                let semantics = extract_semantics(&app);
+                                let _ = controller.tx.send(RobotResponse::Semantics(semantics));
+                            }
                             RobotCommand::WaitForIdle => {
                                 // Start waiting for idle
                                 controller.waiting_for_idle = true;
@@ -456,4 +630,65 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
     });
 
     std::process::exit(0)
+}
+
+/// Extract semantic elements by combining semantic tree with layout tree
+#[cfg(feature = "robot")]
+fn extract_semantics(app: &AppShell<WgpuRenderer>) -> Vec<SemanticElement> {
+    match (app.semantics_tree(), app.layout_tree()) {
+        (Some(sem_tree), Some(layout_tree)) => {
+            vec![combine_trees(sem_tree.root(), layout_tree.root())]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Recursively combine SemanticsNode + LayoutBox into SemanticElement
+#[cfg(feature = "robot")]
+fn combine_trees(
+    sem_node: &SemanticsNode,
+    layout_box: &LayoutBox,
+) -> SemanticElement {
+    // Extract role as string
+    let role = match &sem_node.role {
+        SemanticsRole::Button => "Button",
+        SemanticsRole::Text { .. } => "Text", 
+        SemanticsRole::Layout => "Layout",
+        SemanticsRole::Subcompose => "Subcompose",
+        SemanticsRole::Spacer => "Spacer",
+        SemanticsRole::Unknown => "Unknown",
+    }.to_string();
+
+    // Extract text content
+    let text = match &sem_node.role {
+        SemanticsRole::Text { value } => Some(value.clone()),
+        _ => sem_node.description.clone(),
+    };
+
+    // Check if clickable
+    let clickable = sem_node.actions.iter().any(|action| matches!(action, SemanticsAction::Click { .. }));
+
+    // Get bounds from layout
+    let bounds = SemanticRect {
+        x: layout_box.rect.x,
+        y: layout_box.rect.y,
+        width: layout_box.rect.width,
+        height: layout_box.rect.height,
+    };
+
+    // Recursively process children
+    let children = sem_node
+        .children
+        .iter()
+        .zip(layout_box.children.iter())
+        .map(|(sem_child, layout_child)| combine_trees(sem_child, layout_child))
+        .collect();
+
+    SemanticElement {
+        role,
+        text,
+        bounds,
+        clickable,
+        children,
+    }
 }
