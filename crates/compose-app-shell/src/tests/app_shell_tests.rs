@@ -9,7 +9,7 @@ use compose_ui::{Column, ColumnSpec, Modifier, Row, RowSpec, Text};
 struct TestHitTarget;
 
 impl HitTestTarget for TestHitTarget {
-    fn dispatch(&self, _kind: PointerEventKind, _x: f32, _y: f32) {}
+    fn dispatch(&self, _event: PointerEvent) {}
 }
 
 #[derive(Default)]
@@ -20,8 +20,8 @@ impl RenderScene for TestScene {
 
     fn clear(&mut self) {}
 
-    fn hit_test(&self, _x: f32, _y: f32) -> Option<Self::HitTarget> {
-        None
+    fn hit_test(&self, _x: f32, _y: f32) -> Vec<Self::HitTarget> {
+        vec![]
     }
 }
 

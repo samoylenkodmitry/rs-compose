@@ -66,6 +66,7 @@ use compose_foundation::{
     NodeState, PointerEvent, PointerEventKind, PointerInputNode, Size,
 };
 use compose_ui_layout::{Alignment, HorizontalAlignment, IntrinsicSize, VerticalAlignment};
+
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -1186,9 +1187,22 @@ impl ModifierNodeElement for SizeElement {
 // ============================================================================
 
 /// Node that handles click/tap interactions.
+// Drag threshold is now shared via compose_foundation::DRAG_THRESHOLD
+use compose_foundation::DRAG_THRESHOLD;
+
+use std::cell::RefCell;
+
+// Press position is stored per-node via Rc<RefCell> for sharing with handler closure
+// Node reuse is ensured by ClickableElement implementing key() to return a stable key
+// The handler closure is cached to ensure the same closure (and press_position state) is returned
+
 pub struct ClickableNode {
     on_click: Rc<dyn Fn(Point)>,
     state: NodeState,
+    /// Shared press position for drag detection (per-node state, accessible by handler closure)
+    press_position: Rc<RefCell<Option<Point>>>,
+    /// Cached handler closure - created once, returned on every pointer_input_handler() call
+    cached_handler: Rc<dyn Fn(PointerEvent)>,
 }
 
 impl std::fmt::Debug for ClickableNode {
@@ -1199,17 +1213,76 @@ impl std::fmt::Debug for ClickableNode {
 
 impl ClickableNode {
     pub fn new(on_click: impl Fn(Point) + 'static) -> Self {
-        Self {
-            on_click: Rc::new(on_click),
-            state: NodeState::new(),
-        }
+        Self::with_handler(Rc::new(on_click))
     }
 
     pub fn with_handler(on_click: Rc<dyn Fn(Point)>) -> Self {
+        let press_position = Rc::new(RefCell::new(None));
+        let cached_handler = Self::create_handler(on_click.clone(), press_position.clone());
         Self {
             on_click,
             state: NodeState::new(),
+            press_position,
+            cached_handler,
         }
+    }
+
+    fn create_handler(
+        handler: Rc<dyn Fn(Point)>,
+        press_position: Rc<RefCell<Option<Point>>>,
+    ) -> Rc<dyn Fn(PointerEvent)> {
+        Rc::new(move |event: PointerEvent| {
+            // Check if event was consumed by scroll or other gesture handlers
+            if event.is_consumed() {
+                // Clear press state if event was consumed
+                *press_position.borrow_mut() = None;
+                return;
+            }
+            
+            match event.kind {
+                PointerEventKind::Down => {
+                    // Store global press position for drag detection on Up
+                    *press_position.borrow_mut() = Some(Point {
+                        x: event.global_position.x,
+                        y: event.global_position.y,
+                    });
+                }
+                PointerEventKind::Move => {
+                    // Move events may not reach this handler if cursor moves outside
+                    // button bounds during drag, so we don't rely on them for drag detection.
+                }
+                PointerEventKind::Up => {
+                    // Check if this is a click (Up near Down) or a drag (Up far from Down)
+                    // Use global position for accurate distance regardless of element bounds
+                    let should_click = if let Some(press_pos) = *press_position.borrow() {
+                        let dx = event.global_position.x - press_pos.x;
+                        let dy = event.global_position.y - press_pos.y;
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        distance <= DRAG_THRESHOLD
+                } else {
+                    // No Down was tracked - fire click anyway
+                    // This preserves the original behavior for cases where Down
+                    // was handled by a different mechanism
+                    true
+                };
+                    
+                    // Reset press position
+                    *press_position.borrow_mut() = None;
+                    
+                    if should_click {
+                        handler(Point {
+                            x: event.position.x,
+                            y: event.position.y,
+                        });
+                        event.consume();
+                    }
+                }
+                PointerEventKind::Cancel => {
+                    // Clear press state on cancel
+                    *press_position.borrow_mut() = None;
+                }
+            }
+        })
     }
 
     pub fn handler(&self) -> Rc<dyn Fn(Point)> {
@@ -1243,17 +1316,10 @@ impl PointerInputNode for ClickableNode {
         _context: &mut dyn ModifierNodeContext,
         event: &PointerEvent,
     ) -> bool {
-        if matches!(event.kind, PointerEventKind::Down) {
-            let point = Point {
-                x: event.position.x,
-                y: event.position.y,
-            };
-            println!("ClickableNode received click at: {:?}", point);
-            (self.on_click)(point);
-            true
-        } else {
-            false
-        }
+        // Delegate to the cached handler - single source of truth for click logic
+        // This avoids duplicating the press position tracking and threshold checking
+        (self.cached_handler)(event.clone());
+        event.is_consumed()
     }
 
     fn hit_test(&self, _x: f32, _y: f32) -> bool {
@@ -1262,19 +1328,9 @@ impl PointerInputNode for ClickableNode {
     }
 
     fn pointer_input_handler(&self) -> Option<Rc<dyn Fn(PointerEvent)>> {
-        let handler = self.on_click.clone();
-        Some(Rc::new(move |event: PointerEvent| {
-            if matches!(event.kind, PointerEventKind::Down) {
-                println!(
-                    "ClickableNode handler received click at: {:?}",
-                    event.position
-                );
-                handler(Point {
-                    x: event.position.x,
-                    y: event.position.y,
-                });
-            }
-        }))
+        // Return the cached handler - this ensures the same closure (with its press_position state)
+        // is used across multiple calls to pointer_input_handler()
+        Some(self.cached_handler.clone())
     }
 }
 
@@ -1324,9 +1380,20 @@ impl ModifierNodeElement for ClickableElement {
         ClickableNode::with_handler(self.on_click.clone())
     }
 
+    // Note: key() is deliberately NOT implemented (returns None by default)
+    // This enables type-based node reuse: the same ClickableNode instance is
+    // reused across recompositions, preserving the cached_handler and its
+    // captured press_position state for proper drag detection.
+
     fn update(&self, node: &mut Self::Node) {
-        // Update the handler
+        // Update the handler - the cached_handler needs to be recreated
+        // with the new on_click while preserving press_position
         node.on_click = self.on_click.clone();
+        // Recreate the cached handler with the same press_position but new click handler
+        node.cached_handler = ClickableNode::create_handler(
+            node.on_click.clone(),
+            node.press_position.clone(),
+        );
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -1390,7 +1457,7 @@ impl PointerInputNode for PointerEventHandlerNode {
         _context: &mut dyn ModifierNodeContext,
         event: &PointerEvent,
     ) -> bool {
-        (self.handler)(*event);
+        (self.handler)(event.clone());
         false
     }
 

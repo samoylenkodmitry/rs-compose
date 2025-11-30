@@ -11,7 +11,6 @@ use crate::style::{
 };
 
 pub(crate) fn render_layout_tree(root: &LayoutBox, scene: &mut Scene) {
-    eprintln!("DEBUG render_layout_tree called");
     render_layout_node(root, GraphicsLayer::default(), scene, None, None);
 }
 
@@ -22,10 +21,6 @@ fn render_layout_node(
     parent_visual_clip: Option<Rect>,
     parent_hit_clip: Option<Rect>,
 ) {
-    eprintln!(
-        "DEBUG render_layout_node called for node_id={}",
-        layout.node_id
-    );
     match &layout.node_data.kind {
         LayoutNodeKind::Spacer => {
             render_spacer(
@@ -148,6 +143,7 @@ fn render_container(
     }
 
     scene.push_hit(
+        layout.node_id,
         transformed_rect,
         scaled_shape,
         extra_clicks,

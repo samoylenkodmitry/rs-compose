@@ -59,6 +59,8 @@ pub struct SemanticRect {
 enum RobotCommand {
     Click { x: f32, y: f32 },
     MoveTo { x: f32, y: f32 },
+    MouseDown,
+    MouseUp,
     TouchDown { x: f32, y: f32 },
     TouchMove { x: f32, y: f32 },
     TouchUp { x: f32, y: f32 },
@@ -132,6 +134,91 @@ impl Robot {
     pub fn move_to(&self, x: f32, y: f32) -> Result<(), String> {
         self.tx.send(RobotCommand::MoveTo { x, y })
             .map_err(|e| format!("Failed to send move command: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Ok) => Ok(()),
+            Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
+            Err(e) => Err(format!("Failed to receive response: {}", e)),
+        }
+    }
+
+    /// Alias for move_to
+    pub fn mouse_move(&self, x: f32, y: f32) -> Result<(), String> {
+        self.move_to(x, y)
+    }
+
+    /// Press the left mouse button at the current cursor position
+    pub fn mouse_down(&self) -> Result<(), String> {
+        self.tx.send(RobotCommand::MouseDown)
+            .map_err(|e| format!("Failed to send mouse down command: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Ok) => Ok(()),
+            Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
+            Err(e) => Err(format!("Failed to receive response: {}", e)),
+        }
+    }
+
+    /// Release the left mouse button at the current cursor position
+    pub fn mouse_up(&self) -> Result<(), String> {
+        self.tx.send(RobotCommand::MouseUp)
+            .map_err(|e| format!("Failed to send mouse up command: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Ok) => Ok(()),
+            Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
+            Err(e) => Err(format!("Failed to receive response: {}", e)),
+        }
+    }
+
+
+    /// Perform a drag gesture from one point to another
+    ///
+    /// This simulates a pointer down, move, and up sequence with multiple intermediate
+    /// steps to create a smooth drag gesture.
+    ///
+    /// # Arguments
+    /// * `from_x` - Starting x coordinate (logical pixels)
+    /// * `from_y` - Starting y coordinate (logical pixels)
+    /// * `to_x` - Ending x coordinate (logical pixels)
+    /// * `to_y` - Ending y coordinate (logical pixels)
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Drag from left to right to scroll
+    /// robot.drag(400.0, 200.0, 100.0, 200.0)?;
+    /// ```
+    pub fn drag(&self, from_x: f32, from_y: f32, to_x: f32, to_y: f32) -> Result<(), String> {
+        // Touch down at start position
+        self.tx.send(RobotCommand::TouchDown { x: from_x, y: from_y })
+            .map_err(|e| format!("Failed to send touch down: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Ok) => {},
+            Ok(RobotResponse::Error(e)) => return Err(e),
+            Ok(_) => return Err("Unexpected response".to_string()),
+            Err(e) => return Err(format!("Failed to receive response: {}", e)),
+        }
+
+        // Move in steps to simulate smooth drag
+        let steps = 10;
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            let x = from_x + (to_x - from_x) * t;
+            let y = from_y + (to_y - from_y) * t;
+            
+            self.tx.send(RobotCommand::TouchMove { x, y })
+                .map_err(|e| format!("Failed to send touch move: {}", e))?;
+            match self.rx.recv() {
+                Ok(RobotResponse::Ok) => {},
+                Ok(RobotResponse::Error(e)) => return Err(e),
+                Ok(_) => return Err("Unexpected response".to_string()),
+                Err(e) => return Err(format!("Failed to receive response: {}", e)),
+            }
+        }
+
+        // Touch up at end position
+        self.tx.send(RobotCommand::TouchUp { x: to_x, y: to_y })
+            .map_err(|e| format!("Failed to send touch up: {}", e))?;
         match self.rx.recv() {
             Ok(RobotResponse::Ok) => Ok(()),
             Ok(RobotResponse::Error(e)) => Err(e),
@@ -468,9 +555,11 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
                     ..
                 } => match state {
                     ElementState::Pressed => {
+                        println!("Desktop: MouseInput Pressed");
                         app.pointer_pressed();
                     }
                     ElementState::Released => {
+                        println!("Desktop: MouseInput Released");
                         app.pointer_released();
                     }
                 },
@@ -481,6 +570,14 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
                             app.log_debug_info();
                         }
                     }
+                }
+                WindowEvent::Focused(false) => {
+                    // Window lost focus - cancel any in-progress gestures
+                    app.cancel_gesture();
+                }
+                WindowEvent::CursorLeft { .. } => {
+                    // Cursor left the window - cancel any in-progress gestures
+                    app.cancel_gesture();
                 }
                 WindowEvent::RedrawRequested => {
                     app.update();
@@ -544,6 +641,15 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
                                 window.request_redraw();
                                 let _ = controller.tx.send(RobotResponse::Ok);
                             }
+                            RobotCommand::MouseDown => {
+                                app.pointer_pressed();
+                                let _ = controller.tx.send(RobotResponse::Ok);
+                            }
+                            RobotCommand::MouseUp => {
+                                app.pointer_released();
+                                let _ = controller.tx.send(RobotResponse::Ok);
+                            }
+
                             RobotCommand::TouchDown { x, y } => {
                                 app.set_cursor(x, y);
                                 app.pointer_pressed();

@@ -248,7 +248,9 @@ fn modifier_offset_translates_layout() {
         text_layout.node_id,
         text_id.borrow().as_ref().copied().expect("text node id")
     );
+    // Expected: 10 (padding) + 5 (offset) = 15
     assert!((text_layout.rect.x - 15.0).abs() < 1e-3);
+    // Expected: 10 (padding) + 7.5 (offset) = 17.5
     assert!((text_layout.rect.y - 17.5).abs() < 1e-3);
 }
 

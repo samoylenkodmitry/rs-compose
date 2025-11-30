@@ -531,6 +531,7 @@ dependencies = [
 name = "compose-render-common"
 version = "0.1.0"
 dependencies = [
+ "compose-core",
  "compose-foundation",
  "compose-ui",
  "compose-ui-graphics",

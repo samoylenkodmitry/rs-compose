@@ -1,7 +1,7 @@
 //! Scene structures for GPU rendering
 
-use compose_core::run_in_mutable_snapshot;
-use compose_foundation::{PointerEvent, PointerEventKind, PointerPhase};
+use compose_core::{run_in_mutable_snapshot, NodeId};
+use compose_foundation::{PointerEvent, PointerEventKind};
 use compose_render_common::{HitTestTarget, RenderScene};
 use compose_ui_graphics::{Brush, Color, Point, Rect, RoundedCornerShape};
 use std::cell::RefCell;
@@ -46,6 +46,7 @@ impl ClickAction {
 
 #[derive(Clone)]
 pub struct HitRegion {
+    pub node_id: NodeId,
     pub rect: Rect,
     pub shape: Option<RoundedCornerShape>,
     pub click_actions: Vec<ClickAction>,
@@ -55,25 +56,18 @@ pub struct HitRegion {
 }
 
 impl HitTestTarget for HitRegion {
-    fn dispatch(&self, kind: PointerEventKind, x: f32, y: f32) {
+    fn dispatch(&self, event: PointerEvent) {
+        let x = event.global_position.x;
+        let y = event.global_position.y;
+        let kind = event.kind;
+
         let local = Point {
             x: x - self.rect.x,
             y: y - self.rect.y,
         };
-        let global = Point { x, y };
-        let event = PointerEvent {
-            id: 0,
-            kind,
-            phase: match kind {
-                PointerEventKind::Down => PointerPhase::Start,
-                PointerEventKind::Move => PointerPhase::Move,
-                PointerEventKind::Up => PointerPhase::End,
-                PointerEventKind::Cancel => PointerPhase::Cancel,
-            },
-            position: local,
-            global_position: global,
-            buttons: Default::default(),
-        };
+        
+        let local_event = event.copy_with_local_position(local);
+
         let has_pointer_inputs = !self.pointer_inputs.is_empty();
         let has_click_actions = kind == PointerEventKind::Down && !self.click_actions.is_empty();
 
@@ -83,9 +77,15 @@ impl HitTestTarget for HitRegion {
 
         if let Err(err) = run_in_mutable_snapshot(|| {
             for handler in self.pointer_inputs.iter() {
-                handler(event);
+                // If consumed by a previous handler in this loop (or outer loop), stop.
+                if local_event.is_consumed() {
+                    break;
+                }
+                handler(local_event.clone());
             }
-            if kind == PointerEventKind::Down {
+            
+            // Only perform click actions if NOT consumed
+            if kind == PointerEventKind::Down && !local_event.is_consumed() {
                 for action in &self.click_actions {
                     action.invoke(self.rect, x, y);
                 }
@@ -174,6 +174,7 @@ impl Scene {
 
     pub fn push_hit(
         &mut self,
+        node_id: NodeId,
         rect: Rect,
         shape: Option<RoundedCornerShape>,
         click_actions: Vec<ClickAction>,
@@ -186,6 +187,7 @@ impl Scene {
         let z_index = self.next_z;
         self.next_z += 1;
         self.hits.push(HitRegion {
+            node_id,
             rect,
             shape,
             click_actions,
@@ -212,12 +214,16 @@ impl RenderScene for Scene {
         self.next_z = 0;
     }
 
-    fn hit_test(&self, x: f32, y: f32) -> Option<Self::HitTarget> {
-        self.hits
+    fn hit_test(&self, x: f32, y: f32) -> Vec<Self::HitTarget> {
+        let mut hits: Vec<_> = self.hits
             .iter()
             .filter(|hit| hit.contains(x, y))
-            .max_by(|a, b| a.z_index.cmp(&b.z_index))
             .cloned()
+            .collect();
+        
+        // Sort by z-index descending (top to bottom)
+        hits.sort_by(|a, b| b.z_index.cmp(&a.z_index));
+        hits
     }
 }
 

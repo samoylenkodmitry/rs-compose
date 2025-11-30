@@ -1,4 +1,6 @@
 use compose_ui_graphics::Point;
+use std::cell::Cell;
+use std::rc::Rc;
 
 pub type PointerId = u64;
 
@@ -62,7 +64,12 @@ impl Default for PointerButtons {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Pointer event with consumption tracking for gesture disambiguation.
+///
+/// Events can be consumed by handlers (e.g., scroll) to prevent other handlers
+/// (e.g., clicks) from receiving them. This enables proper gesture disambiguation
+/// matching Jetpack Compose's event consumption pattern.
+#[derive(Clone, Debug)]
 pub struct PointerEvent {
     pub id: PointerId,
     pub kind: PointerEventKind,
@@ -70,6 +77,9 @@ pub struct PointerEvent {
     pub position: Point,
     pub global_position: Point,
     pub buttons: PointerButtons,
+    /// Tracks whether this event has been consumed by a handler.
+    /// Shared via Rc<Cell> so consumption can be tracked across copies.
+    consumed: Rc<Cell<bool>>,
 }
 
 impl PointerEvent {
@@ -86,6 +96,42 @@ impl PointerEvent {
             position,
             global_position,
             buttons: PointerButtons::NONE,
+            consumed: Rc::new(Cell::new(false)),
+        }
+    }
+    
+    /// Set the buttons state for this event
+    pub fn with_buttons(mut self, buttons: PointerButtons) -> Self {
+        self.buttons = buttons;
+        self
+    }
+
+    /// Mark this event as consumed, preventing other handlers from processing it.
+    ///
+    /// Example: Scroll gestures consume events once dragging starts to prevent
+    /// child buttons from firing clicks.
+    pub fn consume(&self) {
+        self.consumed.set(true);
+    }
+
+    /// Check if this event has been consumed by another handler.
+    ///
+    /// Handlers should check this before processing events. For example,
+    /// clickable should not fire if the event was consumed by a scroll gesture.
+    pub fn is_consumed(&self) -> bool {
+        self.consumed.get()
+    }
+
+    /// Creates a copy of this event with a new local position, sharing the consumption state.
+    pub fn copy_with_local_position(&self, position: Point) -> Self {
+        Self {
+            id: self.id,
+            kind: self.kind,
+            phase: self.phase,
+            position,
+            global_position: self.global_position,
+            buttons: self.buttons,
+            consumed: self.consumed.clone(),
         }
     }
 }

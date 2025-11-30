@@ -1013,6 +1013,7 @@ pub(crate) type Command = Box<dyn FnMut(&mut dyn Applier) -> Result<(), NodeErro
 pub struct MemoryApplier {
     nodes: Vec<Option<Box<dyn Node>>>, // FUTURE(no_std): migrate to arena-backed node storage.
     layout_runtime: Option<RuntimeHandle>,
+    slots: SlotBackend,
 }
 
 impl MemoryApplier {
@@ -1020,7 +1021,12 @@ impl MemoryApplier {
         Self {
             nodes: Vec::new(),
             layout_runtime: None,
+            slots: SlotBackend::default(),
         }
+    }
+
+    pub fn slots(&mut self) -> &mut SlotBackend {
+        &mut self.slots
     }
 
     pub fn with_node<N: Node + 'static, R>(

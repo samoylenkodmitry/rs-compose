@@ -4,18 +4,18 @@ use std::fmt::Debug;
 // Use instant crate for cross-platform time support (native + WASM)
 use instant::Instant;
 
-use compose_core::{location_key, Composition, Key, MemoryApplier, NodeError};
-use compose_foundation::PointerEventKind;
+use compose_core::{location_key, Applier, Composition, Key, MemoryApplier, NodeError};
+use compose_foundation::{PointerButton, PointerButtons, PointerEvent, PointerEventKind};
 use compose_render_common::{HitTestTarget, RenderScene, Renderer};
 use compose_runtime_std::StdRuntime;
 use compose_ui::{
     has_pending_focus_invalidations, has_pending_pointer_repasses, log_layout_tree,
     log_render_scene, log_screen_summary, peek_focus_invalidation, peek_pointer_invalidation,
-    peek_render_invalidation, process_focus_invalidations, process_pointer_repasses,
+    peek_render_invalidation, peek_layout_invalidation, process_focus_invalidations, process_pointer_repasses,
     request_render_invalidation, take_focus_invalidation, take_pointer_invalidation,
-    take_render_invalidation, HeadlessRenderer, LayoutNode, LayoutTree, SemanticsTree,
+    take_render_invalidation, take_layout_invalidation, HeadlessRenderer, LayoutNode, LayoutTree, SemanticsTree,
 };
-use compose_ui_graphics::Size;
+use compose_ui_graphics::{Point, Size};
 
 pub struct AppShell<R>
 where
@@ -33,6 +33,12 @@ where
     layout_dirty: bool,
     scene_dirty: bool,
     is_dirty: bool,
+    /// Tracks which mouse buttons are currently pressed
+    buttons_pressed: PointerButtons,
+    /// Cached hit targets from pointer DOWN event.
+    /// We store the actual HitTarget instances so the same handler closures
+    /// (with their captured state like press_position) receive both Down and Up events.
+    cached_hits: Vec<<<R as Renderer>::Scene as RenderScene>::HitTarget>,
 }
 
 impl<R> AppShell<R>
@@ -61,6 +67,8 @@ where
             layout_dirty: true,
             scene_dirty: true,
             is_dirty: true,
+            buttons_pressed: PointerButtons::NONE,
+            cached_hits: Vec::new(),
         };
         shell.process_frame();
         shell
@@ -109,6 +117,7 @@ where
             || peek_render_invalidation()
             || peek_pointer_invalidation()
             || peek_focus_invalidation()
+            || peek_layout_invalidation()
         {
             return true;
         }
@@ -137,6 +146,7 @@ where
             .unwrap_or_default()
             .as_nanos() as u64;
         self.runtime.drain_frame_callbacks(frame_time);
+        self.runtime.runtime_handle().drain_ui();
         if self.composition.should_render() {
             match self.composition.process_invalid_scopes() {
                 Ok(changed) => {
@@ -167,18 +177,78 @@ where
 
     pub fn set_cursor(&mut self, x: f32, y: f32) -> bool {
         self.cursor = (x, y);
-        if let Some(hit) = self.renderer.scene().hit_test(x, y) {
-            hit.dispatch(PointerEventKind::Move, x, y);
+        
+        // SOUNDNESS: During a gesture (button pressed), dispatch Move events to cached hits
+        // to preserve gesture state consistency. Fresh hit-test is only for hover.
+        
+        // Debug assertion: if a button is pressed, we expect cached_hits to be populated
+        // from pointer_pressed(). An empty cache with pressed buttons suggests a bug.
+        debug_assert!(
+            self.buttons_pressed == PointerButtons::NONE || !self.cached_hits.is_empty(),
+            "buttons_pressed={:?} but cached_hits is empty. This suggests pointer_pressed() \
+             was not called or hits were incorrectly cleared.",
+            self.buttons_pressed
+        );
+        
+        if self.buttons_pressed != PointerButtons::NONE && !self.cached_hits.is_empty() {
+            // Gesture in progress: dispatch to cached targets (same HitRegion instances)
+            let event = PointerEvent::new(
+                PointerEventKind::Move,
+                Point { x, y },
+                Point { x, y },
+            ).with_buttons(self.buttons_pressed);
+            for hit in &self.cached_hits {
+                hit.dispatch(event.clone());
+                if event.is_consumed() {
+                    break;
+                }
+            }
             self.mark_dirty();
             true
         } else {
-            false
+            // No gesture in progress: use fresh hit-test for hover effects
+            let hits = self.renderer.scene().hit_test(x, y);
+            if !hits.is_empty() {
+                let event = PointerEvent::new(
+                    PointerEventKind::Move,
+                    Point { x, y },
+                    Point { x, y },
+                ).with_buttons(self.buttons_pressed);
+                for hit in hits {
+                    hit.dispatch(event.clone());
+                    if event.is_consumed() {
+                        break;
+                    }
+                }
+                self.mark_dirty();
+                true
+            } else {
+                false
+            }
         }
     }
 
     pub fn pointer_pressed(&mut self) -> bool {
-        if let Some(hit) = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1) {
-            hit.dispatch(PointerEventKind::Down, self.cursor.0, self.cursor.1);
+        // Track button state
+        self.buttons_pressed.insert(PointerButton::Primary);
+        
+        // Perform hit test and CACHE the results.
+        // This is critical: we dispatch UP events to the SAME hit targets to preserve
+        // gesture state (like press_position in ClickableNode).
+        self.cached_hits = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1);
+        
+        if !self.cached_hits.is_empty() {
+            let event = PointerEvent::new(
+                PointerEventKind::Down,
+                Point { x: self.cursor.0, y: self.cursor.1 },
+                Point { x: self.cursor.0, y: self.cursor.1 },
+            ).with_buttons(self.buttons_pressed);
+            for hit in &self.cached_hits {
+                hit.dispatch(event.clone());
+                if event.is_consumed() {
+                    break;
+                }
+            }
             self.mark_dirty();
             true
         } else {
@@ -187,12 +257,50 @@ where
     }
 
     pub fn pointer_released(&mut self) -> bool {
-        if let Some(hit) = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1) {
-            hit.dispatch(PointerEventKind::Up, self.cursor.0, self.cursor.1);
+        // UP events report buttons as "currently pressed" (after release),
+        // matching typical platform semantics where primary is already gone.
+        self.buttons_pressed.remove(PointerButton::Primary);
+        let corrected_buttons = self.buttons_pressed;
+        
+        // CRITICAL: Dispatch UP event to CACHED hit targets (same instances as Down)
+        if !self.cached_hits.is_empty() {
+            let event = PointerEvent::new(
+                PointerEventKind::Up,
+                Point { x: self.cursor.0, y: self.cursor.1 },
+                Point { x: self.cursor.0, y: self.cursor.1 },
+            ).with_buttons(corrected_buttons);
+            for hit in &self.cached_hits {
+                hit.dispatch(event.clone());
+                if event.is_consumed() {
+                    break;
+                }
+            }
+            // Clear the cache after UP event
+            self.cached_hits.clear();
             self.mark_dirty();
             true
         } else {
             false
+        }
+    }    
+    /// Cancels any active gesture, dispatching Cancel events to cached targets.
+    /// Call this when:
+    /// - Window loses focus
+    /// - Mouse leaves window while button pressed
+    /// - Any other gesture abort scenario
+    pub fn cancel_gesture(&mut self) {
+        if !self.cached_hits.is_empty() {
+            let event = PointerEvent::new(
+                PointerEventKind::Cancel,
+                Point { x: self.cursor.0, y: self.cursor.1 },
+                Point { x: self.cursor.0, y: self.cursor.1 },
+            ).with_buttons(self.buttons_pressed);
+            for hit in &self.cached_hits {
+                hit.dispatch(event.clone());
+            }
+            self.cached_hits.clear();
+            self.buttons_pressed = PointerButtons::NONE;
+            self.mark_dirty();
         }
     }
 
@@ -233,10 +341,45 @@ where
     }
 
     fn run_layout_phase(&mut self) {
+        // First, process scoped layout repasses (e.g., from scroll).
+        // This bubbles dirty flags up from specific nodes without invalidating all caches.
+        let repass_nodes = compose_ui::take_layout_repass_nodes();
+        if !repass_nodes.is_empty() {
+            let mut applier = self.composition.applier_mut();
+            for node_id in repass_nodes {
+                compose_core::bubble_layout_dirty(&mut *applier as &mut dyn compose_core::Applier, node_id);
+            }
+            drop(applier);
+            self.layout_dirty = true;
+        }
+        
+        // Global layout invalidation: fallback path for rare "layout algorithm changed" cases.
+        // For local changes (like scroll), prefer schedule_layout_repass() which uses
+        // the scoped repass_nodes path above—it just bubbles dirty flags without nuking
+        // all cached measurements. This global hammer is expensive and should be avoided.
+        let invalidation_requested = take_layout_invalidation();
+        if invalidation_requested {
+            // Force all layout measurements to be invalidated by incrementing the epoch
+            compose_ui::invalidate_all_layout_caches();
+            
+            // ALSO mark the root Layout node as needing layout so needs_measure=true
+            if let Some(root) = self.composition.root() {
+                let mut applier = self.composition.applier_mut();
+                if let Ok(node) = applier.get_mut(root) {
+                    if let Some(layout_node) = node.as_any_mut().downcast_mut::<compose_ui::LayoutNode>() {
+                        layout_node.mark_needs_layout();
+                    }
+                }
+            }
+            self.layout_dirty = true;
+        }
+        
         // Early exit if layout is not needed (viewport didn't change, etc.)
         if !self.layout_dirty {
             return;
         }
+
+
 
         let viewport_size = Size {
             width: self.viewport.0,
@@ -268,6 +411,8 @@ where
 
             // Tree needs layout - compute it
             self.layout_dirty = false;
+            
+            // Ensure slots exist and borrow mutably (handled inside measure_layout via MemoryApplier)
             match compose_ui::measure_layout(&mut applier, root, viewport_size) {
                 Ok(measurements) => {
                     self.semantics_tree = Some(measurements.semantics_tree().clone());

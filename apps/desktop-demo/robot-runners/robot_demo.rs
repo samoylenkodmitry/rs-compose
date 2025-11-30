@@ -55,8 +55,8 @@ fn main() {
             }
             std::thread::sleep(Duration::from_secs(1));
 
-            println!("Demo complete! Keeping window open for 5 more seconds...");
-            std::thread::sleep(Duration::from_secs(5));
+            println!("Demo complete! Keeping window open for 2 more seconds...");
+            std::thread::sleep(Duration::from_secs(2));
 
             println!("Shutting down...");
             robot.exit().expect("Failed to exit");

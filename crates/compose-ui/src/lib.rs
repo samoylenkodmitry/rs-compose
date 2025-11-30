@@ -14,6 +14,7 @@ mod pointer_dispatch;
 mod primitives;
 mod render_state;
 mod renderer;
+pub mod scroll;
 mod subcompose_layout;
 mod text;
 mod text_modifier_node;
@@ -33,9 +34,9 @@ pub use layout::{
         Alignment, Arrangement, HorizontalAlignment, LinearArrangement, Measurable, Placeable,
         VerticalAlignment,
     },
-    measure_layout, tree_needs_layout, LayoutBox, LayoutEngine, LayoutMeasurements, LayoutNodeData,
-    LayoutNodeKind, LayoutTree, SemanticsAction, SemanticsCallback, SemanticsNode, SemanticsRole,
-    SemanticsTree,
+    invalidate_all_layout_caches, measure_layout, tree_needs_layout, LayoutBox, LayoutEngine,
+    LayoutMeasurements, LayoutNodeData, LayoutNodeKind, LayoutTree, SemanticsAction,
+    SemanticsCallback, SemanticsNode, SemanticsRole, SemanticsTree,
 };
 pub use modifier::{
     collect_modifier_slices, collect_slices_from_modifier, Brush, Color, CornerRadii, EdgeInsets,
@@ -57,11 +58,13 @@ pub use primitives::{
     RowSpec, Spacer, SubcomposeLayout, Text,
 };
 pub use render_state::{
-    peek_focus_invalidation, peek_pointer_invalidation, peek_render_invalidation,
-    request_focus_invalidation, request_pointer_invalidation, request_render_invalidation,
-    take_focus_invalidation, take_pointer_invalidation, take_render_invalidation,
+    peek_focus_invalidation, peek_pointer_invalidation, peek_render_invalidation, peek_layout_invalidation,
+    request_focus_invalidation, request_pointer_invalidation, request_render_invalidation, request_layout_invalidation,
+    take_focus_invalidation, take_pointer_invalidation, take_render_invalidation, take_layout_invalidation,
+    schedule_layout_repass, has_pending_layout_repasses, take_layout_repass_nodes,
 };
 pub use renderer::{HeadlessRenderer, PaintLayer, RecordedRenderScene, RenderOp};
+pub use scroll::{ScrollElement, ScrollNode, ScrollState};
 pub use subcompose_layout::{
     Constraints, MeasureResult, Placement, SubcomposeLayoutNode, SubcomposeLayoutScope,
     SubcomposeMeasureScope, SubcomposeMeasureScopeImpl,

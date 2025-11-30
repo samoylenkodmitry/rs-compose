@@ -160,6 +160,7 @@ fn render_container(
     }
 
     scene.push_hit(
+        layout.node_id,
         transformed_rect,
         scaled_shape,
         extra_clicks,

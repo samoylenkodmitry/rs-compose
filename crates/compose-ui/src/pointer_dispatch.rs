@@ -1,8 +1,9 @@
 //! Pointer input dispatch manager for Compose-RS.
 //!
-//! This module implements pointer invalidation servicing that mirrors Jetpack Compose's
-//! pointer input invalidation system. When pointer modifiers change, they mark nodes
-//! for reprocessing without forcing layout/draw passes.
+//! This module manages pointer input invalidations across the UI tree.
+//! Hit path tracking for gesture state preservation is handled by
+//! `AppShell::cached_hits` which caches hit targets on pointer DOWN
+//! and dispatches subsequent MOVE/UP events to the same cached nodes.
 
 use compose_core::NodeId;
 use std::cell::RefCell;
@@ -12,6 +13,10 @@ thread_local! {
     static POINTER_DISPATCH_MANAGER: RefCell<PointerDispatchManager> =
         RefCell::new(PointerDispatchManager::new());
 }
+
+// ============================================================================
+// PointerDispatchManager - Invalidation tracking
+// ============================================================================
 
 /// Manages pointer input invalidations across the UI tree.
 ///
