@@ -41,7 +41,7 @@ jobs:
         run: |
           set -e
           cd apps/desktop-demo
-          wasm-pack build --target web --features web,renderer-wgpu --out-dir pkg -- -Z unstable-options
+          wasm-pack build --target web --features web,renderer-wgpu
 
       - name: Create deployment directory
         run: |

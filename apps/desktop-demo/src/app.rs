@@ -100,7 +100,6 @@ fn local_holder() -> CompositionLocal<Holder> {
 }
 
 fn random() -> i32 {
-    use instant::{SystemTime, Duration};
     // For WASM compatibility, use a simple counter-based seed
     #[cfg(target_arch = "wasm32")]
     {
@@ -110,6 +109,8 @@ fn random() -> i32 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        use instant::SystemTime;
+
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -796,16 +797,16 @@ fn counter_app() {
     let fetch_key = fetch_request.get();
     {
         let async_message_state = async_message;
-        LaunchedEffect!(fetch_key, move |scope| {
+        LaunchedEffect!(fetch_key, move |_scope| {
             if fetch_key == 0 {
                 return;
             }
             let message_for_ui = async_message_state;
             #[cfg(not(target_arch = "wasm32"))]
-            scope.launch_background(
+            _scope.launch_background(
                 move |token| {
-                    use std::thread;
                     use instant::{Duration, SystemTime};
+                    use std::thread;
 
                     for _ in 0..5 {
                         if token.is_cancelled() {
@@ -829,7 +830,10 @@ fn counter_app() {
             );
             // On WASM, immediately set a message since we can't use background threads
             #[cfg(target_arch = "wasm32")]
-            message_for_ui.set(format!("WASM: Background threads not supported (fetch #{})", fetch_key));
+            message_for_ui.set(format!(
+                "WASM: Background threads not supported (fetch #{})",
+                fetch_key
+            ));
         });
     }
     LaunchedEffect!(counter.get(), |_| println!("effect call"));
