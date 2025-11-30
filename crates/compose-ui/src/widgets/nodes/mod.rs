@@ -1,6 +1,6 @@
 use compose_core::{Node, NodeId};
 
-mod layout_node;
+pub mod layout_node;
 
 pub use layout_node::IntrinsicKind;
 pub use layout_node::LayoutNode;

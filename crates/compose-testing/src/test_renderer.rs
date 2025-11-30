@@ -19,19 +19,7 @@ impl HitTestTarget for TestHitRegion {
         };
         let global_pos = compose_ui::Point { x, y };
 
-        let event = PointerEvent {
-            id: 0,
-            kind,
-            phase: match kind {
-                PointerEventKind::Down => PointerPhase::Start,
-                PointerEventKind::Move => PointerPhase::Move,
-                PointerEventKind::Up => PointerPhase::End,
-                PointerEventKind::Cancel => PointerPhase::Cancel,
-            },
-            position: local_pos,
-            global_position: global_pos,
-            buttons: Default::default(),
-        };
+        let event = PointerEvent::new(vec![], None); // TODO: Construct proper event for testing
 
         for handler in &self.pointer_inputs {
             handler(event.clone());

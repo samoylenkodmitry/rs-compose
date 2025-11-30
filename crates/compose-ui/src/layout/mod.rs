@@ -1,7 +1,9 @@
 // WIP: Layout system infrastructure - many helper types not yet fully wired up
 
 pub mod coordinator;
+pub mod coordinates;
 pub mod core;
+pub mod hit_test_result;
 pub mod policies;
 
 use compose_core::collections::map::Entry;
@@ -431,6 +433,12 @@ pub fn measure_layout(
     let measured = builder.measure_node(root, normalize_constraints(constraints))?;
     let metadata = {
         let mut applier_ref = applier_host.borrow_typed();
+        
+        // Update root node coordinates
+        applier_ref.with_node::<LayoutNode, _>(root, |node| {
+            node.update_coordinates(measured.size, Point { x: 0.0, y: 0.0 });
+        }).ok();
+
         collect_runtime_metadata(&mut applier_ref, &measured)?
     };
     let semantics_snapshot = {
@@ -1034,6 +1042,14 @@ impl LayoutBuilderState {
                         x: padding.left + base_position.x,
                         y: padding.top + base_position.y,
                     };
+
+                    // Update LayoutNode coordinates
+                    Self::with_applier_result(&state_rc, |applier| {
+                        applier.with_node::<LayoutNode, _>(child_id, |node| {
+                            node.update_coordinates(measured.size, position);
+                        })
+                    }).ok();
+
                     measured_children.push(MeasuredChild {
                         node: measured,
                         offset: position,
@@ -1206,6 +1222,12 @@ pub struct MeasuredNode {
     size: Size,
     offset: Point,
     children: Vec<MeasuredChild>,
+}
+
+impl MeasuredNode {
+    pub fn node_id(&self) -> NodeId {
+        self.node_id
+    }
 }
 
 impl MeasuredNode {

@@ -4,7 +4,7 @@
 use compose_foundation::InvalidationKind;
 
 use compose_foundation::{
-    BasicModifierNodeContext, ModifierInvalidation, ModifierNodeChain, NodeCapabilities,
+    BasicModifierNodeContext, ModifierInvalidation, ModifierNodeChain, NodeCapabilities, PointerEvent,
 };
 
 use super::{
@@ -99,7 +99,17 @@ impl ModifierChainHandle {
             crate::debug::log_modifier_chain(self.chain(), self.inspector_snapshot());
             crate::debug::emit_modifier_chain_trace(self.inspector_snapshot());
         }
-        modifier_local_invalidations
+        self.context.borrow_mut().take_invalidations().into_iter().chain(modifier_local_invalidations).collect()
+    }
+
+    pub fn dispatch_pointer_event(
+        &mut self,
+        context: &mut dyn compose_foundation::ModifierNodeContext,
+        event: &PointerEvent,
+        pass: compose_foundation::nodes::input::types::PointerEventPass,
+        size: compose_ui_graphics::Size,
+    ) {
+        self.chain.dispatch_pointer_event(context, event, pass, size);
     }
 
     /// Enables or disables per-handle modifier debug logging.
@@ -348,11 +358,10 @@ mod tests {
     fn attaches_padding_node_and_invalidates_layout() {
         let mut handle = ModifierChainHandle::new();
 
-        let _ = handle.update(&Modifier::empty().padding(8.0));
+        let invalidations = handle.update(&Modifier::empty().padding(8.0));
 
         assert_eq!(handle.chain().len(), 1);
 
-        let invalidations = handle.take_invalidations();
         assert_eq!(
             invalidations,
             vec![ModifierInvalidation::new(

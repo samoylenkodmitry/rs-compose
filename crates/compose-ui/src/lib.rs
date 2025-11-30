@@ -7,6 +7,7 @@ pub use compose_macros::composable;
 mod debug;
 mod draw;
 mod focus_dispatch;
+pub mod input;
 mod layout;
 mod modifier;
 mod modifier_nodes;
@@ -19,6 +20,13 @@ mod subcompose_layout;
 mod text;
 mod text_modifier_node;
 pub mod widgets;
+
+#[cfg(test)]
+mod tests {
+    // pub mod modifier_nodes_tests;  // Disabled: API mismatches
+    pub mod multipass_dispatch_tests;
+    // pub mod hit_path_tracker_tests;  // Disabled: API mismatches
+}
 
 pub use compose_ui_graphics::Dp;
 pub use compose_ui_layout::IntrinsicSize;

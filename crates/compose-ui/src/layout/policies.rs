@@ -104,6 +104,10 @@ impl MeasurePolicy for BoxMeasurePolicy {
             .map(|m| m.max_intrinsic_height(width))
             .fold(0.0, f32::max)
     }
+
+    fn debug_name(&self) -> &str {
+        "BoxMeasurePolicy"
+    }
 }
 
 // Note: RowMeasurePolicy and ColumnMeasurePolicy have been replaced by FlexMeasurePolicy.
@@ -440,6 +444,10 @@ impl MeasurePolicy for FlexMeasurePolicy {
         };
         arrangement.arrange(container_main, &child_main_sizes, &mut main_positions);
 
+        if self.axis == Axis::Vertical && main_positions.len() > 0 {
+             println!("[FlexMeasurePolicy] Column arrange: container_main={}, child_sizes={:?}, positions={:?}", container_main, child_main_sizes, main_positions);
+        }
+
         // Place children
         let mut placements: SmallVec<[Placement; 8]> = SmallVec::with_capacity(placeables.len());
         for (placeable, main_pos) in placeables.into_iter().zip(main_positions.into_iter()) {
@@ -576,6 +584,13 @@ impl MeasurePolicy for FlexMeasurePolicy {
             }
         }
     }
+
+    fn debug_name(&self) -> &str {
+        match self.axis {
+            Axis::Horizontal => "Row (Flex)",
+            Axis::Vertical => "Column (Flex)",
+        }
+    }
 }
 
 /// MeasurePolicy for leaf nodes with fixed intrinsic size (like Spacer).
@@ -621,6 +636,10 @@ impl MeasurePolicy for LeafMeasurePolicy {
 
     fn max_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
         self.intrinsic_size.height
+    }
+
+    fn debug_name(&self) -> &str {
+        "LeafMeasurePolicy"
     }
 }
 
@@ -674,6 +693,10 @@ impl MeasurePolicy for EmptyMeasurePolicy {
 
     fn max_intrinsic_height(&self, _measurables: &[Box<dyn Measurable>], _width: f32) -> f32 {
         0.0
+    }
+
+    fn debug_name(&self) -> &str {
+        "EmptyMeasurePolicy"
     }
 }
 

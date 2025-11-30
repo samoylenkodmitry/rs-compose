@@ -9,6 +9,9 @@ pub mod nodes;
 pub mod scroll;
 pub mod scrollable;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export commonly used items
 pub use measurement_proxy::*;
 pub use modifier::*;

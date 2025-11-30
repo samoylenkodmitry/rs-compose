@@ -409,6 +409,10 @@ impl TextMeasurer for WgpuTextMeasurer {
         let mut size_cache = self.size_cache.lock().unwrap();
         size_cache.put(size_key, size);
 
+        if size.height > 10.0 {
+             println!("[TextMeasurer] Measured '{}' size: {:?}", text, size);
+        }
+
         compose_ui::TextMetrics {
             width: size.width,
             height: size.height,

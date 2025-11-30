@@ -14,8 +14,12 @@ use compose_ui::{
     request_render_invalidation, take_focus_invalidation, take_pointer_invalidation,
     take_render_invalidation, HeadlessRenderer, LayoutMeasurements, LayoutNode, MeasuredNode,
     LayoutTree, SemanticsTree,
+    input::PointerInputEventProcessor,
 };
-use compose_ui_graphics::Size;
+use compose_ui_graphics::{Size, Point};
+use compose_foundation::nodes::input::types::{
+    PointerInputEvent, PointerInputEventData, PointerId, PointerType,
+};
 
 pub struct AppShell<R>
 where
@@ -32,6 +36,8 @@ where
     layout_dirty: bool,
     scene_dirty: bool,
     is_dirty: bool,
+    pointer_input_event_processor: Option<PointerInputEventProcessor>,
+    is_mouse_down: bool,
 }
 
 impl<R> AppShell<R>
@@ -59,6 +65,8 @@ where
             layout_dirty: true,
             scene_dirty: true,
             is_dirty: true,
+            pointer_input_event_processor: None,
+            is_mouse_down: false,
         };
         shell.process_frame();
         shell
@@ -166,43 +174,60 @@ where
     }
 
     pub fn set_cursor(&mut self, x: f32, y: f32) -> bool {
+        println!("[AppShell] set_cursor: ({}, {})", x, y);
         self.cursor = (x, y);
-        let hits = self.renderer.scene().hit_test(x, y);
-        if !hits.is_empty() {
-            for hit in hits {
-                hit.dispatch(PointerEventKind::Move, x, y);
-            }
-            self.mark_dirty();
-            true
-        } else {
-            false
-        }
+        self.dispatch_pointer_event(x, y, self.is_mouse_down, PointerType::Mouse)
     }
 
     pub fn pointer_pressed(&mut self) -> bool {
-        let hits = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1);
-        if !hits.is_empty() {
-            for hit in hits {
-                hit.dispatch(PointerEventKind::Down, self.cursor.0, self.cursor.1);
-            }
-            self.mark_dirty();
-            true
-        } else {
-            false
-        }
+        println!("[AppShell] pointer_pressed: {:?}", self.cursor);
+        self.is_mouse_down = true;
+        self.dispatch_pointer_event(self.cursor.0, self.cursor.1, true, PointerType::Mouse)
     }
 
     pub fn pointer_released(&mut self) -> bool {
-        let hits = self.renderer.scene().hit_test(self.cursor.0, self.cursor.1);
-        if !hits.is_empty() {
-            for hit in hits {
-                hit.dispatch(PointerEventKind::Up, self.cursor.0, self.cursor.1);
+        println!("[AppShell] pointer_released: {:?}", self.cursor);
+        self.is_mouse_down = false;
+        self.dispatch_pointer_event(self.cursor.0, self.cursor.1, false, PointerType::Mouse)
+    }
+
+    fn dispatch_pointer_event(&mut self, x: f32, y: f32, down: bool, type_: PointerType) -> bool {
+        if let Some(processor) = &self.pointer_input_event_processor {
+            let uptime = self.start_time.elapsed().as_millis() as u64;
+            let position = Point::new(x, y);
+            
+            let pointer_data = PointerInputEventData {
+                id: 0,
+                uptime,
+                position,
+                position_on_screen: position,
+                down,
+                pressure: if down { 1.0 } else { 0.0 },
+                type_,
+                active_hover: !down,
+                historical: Vec::new(),
+                scroll_delta: Point::ZERO,
+                original_event_position: position,
+            };
+
+            let event = PointerInputEvent {
+                uptime,
+                pointers: vec![pointer_data],
+                motion_event: None, 
+            };
+
+            println!("[AppShell] Dispatching event to processor: pos={:?}, down={}", position, down);
+            let result = processor.process(event);
+            println!("[AppShell] Processor result: {:?}", result);
+            
+            if result.any_movement_consumed || result.any_change_consumed {
+                self.mark_dirty();
+                return true;
             }
-            self.mark_dirty();
-            true
         } else {
-            false
+            println!("[AppShell] No pointer_input_event_processor available!");
         }
+        false
     }
 
     pub fn log_debug_info(&mut self) {
@@ -242,6 +267,7 @@ where
             width: self.viewport.0,
             height: self.viewport.1,
         };
+        println!("[AppShell] Viewport size: {:?}", viewport_size);
         if let Some(root) = self.composition.root() {
             let handle = self.composition.runtime_handle();
             let mut applier = self.composition.applier_mut();
@@ -270,6 +296,14 @@ where
             self.layout_dirty = false;
             match compose_ui::measure_layout(&mut *applier, root, viewport_size) {
                 Ok(measurements) => {
+                    // Initialize or update pointer input processor with the new root
+                    let root_id = measurements.root.node_id();
+                    println!("[AppShell] Initializing processor with root_id: {:?} on thread {:?}", root_id, std::thread::current().id());
+                    if self.pointer_input_event_processor.is_none() {
+                        self.pointer_input_event_processor = Some(PointerInputEventProcessor::new(root_id));
+                    }
+                    // TODO: Handle root ID change if necessary (recreate processor)
+                    
                     self.layout_measurements = Some(measurements);
                     self.scene_dirty = true;
                 }
@@ -284,6 +318,7 @@ where
             self.layout_measurements = None;
             self.scene_dirty = true;
             self.layout_dirty = false;
+            self.pointer_input_event_processor = None;
         }
     }
 

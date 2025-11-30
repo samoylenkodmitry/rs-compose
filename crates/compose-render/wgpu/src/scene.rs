@@ -6,6 +6,8 @@ use compose_render_common::{HitTestTarget, RenderScene};
 use compose_ui_graphics::{Brush, Color, Point, Rect, RoundedCornerShape};
 use std::cell::RefCell;
 use std::rc::Rc;
+use compose_foundation::nodes::input::types::{PointerInputChange, PointerId, PointerType};
+use std::cell::Cell;
 
 #[derive(Clone)]
 pub struct DrawShape {
@@ -56,24 +58,37 @@ pub struct HitRegion {
 
 impl HitTestTarget for HitRegion {
     fn dispatch(&self, kind: PointerEventKind, x: f32, y: f32) {
-        let local = Point {
+        let local_pos = Point {
             x: x - self.rect.x,
             y: y - self.rect.y,
         };
-        let global = Point { x, y };
-        let event = PointerEvent {
-            id: 0,
-            kind,
-            phase: match kind {
-                PointerEventKind::Down => PointerPhase::Start,
-                PointerEventKind::Move => PointerPhase::Move,
-                PointerEventKind::Up => PointerPhase::End,
-                PointerEventKind::Cancel => PointerPhase::Cancel,
-            },
-            position: local,
-            global_position: global,
-            buttons: Default::default(),
+        let global_pos = Point { x, y };
+
+        // Determine pressed state based on kind
+        let (pressed, previous_pressed) = match kind {
+            PointerEventKind::Down => (true, false),
+            PointerEventKind::Move => (true, true), // Assumption: move happens while pressed for drag
+            PointerEventKind::Up => (false, true),
+            _ => (false, false),
         };
+
+        let change = Rc::new(PointerInputChange {
+            id: 0, // Single pointer for now
+            uptime: 0, // TODO: Pass timestamp
+            position: local_pos,
+            pressed,
+            pressure: if pressed { 1.0 } else { 0.0 },
+            previous_uptime: 0,
+            previous_position: local_pos, // TODO: Track previous position
+            previous_pressed,
+            is_consumed: Cell::new(false),
+            type_: PointerType::Mouse,
+            historical: vec![],
+            scroll_delta: Point::ZERO,
+            original_event_position: global_pos,
+        });
+
+        let event = PointerEvent::new(vec![change], None);
         let has_pointer_inputs = !self.pointer_inputs.is_empty();
         let has_click_actions = kind == PointerEventKind::Down && !self.click_actions.is_empty();
 
@@ -82,10 +97,28 @@ impl HitTestTarget for HitRegion {
         }
 
         if let Err(err) = run_in_mutable_snapshot(|| {
+            use compose_foundation::nodes::input::types::PointerEventPass;
+            
+            // Multi-pass dispatch: Initial (tunneling) -> Main (bubbling) -> Final (cleanup)
+            // This enables proper event consumption and gesture pickup
+            
+            // Initial pass - tunneling from root to leaves
             for handler in self.pointer_inputs.iter() {
-                handler(event);
+                handler(event.clone());  // Handlers internally check pass via context
             }
-            if kind == PointerEventKind::Down {
+            
+            // Main pass - where most interactions happen (bubbling)
+            for handler in self.pointer_inputs.iter() {
+                handler(event.clone());
+            }
+            
+            // Final pass - cleanup and gesture pickup
+            for handler in self.pointer_inputs.iter() {
+                handler(event.clone());
+            }
+            
+            // Click actions only fire on Down during Main pass (after Initial)
+            if kind == PointerEventKind::Down && !event.is_consumed() {
                 for action in &self.click_actions {
                     action.invoke(self.rect, x, y);
                 }

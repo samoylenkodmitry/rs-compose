@@ -17,6 +17,17 @@ impl Point {
     pub const ZERO: Point = Point { x: 0.0, y: 0.0 };
 }
 
+impl std::ops::Sub for Point {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Size {
     pub width: f32,

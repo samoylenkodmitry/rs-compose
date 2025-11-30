@@ -20,7 +20,7 @@ pub use compose_ui_graphics::DrawScope;
 pub use compose_ui_graphics::Size;
 pub use compose_ui_layout::{Constraints, Measurable};
 
-use crate::nodes::input::types::PointerEvent;
+use crate::nodes::input::types::{PointerEvent, PointerEventPass};
 
 /// Identifies which part of the rendering pipeline should be invalidated
 /// after a modifier node changes state.
@@ -512,6 +512,7 @@ pub trait PointerInputNode: ModifierNode {
         _context: &mut dyn ModifierNodeContext,
         _event: &PointerEvent,
         _pass: crate::nodes::input::types::PointerEventPass,
+        _bounds: Size,
     ) -> bool {
         false
     }
@@ -587,6 +588,19 @@ impl FocusState {
 pub trait FocusNode: ModifierNode {
     /// Returns the current focus state of this node.
     fn focus_state(&self) -> FocusState;
+
+    /// Returns the node as a `PointerInputNode` if it implements that trait.
+    fn as_pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
+        None
+    }
+
+    /// Returns the node as a mutable `PointerInputNode` if it implements that trait.
+    fn as_pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
+        None
+    }
+
+    /// Called when the node is attached to a `ModifierNodeChain`.
+    fn on_attach(&mut self) {}
 
     /// Called when focus state changes for this node.
     fn on_focus_changed(&mut self, _context: &mut dyn ModifierNodeContext, _state: FocusState) {
@@ -724,6 +738,10 @@ impl NodeCapabilities {
             InvalidationKind::Semantics => Self::SEMANTICS,
             InvalidationKind::Focus => Self::FOCUS,
         }
+    }
+
+    pub fn has_pointer_input(self) -> bool {
+        self.intersects(Self::POINTER_INPUT)
     }
 }
 
@@ -1101,6 +1119,58 @@ pub struct ModifierChainNodeRef<'a> {
 impl Default for ModifierNodeChain {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ModifierNodeChain {
+    /// Dispatches a pointer event to all nodes in the chain that handle pointer input.
+    ///
+    /// The dispatch order depends on the pass:
+    /// - Initial: Head to Tail (Tunneling)
+    /// - Main: Tail to Head (Bubbling)
+    /// - Final: Head to Tail (Tunneling)
+    pub fn dispatch_pointer_event(&mut self, context: &mut dyn ModifierNodeContext, event: &PointerEvent, pass: PointerEventPass, size: Size) {
+        if !self.aggregated_capabilities.has_pointer_input() {
+            return;
+        }
+
+        match pass {
+            PointerEventPass::Initial | PointerEventPass::Final => {
+                // Head to Tail
+                for link in &self.ordered_nodes {
+                    if let NodeLink::Entry(path) = link {
+                        let index = path.entry;
+                        if let Some(entry) = self.entries.get(index) {
+                            if entry.capabilities.has_pointer_input() {
+                                // We need interior mutability here. The node is in Rc<RefCell<...>>
+                                if let Ok(mut node) = entry.node.try_borrow_mut() {
+                                    if let Some(input_node) = node.as_pointer_input_node_mut() {
+                                        input_node.on_pointer_event(context, event, pass, size);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            PointerEventPass::Main => {
+                // Tail to Head
+                for link in self.ordered_nodes.iter().rev() {
+                    if let NodeLink::Entry(path) = link {
+                        let index = path.entry;
+                        if let Some(entry) = self.entries.get(index) {
+                            if entry.capabilities.has_pointer_input() {
+                                if let Ok(mut node) = entry.node.try_borrow_mut() {
+                                    if let Some(input_node) = node.as_pointer_input_node_mut() {
+                                        input_node.on_pointer_event(context, event, pass, size);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

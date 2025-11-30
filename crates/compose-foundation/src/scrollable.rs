@@ -3,9 +3,9 @@
 //! This module provides the ScrollableState trait that defines the interface
 //! for consuming scroll deltas, similar to Jetpack Compose's ScrollableState.
 
-use crate::modifier::{
+use crate::{
     DelegatableNode, ModifierNode, ModifierNodeContext, ModifierNodeElement, NodeCapabilities,
-    NodeState, PointerInputNode,
+    NodeState, PointerInputNode, Size,
 };
 use crate::nodes::input::types::{PointerEvent, PointerEventKind};
 use std::cell::RefCell;
@@ -52,6 +52,8 @@ pub struct ScrollablePointerInputNode {
     // Track dragging state
     is_dragging: bool,
     last_position: Option<(f32, f32)>,
+    slop_passed: bool,
+    accumulated_delta: f32,
 }
 
 impl ScrollablePointerInputNode {
@@ -63,6 +65,8 @@ impl ScrollablePointerInputNode {
             node_state: NodeState::new(),
             is_dragging: false,
             last_position: None,
+            slop_passed: false,
+            accumulated_delta: 0.0,
         }
     }
 }
@@ -89,6 +93,7 @@ impl PointerInputNode for ScrollablePointerInputNode {
         _context: &mut dyn ModifierNodeContext,
         event: &PointerEvent,
         pass: crate::nodes::input::types::PointerEventPass,
+        _bounds: Size,
     ) -> bool {
         use crate::nodes::input::types::PointerEventPass;
 
@@ -108,15 +113,15 @@ impl PointerInputNode for ScrollablePointerInputNode {
                 }
                 // Start tracking
                 self.is_dragging = true;
+                self.slop_passed = false;
+                self.accumulated_delta = 0.0;
                 self.last_position = Some((event.position().x, event.position().y));
-                event.consume();
+                // Do NOT consume Down, let children see it (e.g. Clickable)
                 true
             }
             PointerEventKind::Move => {
                 if self.is_dragging {
                     if event.is_consumed() {
-                        // If someone else consumed the move, we should probably stop dragging or wait?
-                        // For now, let's respect consumption.
                         return false;
                     }
 
@@ -130,13 +135,24 @@ impl PointerInputNode for ScrollablePointerInputNode {
                         // INVERT: dragging content LEFT increases scroll (reveals right content)
                         let delta = -raw_delta;
 
-                        // Consume the scroll delta
-                        self.state.consume_scroll_delta(delta);
+                        if !self.slop_passed {
+                            self.accumulated_delta += raw_delta.abs();
+                            if self.accumulated_delta > 10.0 { // 10px slop
+                                self.slop_passed = true;
+                                // Consume the delta that passed the slop?
+                                // For simplicity, just start scrolling from next move or this move.
+                                // Let's consume this move to indicate drag started.
+                                self.state.consume_scroll_delta(delta);
+                                event.consume();
+                            }
+                        } else {
+                            // Consume the scroll delta
+                            self.state.consume_scroll_delta(delta);
+                            event.consume();
+                        }
 
                         // Update position
                         self.last_position = Some((event.position().x, event.position().y));
-                        
-                        event.consume();
                     }
                     true
                 } else {
@@ -147,8 +163,11 @@ impl PointerInputNode for ScrollablePointerInputNode {
                 // End drag
                 self.is_dragging = false;
                 self.last_position = None;
+                self.slop_passed = false;
+                self.accumulated_delta = 0.0;
                 true
             }
+            _ => false,
         }
     }
 

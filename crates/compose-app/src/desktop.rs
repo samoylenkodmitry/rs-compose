@@ -323,8 +323,8 @@ pub fn run(settings: AppSettings, content: impl FnMut() + 'static) -> ! {
                 if app.needs_redraw() {
                     window.request_redraw();
                 }
-                // Use Poll for animations, Wait for idle
-                if app.has_active_animations() {
+                // Use Poll for animations or if robot is active, Wait for idle otherwise
+                if app.has_active_animations() || robot_controller.is_some() {
                     elwt.set_control_flow(ControlFlow::Poll);
                 } else {
                     elwt.set_control_flow(ControlFlow::Wait);

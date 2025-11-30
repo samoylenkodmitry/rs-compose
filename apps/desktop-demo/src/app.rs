@@ -1002,9 +1002,9 @@ fn counter_app() {
                                                 let event = await_scope.await_pointer_event().await;
                                                 println!(
                                                     "Pointer event: kind={:?} pos=({:.1}, {:.1})",
-                                                    event.kind, event.position.x, event.position.y
+                                                    event.kind(), event.position().x, event.position().y
                                                 );
-                                                match event.kind {
+                                                match event.kind() {
                                                     PointerEventKind::Down => {
                                                         pointer_down_state.set(true)
                                                     }
@@ -1013,13 +1013,14 @@ fn counter_app() {
                                                     }
                                                     PointerEventKind::Move => {
                                                         pointer_position_state.set(Point {
-                                                            x: event.position.x,
-                                                            y: event.position.y,
+                                                            x: event.position().x,
+                                                            y: event.position().y,
                                                         });
                                                     }
                                                     PointerEventKind::Cancel => {
                                                         pointer_down_state.set(false)
                                                     }
+                                                    _ => {}
                                                 }
                                             }
                                         })

@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(node.focus_state(), FocusState::Inactive);
         assert!(!node.node_state().is_attached());
 
-        node.on_attach(&mut context);
+        ModifierNode::on_attach(&mut node, &mut context);
         assert!(node.node_state().is_attached());
 
         node.set_focus_state(FocusState::Active);

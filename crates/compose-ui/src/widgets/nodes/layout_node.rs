@@ -8,8 +8,10 @@ use crate::{
 };
 use compose_core::{Node, NodeId};
 use compose_foundation::{
-    InvalidationKind, ModifierInvalidation, NodeCapabilities, SemanticsConfiguration,
+    BasicModifierNodeContext, InvalidationKind, ModifierInvalidation,
+    NodeCapabilities, PointerEvent, SemanticsConfiguration,
 };
+use compose_foundation::nodes::input::types::PointerEventPass;
 use compose_ui_layout::{Constraints, MeasurePolicy};
 use indexmap::IndexSet;
 use std::cell::{Cell, RefCell};
@@ -156,6 +158,8 @@ pub struct LayoutNode {
     pub measure_policy: Rc<dyn MeasurePolicy>,
     pub children: IndexSet<NodeId>,
     cache: LayoutNodeCacheHandles,
+    /// Layout coordinates for hit testing - tracks position and size after measurement/placement
+    coordinates: RefCell<crate::layout::coordinates::LayoutCoordinates>,
     // Dirty flags for selective measure/layout/render
     needs_measure: Cell<bool>,
     needs_layout: Cell<bool>,
@@ -181,6 +185,7 @@ impl LayoutNode {
             measure_policy,
             children: IndexSet::new(),
             cache: LayoutNodeCacheHandles::default(),
+            coordinates: RefCell::new(crate::layout::coordinates::LayoutCoordinates::default()),
             needs_measure: Cell::new(true), // New nodes need initial measure
             needs_layout: Cell::new(true),  // New nodes need initial layout
             needs_semantics: Cell::new(true), // Semantics snapshot needs initial build
@@ -195,6 +200,74 @@ impl LayoutNode {
         node
     }
 
+    /// Performs hit testing at the given position
+    ///
+    /// This traverses the layout tree checking if the position
+    /// is within bounds, and collects pointer input modifier nodes.
+    ///
+    /// Following Jetpack Compose's NodeCoordinator.hitTest pattern.
+    pub fn hit_test(
+        &self,
+        position: crate::Point,
+        result: &mut crate::layout::hit_test_result::HitTestResult,
+        parent_global: Option<crate::Point>,
+    ) {
+        // Check if position is within this node's bounds
+        let coords = self.coordinates.borrow();
+        
+        if !coords.contains_global(position, parent_global) {
+            // Miss - position outside bounds
+            return;
+        }
+        
+        // Hit! Add this node if it has pointer input
+        if self.has_pointer_input_modifier_nodes() {
+            if let Some(id) = self.id.get() {
+                result.add(id, true); // in_layer = true for actual hits
+            }
+        }
+        
+        // Using LAYOUT_NODE_REGISTRY to resolve children
+        LAYOUT_NODE_REGISTRY.with(|registry| {
+            let registry = registry.borrow();
+            
+            let pos_in_parent = coords.position_in_parent;
+            let size = coords.size;
+
+            // Log hit test details for debugging
+            if let Some(node_id) = self.id.get() {
+                println!("[LayoutNode #{:?}] ({}) hit_test: pos={:?}, parent_global={:?}, size={:?}, pos_in_parent={:?}",
+                    node_id, self.measure_policy.debug_name(), position, parent_global, size, pos_in_parent);
+            }
+
+            // Compute current global position for children
+            let current_global = match parent_global {
+                Some(p) => crate::Point::new(
+                    p.x + coords.position_in_parent.x,
+                    p.y + coords.position_in_parent.y
+                ),
+                None => coords.position_in_parent,
+            };
+
+            // Iterate in reverse (front-to-back)
+            for child_id in self.children.iter().rev() {
+                if let Some(child_entry) = registry.get(child_id) {
+                    // SAFETY: The node is guaranteed to be alive as long as it's in the registry.
+                    // It unregisters itself in Drop.
+                    let child_node = unsafe { &*child_entry.node };
+                    child_node.hit_test(position, result, Some(current_global));
+                }
+            }
+        });
+    }
+    
+    /// Updates the layout coordinates after measurement
+    pub fn update_coordinates(&self, size: crate::Size, position: crate::Point) {
+        let mut coords = self.coordinates.borrow_mut();
+        coords.size = size;
+        coords.set_position(position);
+    }
+
     pub fn set_modifier(&mut self, modifier: Modifier) {
         // Only mark dirty if modifier actually changed
         if self.modifier != modifier {
@@ -205,6 +278,24 @@ impl LayoutNode {
             self.request_semantics_update();
         }
     }
+
+    pub fn dispatch_pointer_event(&mut self, event: &PointerEvent, pass: PointerEventPass) {
+        let size = self.coordinates.borrow().size;
+        let mut context = BasicModifierNodeContext::new();
+        self.modifier_chain.dispatch_pointer_event(&mut context, event, pass, size);
+        
+        // Process invalidations
+    for invalidation in context.take_invalidations() {
+        match invalidation.kind() {
+            InvalidationKind::Layout => self.mark_needs_measure(),
+            InvalidationKind::Draw => self.mark_needs_redraw(),
+            InvalidationKind::PointerInput => self.mark_needs_pointer_pass(),
+            InvalidationKind::Semantics => self.request_semantics_update(),
+            InvalidationKind::Focus => self.mark_needs_focus_sync(),
+            _ => {}
+        }
+    }
+}
 
     fn sync_modifier_chain(&mut self) {
         let start_parent = self.parent();
@@ -376,6 +467,7 @@ impl LayoutNode {
 
     /// Set this node's ID (called by applier after creation).
     pub fn set_node_id(&self, id: NodeId) {
+        println!("[LayoutNode] set_node_id: {:?} on thread {:?}", id, std::thread::current().id());
         if let Some(existing) = self.id.replace(Some(id)) {
             unregister_layout_node(existing);
         }
@@ -496,6 +588,7 @@ impl Clone for LayoutNode {
             measure_policy: self.measure_policy.clone(),
             children: self.children.clone(),
             cache: self.cache.clone(),
+            coordinates: RefCell::new(self.coordinates.borrow().clone()),
             needs_measure: Cell::new(self.needs_measure.get()),
             needs_layout: Cell::new(self.needs_layout.get()),
             needs_semantics: Cell::new(self.needs_semantics.get()),
@@ -503,7 +596,7 @@ impl Clone for LayoutNode {
             needs_pointer_pass: Cell::new(self.needs_pointer_pass.get()),
             needs_focus_sync: Cell::new(self.needs_focus_sync.get()),
             parent: Cell::new(self.parent.get()),
-            id: Cell::new(None),
+            id: Cell::new(None), // Reset ID on clone
             debug_modifiers: Cell::new(self.debug_modifiers.get()),
         };
         node.sync_modifier_chain();
@@ -513,7 +606,9 @@ impl Clone for LayoutNode {
 
 impl Node for LayoutNode {
     fn set_node_id(&mut self, id: NodeId) {
-        self.id.set(Some(id));
+        // Call the inherent method to ensure registration
+        // We can cast &mut self to &self
+        LayoutNode::set_node_id(self, id);
     }
 
     fn insert_child(&mut self, child: NodeId) {
@@ -596,17 +691,19 @@ impl Drop for LayoutNode {
 }
 
 thread_local! {
-    static LAYOUT_NODE_REGISTRY: RefCell<HashMap<NodeId, LayoutNodeRegistryEntry>> =
+    pub(crate) static LAYOUT_NODE_REGISTRY: RefCell<HashMap<NodeId, LayoutNodeRegistryEntry>> =
         RefCell::new(HashMap::new());
 }
 
-struct LayoutNodeRegistryEntry {
-    parent: Option<NodeId>,
-    modifier_child_capabilities: NodeCapabilities,
-    modifier_locals: ModifierLocalsHandle,
+pub(crate) struct LayoutNodeRegistryEntry {
+    pub parent: Option<NodeId>,
+    pub modifier_child_capabilities: NodeCapabilities,
+    pub modifier_locals: ModifierLocalsHandle,
+    pub node: *const LayoutNode,
 }
 
 fn register_layout_node(id: NodeId, node: &LayoutNode) {
+    println!("[LayoutNode] Registering node #{}", id);
     LAYOUT_NODE_REGISTRY.with(|registry| {
         registry.borrow_mut().insert(
             id,
@@ -614,12 +711,14 @@ fn register_layout_node(id: NodeId, node: &LayoutNode) {
                 parent: node.parent(),
                 modifier_child_capabilities: node.modifier_child_capabilities(),
                 modifier_locals: node.modifier_locals_handle(),
+                node: node as *const LayoutNode,
             },
         );
     });
 }
 
 fn unregister_layout_node(id: NodeId) {
+    println!("[LayoutNode] Unregistering node #{}", id);
     LAYOUT_NODE_REGISTRY.with(|registry| {
         registry.borrow_mut().remove(&id);
     });

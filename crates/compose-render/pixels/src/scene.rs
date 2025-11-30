@@ -55,24 +55,14 @@ pub struct HitRegion {
 
 impl HitTestTarget for HitRegion {
     fn dispatch(&self, kind: PointerEventKind, x: f32, y: f32) {
-        let local = compose_ui_graphics::Point {
+        let local = compose_ui::Point {
             x: x - self.rect.x,
             y: y - self.rect.y,
         };
-        let global = compose_ui_graphics::Point { x, y };
-        let event = PointerEvent {
-            id: 0,
-            kind,
-            phase: match kind {
-                PointerEventKind::Down => PointerPhase::Start,
-                PointerEventKind::Move => PointerPhase::Move,
-                PointerEventKind::Up => PointerPhase::End,
-                PointerEventKind::Cancel => PointerPhase::Cancel,
-            },
-            position: local,
-            global_position: global,
-            buttons: Default::default(),
-        };
+        let global = compose_ui::Point { x, y };
+       
+        let event = PointerEvent::new(kind, local, global);
+        
         let has_pointer_inputs = !self.pointer_inputs.is_empty();
         let has_click_actions = kind == PointerEventKind::Down && !self.click_actions.is_empty();
 
@@ -87,7 +77,7 @@ impl HitTestTarget for HitRegion {
 
         if let Err(err) = run_in_mutable_snapshot(|| {
             for handler in &self.pointer_inputs {
-                handler(event);
+                handler(event.clone());
             }
             if kind == PointerEventKind::Down {
                 for action in &self.click_actions {
@@ -222,11 +212,13 @@ impl RenderScene for Scene {
         self.next_z = 0;
     }
 
-    fn hit_test(&self, x: f32, y: f32) -> Option<Self::HitTarget> {
-        self.hits
+    fn hit_test(&self, x: f32, y: f32) -> Vec<Self::HitTarget> {
+        let mut hits: Vec<_> = self.hits
             .iter()
             .filter(|hit| hit.contains(x, y))
-            .max_by(|a, b| a.z_index.cmp(&b.z_index))
             .cloned()
+            .collect();
+        hits.sort_by(|a, b| b.z_index.cmp(&a.z_index));
+        hits
     }
 }

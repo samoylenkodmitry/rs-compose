@@ -40,3 +40,4 @@ android-activity = { workspace = true }
 [dev-dependencies]
 compose-macros = { path = "../../crates/compose-macros" }
 compose-testing = { path = "../../crates/compose-testing" }
+tokio = { version = "1.0", features = ["full"] }

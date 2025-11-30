@@ -98,6 +98,11 @@ pub trait MeasurePolicy {
 
     /// Computes the maximum intrinsic height of this policy.
     fn max_intrinsic_height(&self, measurables: &[Box<dyn Measurable>], width: f32) -> f32;
+
+    /// Returns a debug name for this policy.
+    fn debug_name(&self) -> &str {
+        "Unknown"
+    }
 }
 
 /// Result of a measurement operation.

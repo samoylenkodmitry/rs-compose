@@ -89,6 +89,11 @@ fn render_container(
     let origin = (rect.x, rect.y);
     let transformed_rect = apply_layer_to_rect(rect, origin, node_layer);
 
+    println!("[Renderer] render_container: node_id={:?}, rect={:?}, parent_trans=({},{}), node_trans=({},{}), transformed={:?}",
+        layout.node_id, rect, parent_layer.translation_x, parent_layer.translation_y,
+        node_layer.translation_x, node_layer.translation_y, transformed_rect);
+
+    // Push the container's own shape if it has one (e.g. background, border)
     if transformed_rect.width <= 0.0 || transformed_rect.height <= 0.0 {
         return;
     }

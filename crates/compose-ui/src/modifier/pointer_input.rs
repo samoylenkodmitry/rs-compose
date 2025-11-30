@@ -3,6 +3,7 @@ use compose_foundation::{
     impl_pointer_input_node, DelegatableNode, ModifierNode, ModifierNodeContext,
     ModifierNodeElement, NodeCapabilities, NodeState, PointerInputNode,
 };
+use compose_foundation::nodes::input::types::PointerEventPass;
 use compose_ui_graphics::Size;
 use futures_task::{waker, ArcWake};
 use std::any::TypeId;
@@ -193,8 +194,7 @@ struct NextPointerEvent {
 
 // Use a dummy event for initialization
 fn empty_pointer_event() -> PointerEvent {
-    use compose_foundation::nodes::input::types::{PointerEventKind, Point};
-    PointerEvent::new(PointerEventKind::Up, Point::new(0.0, 0.0), Point::new(0.0, 0.0))
+    PointerEvent::new(vec![], None)
 }
 
 impl Future for NextPointerEvent {
@@ -261,7 +261,10 @@ impl PointerEventDispatcher {
         Self { state, handler }
     }
 
-    fn dispatch(&self, event: PointerEvent) {
+    fn dispatch(&self, event: PointerEvent, _pass: PointerEventPass, bounds: Size) {
+        if let Some(state) = self.state.borrow().as_ref() {
+            state.size.set(bounds);
+        }
         (self.handler)(event);
     }
 
@@ -448,6 +451,7 @@ impl ModifierNode for SuspendingPointerInputNode {
         self.cancel();
     }
 
+
     fn on_reset(&mut self) {
         // Don't restart on reset - only restart when keys/handler actually change
         // (which is handled by update() method). Restarting here would kill the
@@ -469,15 +473,17 @@ impl PointerInputNode for SuspendingPointerInputNode {
         &mut self,
         _context: &mut dyn ModifierNodeContext,
         event: &PointerEvent,
-        _pass: compose_foundation::nodes::input::types::PointerEventPass,
+        pass: compose_foundation::nodes::input::types::PointerEventPass,
+        bounds: Size,
     ) -> bool {
         // TODO: Handle passes correctly. For now, we just dispatch everything.
         // In the future, we should probably filter by pass or update the dispatcher to handle passes.
         // Since the current dispatcher just pushes to a queue, we might be pushing 3x events.
         // Let's only dispatch on Main pass for now to avoid duplication until we implement full pass support in SuspendingPointerInputNode.
         
-        if _pass == compose_foundation::nodes::input::types::PointerEventPass::Main {
-             self.dispatcher.dispatch(event.clone());
+        if pass == compose_foundation::nodes::input::types::PointerEventPass::Main {
+             self.dispatcher
+            .dispatch(event.clone(), pass, bounds)
         }
         
         false
