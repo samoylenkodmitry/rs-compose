@@ -9,6 +9,7 @@ desktop = ["compose-platform-desktop-winit", "dep:winit"]
 android = ["compose-platform-android", "dep:android-activity", "dep:android_logger", "dep:raw-window-handle"]
 renderer-pixels = ["compose-render-pixels", "dep:pixels"]
 renderer-wgpu = ["compose-render-wgpu", "dep:wgpu", "dep:pollster"]
+robot = [] # Enable robot testing support
 
 [dependencies]
 compose-app-shell = { path = "../compose-app-shell" }

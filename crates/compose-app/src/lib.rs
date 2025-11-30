@@ -17,3 +17,6 @@ pub mod android;
 
 #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
 pub mod desktop;
+
+#[cfg(all(feature = "desktop", feature = "renderer-wgpu", feature = "robot"))]
+pub mod desktop_robot;

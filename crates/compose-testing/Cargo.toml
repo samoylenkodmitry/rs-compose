@@ -14,10 +14,7 @@ compose-render-common = { path = "../compose-render/common" }
 compose-ui-graphics = { path = "../compose-ui-graphics" }
 
 # Optional dependencies for real app testing
-compose-render-wgpu = { path = "../compose-render/wgpu", optional = true }
-winit = { version = "0.29", optional = true }
-pollster = { version = "0.3", optional = true }
-wgpu = { version = "0.19", optional = true }
+compose-app = { path = "../compose-app", features = ["robot"], optional = true }
 
 [dev-dependencies]
 compose-macros = { path = "../compose-macros" }
@@ -25,4 +22,5 @@ compose-macros = { path = "../compose-macros" }
 [features]
 default = []
 # Enable real app testing with actual rendering (requires display/window system)
-robot-app = ["compose-render-wgpu", "winit", "pollster", "wgpu"]
+# This uses the REAL desktop app runner from compose-app
+robot-app = ["compose-app"]

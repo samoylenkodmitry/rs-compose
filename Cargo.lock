@@ -561,17 +561,14 @@ dependencies = [
 name = "compose-testing"
 version = "0.1.0"
 dependencies = [
+ "compose-app",
  "compose-app-shell",
  "compose-core",
  "compose-foundation",
  "compose-macros",
  "compose-render-common",
- "compose-render-wgpu",
  "compose-ui",
  "compose-ui-graphics",
- "pollster",
- "wgpu",
- "winit",
 ]
 
 [[package]]
