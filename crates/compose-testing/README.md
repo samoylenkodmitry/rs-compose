@@ -9,10 +9,12 @@ uses the headless pixels renderer. It lets integration tests launch a
 composable tree, drive pointer input (move/press/release/click), and read
 the rendered scene to assert on text or geometry.
 
-`WgpuRobotApp` drives the same WGPU renderer used in production desktop
-applications while rendering into an offscreen texture. It supports the
-same pointer automation and scene access as `RobotApp`, and it can also
-capture rendered frames for future screenshot-style tests.
+`WgpuRobotApp` runs the real desktop runtime (winit event loop, WGPU
+renderer, and surfaces) in a hidden window and exposes the same pointer
+automation and scene access as `RobotApp`. It can also capture rendered
+frames for screenshot-style tests while executing the exact code paths
+used in production apps. Because the runtime executes on a background
+thread, the provided UI closure must be `Send`.
 
 Example usage against the `desktop-app` demo:
 
@@ -53,12 +55,12 @@ use desktop_app::app::combined_app;
 
 static ROBOTO_REGULAR: &[u8] = include_bytes!("../../../assets/Roboto-Regular.ttf");
 
-let mut robot = WgpuRobotApp::launch_with_fonts(1024, 768, &[ROBOTO_REGULAR], || {
+let robot = WgpuRobotApp::launch_with_fonts(1024, 768, &[ROBOTO_REGULAR], || {
     combined_app();
 })?;
 robot.pump_until_idle(30)?;
 
-let snapshot = robot.snapshot();
+let snapshot = robot.snapshot()?;
 let button_rect = snapshot.text_rects("Increment")[0].clone();
 let (x, y) = rect_center(&button_rect);
 robot.click(x, y)?;

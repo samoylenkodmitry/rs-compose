@@ -33,7 +33,7 @@ fn CounterApp() {
 
 #[test]
 fn wgpu_robot_drives_real_renderer_and_captures_frames() -> Result<(), WgpuRobotError> {
-    let mut robot = match WgpuRobotApp::launch_with_fonts(640, 480, &ROBOTO_FONTS, || {
+    let robot = match WgpuRobotApp::launch_with_fonts(640, 480, &ROBOTO_FONTS, || {
         CounterApp();
     }) {
         Ok(robot) => robot,
@@ -45,7 +45,7 @@ fn wgpu_robot_drives_real_renderer_and_captures_frames() -> Result<(), WgpuRobot
     };
 
     robot.pump_until_idle(20)?;
-    let snapshot = robot.snapshot();
+    let snapshot = robot.snapshot()?;
     assert!(snapshot.text_values().any(|text| text == "Count: 0"));
 
     let button_rect = snapshot
@@ -59,7 +59,7 @@ fn wgpu_robot_drives_real_renderer_and_captures_frames() -> Result<(), WgpuRobot
     assert!(robot.click(x, y)?);
 
     robot.pump_until_idle(20)?;
-    let updated = robot.snapshot();
+    let updated = robot.snapshot()?;
     assert!(updated.text_values().any(|text| text == "Count: 1"));
 
     let capture = robot.capture_frame()?;
@@ -67,6 +67,6 @@ fn wgpu_robot_drives_real_renderer_and_captures_frames() -> Result<(), WgpuRobot
     assert_eq!(capture.height, 480);
     assert!(!capture.rgba().is_empty());
 
-    robot.close();
+    robot.close()?;
     Ok(())
 }

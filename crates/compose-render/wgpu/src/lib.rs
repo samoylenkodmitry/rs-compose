@@ -301,6 +301,14 @@ impl WgpuRenderer {
             .map(|r| &*r.device)
             .expect("GPU renderer not initialized")
     }
+
+    /// Get access to the WGPU queue (for readbacks and uploads).
+    pub fn queue(&self) -> &wgpu::Queue {
+        self.gpu_renderer
+            .as_ref()
+            .map(|r| &*r.queue)
+            .expect("GPU renderer not initialized")
+    }
 }
 
 impl Default for WgpuRenderer {

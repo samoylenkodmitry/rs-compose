@@ -7,6 +7,7 @@ description = "Testing utilities and harness for Compose-RS"
 
 [dependencies]
 compose-app-shell = { version = "0.1.0", path = "../compose-app-shell" }
+compose-app = { path = "../compose-app" }
 compose-core = { path = "../compose-core" }
 compose-foundation = { path = "../compose-foundation" }
 compose-render-pixels = { version = "0.1.0", path = "../compose-render/pixels" }

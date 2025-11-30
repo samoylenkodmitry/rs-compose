@@ -109,6 +109,7 @@ impl SceneSnapshot {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_wgpu_scene(scene: &compose_render_wgpu::Scene) -> Self {
         Self {
             texts: scene
@@ -135,6 +136,46 @@ impl SceneSnapshot {
                 })
                 .collect(),
             hits: scene
+                .hits
+                .iter()
+                .map(|hit| HitRegion {
+                    rect: hit.rect,
+                    shape: hit.shape,
+                    click_actions: Vec::new(),
+                    pointer_inputs: Vec::new(),
+                    z_index: hit.z_index,
+                    hit_clip: hit.hit_clip,
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn from_robot_snapshot(snapshot: &compose_app::desktop::RobotSceneSnapshot) -> Self {
+        Self {
+            texts: snapshot
+                .texts
+                .iter()
+                .map(|text| TextDraw {
+                    rect: text.rect,
+                    text: text.text.clone(),
+                    color: text.color,
+                    scale: text.scale,
+                    z_index: text.z_index,
+                    clip: text.clip,
+                })
+                .collect(),
+            shapes: snapshot
+                .shapes
+                .iter()
+                .map(|shape| DrawShape {
+                    rect: shape.rect,
+                    brush: shape.brush.clone(),
+                    shape: shape.shape,
+                    z_index: shape.z_index,
+                    clip: shape.clip,
+                })
+                .collect(),
+            hits: snapshot
                 .hits
                 .iter()
                 .map(|hit| HitRegion {

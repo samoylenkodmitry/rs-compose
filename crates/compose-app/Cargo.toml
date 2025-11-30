@@ -16,6 +16,7 @@ compose-platform-desktop-winit = { path = "../compose-platform/desktop-winit", o
 compose-platform-android = { path = "../compose-platform/android", optional = true }
 compose-render-pixels = { path = "../compose-render/pixels", optional = true }
 compose-render-wgpu = { path = "../compose-render/wgpu", optional = true }
+compose-ui-graphics = { path = "../compose-ui-graphics" }
 pixels = { version = "0.15", optional = true }
 wgpu = { version = "0.19", optional = true }
 pollster = { version = "0.3", optional = true }
@@ -24,3 +25,4 @@ android-activity = { workspace = true, optional = true }
 android_logger = { version = "0.14", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 log = "0.4"
+thiserror = "1"
