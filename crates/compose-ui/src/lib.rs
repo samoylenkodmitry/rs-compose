@@ -14,6 +14,7 @@ mod pointer_dispatch;
 mod primitives;
 mod render_state;
 mod renderer;
+mod scroll;
 mod subcompose_layout;
 mod text;
 mod text_modifier_node;
@@ -62,6 +63,7 @@ pub use render_state::{
     take_focus_invalidation, take_pointer_invalidation, take_render_invalidation,
 };
 pub use renderer::{HeadlessRenderer, PaintLayer, RecordedRenderScene, RenderOp};
+pub use scroll::{remember_scroll_state, ScrollAxis, ScrollState};
 pub use subcompose_layout::{
     Constraints, MeasureResult, Placement, SubcomposeLayoutNode, SubcomposeLayoutScope,
     SubcomposeMeasureScope, SubcomposeMeasureScopeImpl,

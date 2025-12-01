@@ -9,6 +9,7 @@ use compose_ui::{
     IntrinsicSize, LinearArrangement, Modifier, Point, PointerInputScope, RoundedCornerShape, Row,
     RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
+use compose_ui::{remember_scroll_state, ScrollAxis};
 use std::cell::RefCell;
 
 mod mineswapper2;
@@ -130,10 +131,14 @@ pub fn combined_app() {
         Modifier::empty().padding(20.0),
         ColumnSpec::default(),
         move || {
+            let tabs_scroll = remember_scroll_state(0.0);
             let tab_state_for_row = active_tab;
             let tab_state_for_content = active_tab;
             Row(
-                Modifier::empty().fill_max_width().padding(8.0),
+                Modifier::empty()
+                    .fill_max_width()
+                    .padding(8.0)
+                    .scrollable(tabs_scroll, ScrollAxis::Horizontal),
                 RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(8.0)),
                 move || {
                     let render_tab_button = {

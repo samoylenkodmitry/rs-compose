@@ -66,11 +66,13 @@ use compose_foundation::{
     NodeState, PointerEvent, PointerEventKind, PointerInputNode, Size,
 };
 use compose_ui_layout::{Alignment, HorizontalAlignment, IntrinsicSize, VerticalAlignment};
+use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use crate::draw::DrawCommand;
 use crate::modifier::{Color, EdgeInsets, GraphicsLayer, LayoutWeight, Point, RoundedCornerShape};
+use crate::scroll::{ScrollAxis, ScrollState};
 
 fn hash_f32_value<H: Hasher>(state: &mut H, value: f32) {
     state.write_u32(value.to_bits());
@@ -1926,6 +1928,198 @@ impl ModifierNodeElement for OffsetElement {
 
     fn capabilities(&self) -> NodeCapabilities {
         NodeCapabilities::LAYOUT
+    }
+}
+
+// ============================================================================
+// Scroll Modifier Node
+// ============================================================================
+
+#[derive(Debug)]
+pub struct ScrollNode {
+    axis: ScrollAxis,
+    state: ScrollState,
+    last_position: Rc<RefCell<Option<Point>>>,
+    node_state: NodeState,
+}
+
+impl ScrollNode {
+    pub fn new(state: ScrollState, axis: ScrollAxis) -> Self {
+        Self {
+            axis,
+            state,
+            last_position: Rc::new(RefCell::new(None)),
+            node_state: NodeState::new(),
+        }
+    }
+
+    fn clamp_and_offset(&self, content: Size, viewport: Size) -> (f32, f32) {
+        let max_scroll = match self.axis {
+            ScrollAxis::Horizontal => (content.width - viewport.width).max(0.0),
+            ScrollAxis::Vertical => (content.height - viewport.height).max(0.0),
+        };
+        self.state.update_bounds(max_scroll);
+
+        let offset = self.state.value();
+        match self.axis {
+            ScrollAxis::Horizontal => (-offset, 0.0),
+            ScrollAxis::Vertical => (0.0, -offset),
+        }
+    }
+
+    fn handle_event(&self, event: PointerEvent) {
+        match event.kind {
+            PointerEventKind::Down => {
+                *self.last_position.borrow_mut() = Some(event.position);
+            }
+            PointerEventKind::Move => {
+                let mut last = self.last_position.borrow_mut();
+                if let Some(previous) = *last {
+                    let delta = match self.axis {
+                        ScrollAxis::Horizontal => event.position.x - previous.x,
+                        ScrollAxis::Vertical => event.position.y - previous.y,
+                    };
+                    if delta != 0.0 {
+                        self.state.dispatch_raw_delta(-delta);
+                    }
+                }
+                *last = Some(event.position);
+            }
+            PointerEventKind::Up | PointerEventKind::Cancel => {
+                *self.last_position.borrow_mut() = None;
+            }
+        }
+    }
+}
+
+impl DelegatableNode for ScrollNode {
+    fn node_state(&self) -> &NodeState {
+        &self.node_state
+    }
+}
+
+impl ModifierNode for ScrollNode {
+    fn on_attach(&mut self, context: &mut dyn ModifierNodeContext) {
+        context.invalidate(compose_foundation::InvalidationKind::Layout);
+        context.invalidate(compose_foundation::InvalidationKind::PointerInput);
+    }
+
+    fn as_layout_node(&self) -> Option<&dyn LayoutModifierNode> {
+        Some(self)
+    }
+
+    fn as_layout_node_mut(&mut self) -> Option<&mut dyn LayoutModifierNode> {
+        Some(self)
+    }
+
+    fn as_pointer_input_node(&self) -> Option<&dyn PointerInputNode> {
+        Some(self)
+    }
+
+    fn as_pointer_input_node_mut(&mut self) -> Option<&mut dyn PointerInputNode> {
+        Some(self)
+    }
+}
+
+impl LayoutModifierNode for ScrollNode {
+    fn measure(
+        &self,
+        _context: &mut dyn ModifierNodeContext,
+        measurable: &dyn Measurable,
+        constraints: Constraints,
+    ) -> compose_ui_layout::LayoutModifierMeasureResult {
+        let scroll_constraints = match self.axis {
+            ScrollAxis::Horizontal => Constraints {
+                min_width: 0.0,
+                max_width: f32::INFINITY,
+                min_height: constraints.min_height,
+                max_height: constraints.max_height,
+            },
+            ScrollAxis::Vertical => Constraints {
+                min_width: constraints.min_width,
+                max_width: constraints.max_width,
+                min_height: 0.0,
+                max_height: f32::INFINITY,
+            },
+        };
+
+        let child = measurable.measure(scroll_constraints);
+        let (width, height) = constraints.constrain(child.width(), child.height());
+        let viewport = Size { width, height };
+        let content = Size {
+            width: child.width(),
+            height: child.height(),
+        };
+        let (offset_x, offset_y) = self.clamp_and_offset(content, viewport);
+
+        compose_ui_layout::LayoutModifierMeasureResult::new(viewport, offset_x, offset_y)
+    }
+}
+
+impl PointerInputNode for ScrollNode {
+    fn on_pointer_event(
+        &mut self,
+        _context: &mut dyn ModifierNodeContext,
+        event: &PointerEvent,
+    ) -> bool {
+        self.handle_event(*event);
+        true
+    }
+
+    fn pointer_input_handler(&self) -> Option<Rc<dyn Fn(PointerEvent)>> {
+        let state = self.state.clone();
+        let axis = self.axis;
+        let last_position = self.last_position.clone();
+        Some(Rc::new(move |event: PointerEvent| match event.kind {
+            PointerEventKind::Down => {
+                *last_position.borrow_mut() = Some(event.position);
+            }
+            PointerEventKind::Move => {
+                let mut last = last_position.borrow_mut();
+                if let Some(previous) = *last {
+                    let delta = match axis {
+                        ScrollAxis::Horizontal => event.position.x - previous.x,
+                        ScrollAxis::Vertical => event.position.y - previous.y,
+                    };
+                    if delta != 0.0 {
+                        state.dispatch_raw_delta(-delta);
+                    }
+                }
+                *last = Some(event.position);
+            }
+            PointerEventKind::Up | PointerEventKind::Cancel => {
+                *last_position.borrow_mut() = None;
+            }
+        }))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScrollElement {
+    state: ScrollState,
+    axis: ScrollAxis,
+}
+
+impl ScrollElement {
+    pub fn new(state: ScrollState, axis: ScrollAxis) -> Self {
+        Self { state, axis }
+    }
+}
+
+impl ModifierNodeElement for ScrollElement {
+    type Node = ScrollNode;
+
+    fn create(&self) -> Self::Node {
+        ScrollNode::new(self.state.clone(), self.axis)
+    }
+
+    fn update(&self, node: &mut Self::Node) {
+        node.state = self.state.clone();
+        node.axis = self.axis;
+    }
+
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities::LAYOUT | NodeCapabilities::POINTER_INPUT
     }
 }
 
