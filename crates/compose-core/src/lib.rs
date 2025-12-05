@@ -1359,7 +1359,10 @@ impl Composer {
         result
     }
 
-    pub fn with_group<R>(&self, key: Key, f: impl FnOnce(&Composer) -> R) -> R {
+    /// Non-generic setup for with_group - prevents monomorphization bloat.
+    /// This function contains all the setup logic that doesn't depend on the closure type.
+    #[inline(never)]
+    fn with_group_enter(&self, key: Key) -> RecomposeScope {
         let (group, scope_ref, restored_from_gap) = {
             let mut slots = self.slots_mut();
             let StartGroup {
@@ -1406,8 +1409,13 @@ impl Composer {
             scope_ref.snapshot_locals(&locals);
         }
 
-        let result = self.observe_scope(&scope_ref, || f(self));
+        scope_ref
+    }
 
+    /// Non-generic teardown for with_group - prevents monomorphization bloat.
+    /// This function contains all the cleanup logic that doesn't depend on the closure type.
+    #[inline(never)]
+    fn with_group_exit(&self, scope_ref: &RecomposeScope) {
         let trimmed = {
             let mut slots = self.slots_mut();
             slots.finalize_current_group()
@@ -1422,6 +1430,17 @@ impl Composer {
         }
         scope_ref.mark_recomposed();
         self.slots_mut().end_group();
+    }
+
+    /// Executes a composable group with the given key.
+    ///
+    /// The implementation is split into non-generic enter/exit functions to minimize
+    /// code bloat from monomorphization. Only the closure invocation is generic.
+    #[inline(always)]
+    pub fn with_group<R>(&self, key: Key, f: impl FnOnce(&Composer) -> R) -> R {
+        let scope_ref = self.with_group_enter(key);
+        let result = self.observe_scope(&scope_ref, || f(self));
+        self.with_group_exit(&scope_ref);
         result
     }
 
