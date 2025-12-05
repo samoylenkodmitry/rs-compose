@@ -31,9 +31,9 @@ android-activity = { version = "0.5", features = ["native-activity"] }
 [profile.release]
 lto = true              # Link-Time Optimization across crates
 codegen-units = 1       # Better optimization (single codegen unit)
-strip = true            # Strip symbols from binary
+strip = "symbols"       # Strip symbols from binary
 panic = "abort"         # Smaller binaries (no unwinding)
-debug = 0               # No debug info in release builds
+debug = false           # No debug info in release builds
 
 # Maximum size optimization profile (slower builds, smaller binaries)
 [profile.release-small]
