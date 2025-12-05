@@ -9,6 +9,7 @@ description = "Web platform adapter for Compose-RS"
 compose-foundation = { path = "../../compose-foundation" }
 compose-ui-graphics = { path = "../../compose-ui-graphics" }
 wasm-bindgen = "0.2"
+# Minimal web-sys features - only include what's actually used
 web-sys = { version = "0.3", features = [
     "Window",
     "Document",
@@ -16,10 +17,5 @@ web-sys = { version = "0.3", features = [
     "HtmlElement",
     "HtmlCanvasElement",
     "MouseEvent",
-    "Touch",
-    "TouchList",
-    "TouchEvent",
     "PointerEvent",
-    "WheelEvent",
-    "KeyboardEvent",
 ] }
