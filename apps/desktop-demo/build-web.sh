@@ -2,6 +2,7 @@
 set -e
 
 echo "Building RS-Compose Demo for Web..."
+echo ""
 
 # Check if wasm-pack is installed (check common locations)
 WASM_PACK=""
@@ -20,9 +21,31 @@ fi
 
 echo "Using wasm-pack at: $WASM_PACK"
 
+# Check if wasm-opt is available (from binaryen) for size optimization
+if command -v wasm-opt &> /dev/null; then
+    echo "wasm-opt found - binary size optimization enabled"
+else
+    echo "Warning: wasm-opt not found. Install binaryen for smaller WASM binaries:"
+    echo "  Ubuntu/Debian: sudo apt install binaryen"
+    echo "  macOS: brew install binaryen"
+    echo "  Arch: pacman -S binaryen"
+    echo ""
+fi
+
 # Build the WASM module with web feature
-echo "Building WASM module..."
+# Release profile settings from root Cargo.toml will be used:
+# - LTO enabled for cross-crate optimization
+# - codegen-units=1 for better optimization
+# - wasm-opt runs with -Oz for size optimization
+echo "Building WASM module (optimized for size)..."
 "$WASM_PACK" build --target web --out-dir pkg --features web,renderer-wgpu --no-default-features
+
+# Show resulting binary size
+if [ -f "pkg/desktop_app_bg.wasm" ]; then
+    SIZE=$(du -h pkg/desktop_app_bg.wasm | cut -f1)
+    echo ""
+    echo "WASM binary size: $SIZE"
+fi
 
 echo ""
 echo "Build complete! 🎉"

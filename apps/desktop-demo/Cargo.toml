@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# Enable wasm-opt with size optimization (can reduce WASM size by 20-40%)
+wasm-opt = ["-Oz", "--enable-simd"]
 
 # Support both binary (desktop) and cdylib (Android)
 # IMPORTANT: The cdylib name (libdesktop_app.so) must match the android.app.lib_name
