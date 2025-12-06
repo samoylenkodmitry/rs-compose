@@ -201,6 +201,21 @@ impl AnySnapshot {
         }
     }
 
+    /// Enter this snapshot with a type-erased closure to avoid monomorphization bloat.
+    /// The closure is called exactly once while the snapshot is active.
+    #[inline(never)]
+    pub fn enter_erased(&self, f: &mut dyn FnMut()) {
+        match self {
+            AnySnapshot::Readonly(s) => s.enter_erased(f),
+            AnySnapshot::Mutable(s) => s.enter_erased(f),
+            AnySnapshot::NestedReadonly(s) => s.enter_erased(f),
+            AnySnapshot::NestedMutable(s) => s.enter_erased(f),
+            AnySnapshot::Global(s) => s.enter_erased(f),
+            AnySnapshot::TransparentMutable(s) => s.enter_erased(f),
+            AnySnapshot::TransparentReadonly(s) => s.enter_erased(f),
+        }
+    }
+
     /// Take a nested read-only snapshot.
     pub fn take_nested_snapshot(&self, read_observer: Option<ReadObserver>) -> AnySnapshot {
         match self {

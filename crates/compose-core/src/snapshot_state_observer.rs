@@ -58,6 +58,19 @@ impl SnapshotStateObserver {
             .observe_reads(scope, on_value_changed_for_scope, block)
     }
 
+    /// Type-erased version for RecomposeScope to avoid monomorphization bloat.
+    /// Uses dynamic dispatch for the block callback.
+    #[inline(never)]
+    pub fn observe_reads_erased(
+        &self,
+        scope: RecomposeScope,
+        on_value_changed_for_scope: impl Fn(&RecomposeScope) + 'static,
+        block: &mut dyn FnMut(),
+    ) {
+        self.inner
+            .observe_reads_erased(scope, on_value_changed_for_scope, block)
+    }
+
     /// Notify the observer that a new composition frame is starting.
     pub fn begin_frame(&self) {
         self.inner.begin_frame();
@@ -213,6 +226,81 @@ impl SnapshotStateObserverInner {
         result
     }
 
+    /// Type-erased version specialized for RecomposeScope to avoid monomorphization bloat.
+    #[inline(never)]
+    fn observe_reads_erased(
+        &self,
+        scope: RecomposeScope,
+        on_value_changed_for_scope: impl Fn(&RecomposeScope) + 'static,
+        block: &mut dyn FnMut(),
+    ) {
+        let frame_version = self.frame_version.get();
+        let has_frame_version = frame_version != 0;
+
+        let on_changed: Rc<dyn Fn(&dyn Any)> = {
+            let callback = Rc::new(on_value_changed_for_scope);
+            Rc::new(move |scope_any: &dyn Any| {
+                if let Some(typed) = scope_any.downcast_ref::<RecomposeScope>() {
+                    callback(typed);
+                }
+            })
+        };
+
+        let entry = self.get_scope_entry(scope.clone(), on_changed.clone());
+
+        let pause_count = self.pause_count.clone();
+
+        let read_observer: ReadObserver = {
+            let mut entry_mut = entry.borrow_mut();
+            entry_mut.update(scope, on_changed);
+
+            let already_observed =
+                has_frame_version && entry_mut.last_seen_version == frame_version;
+            if already_observed || entry_mut.is_stateless {
+                drop(entry_mut);
+                block();
+                return;
+            }
+
+            entry_mut.observed.clear();
+            entry_mut.last_seen_version = if has_frame_version {
+                frame_version
+            } else {
+                u64::MAX
+            };
+            entry_mut.is_stateless = false;
+
+            if let Some(observer) = entry_mut.read_observer.clone() {
+                observer
+            } else {
+                let entry_for_observer = entry.clone();
+                let pause_count = pause_count.clone();
+
+                let observer: ReadObserver = Arc::new(move |state| {
+                    if pause_count.get() > 0 {
+                        return;
+                    }
+                    let mut entry_ref = entry_for_observer.borrow_mut();
+                    let id = state.object_id().as_usize();
+                    entry_ref.observed.insert(id);
+                    entry_ref.is_stateless = false;
+                });
+
+                entry_mut.read_observer = Some(observer.clone());
+                observer
+            }
+        };
+
+        self.run_with_read_observer_erased(read_observer, block);
+
+        {
+            let mut entry_mut = entry.borrow_mut();
+            if entry_mut.observed.is_empty() {
+                entry_mut.is_stateless = true;
+            }
+        }
+    }
+
     fn with_no_observations<R>(&self, block: impl FnOnce() -> R) -> R {
         self.pause_count.set(self.pause_count.get() + 1);
         let result = block();
@@ -332,11 +420,10 @@ impl SnapshotStateObserverInner {
         entry
     }
 
-    fn run_with_read_observer<R>(
-        &self,
-        read_observer: ReadObserver,
-        block: impl FnOnce() -> R,
-    ) -> R {
+    /// Non-generic inner function that sets up and tears down the snapshot.
+    /// This avoids monomorphization bloat from the generic block parameter.
+    #[inline(never)]
+    fn run_with_read_observer_erased(&self, read_observer: ReadObserver, block: &mut dyn FnMut()) {
         // Kotlin uses Snapshot.observeInternal which creates a TransparentObserverMutableSnapshot,
         // not a readonly snapshot. This allows writes to happen during observation (composition).
         use crate::snapshot_v2::take_transparent_observer_mutable_snapshot;
@@ -344,9 +431,27 @@ impl SnapshotStateObserverInner {
         // Create a transparent mutable snapshot (not readonly!) for observation
         // This matches Kotlin's Snapshot.observeInternal behavior
         let snapshot = take_transparent_observer_mutable_snapshot(Some(read_observer), None);
-        let result = snapshot.enter(block);
+        snapshot.enter_erased(block);
         snapshot.dispose();
-        result
+    }
+
+    /// Generic wrapper that captures the result via a cell to avoid full monomorphization.
+    #[inline(always)]
+    fn run_with_read_observer<R>(
+        &self,
+        read_observer: ReadObserver,
+        block: impl FnOnce() -> R,
+    ) -> R {
+        let result: std::cell::RefCell<Option<R>> = std::cell::RefCell::new(None);
+        let block_cell: std::cell::RefCell<Option<_>> = std::cell::RefCell::new(Some(block));
+
+        self.run_with_read_observer_erased(read_observer, &mut || {
+            if let Some(b) = block_cell.borrow_mut().take() {
+                *result.borrow_mut() = Some(b());
+            }
+        });
+
+        result.into_inner().expect("block was not called")
     }
 
     fn handle_apply(&self, modified: &[Arc<dyn StateObject>]) {

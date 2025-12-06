@@ -101,6 +101,23 @@ impl TransparentObserverMutableSnapshot {
         out
     }
 
+    /// Type-erased version of enter to avoid monomorphization bloat.
+    #[inline(never)]
+    pub fn enter_erased(self: &Arc<Self>, f: &mut dyn FnMut()) {
+        let prev = current_snapshot();
+
+        if let Some(ref snapshot) = prev {
+            if snapshot.is_same_transparent(self) {
+                f();
+                return;
+            }
+        }
+
+        set_current_snapshot(Some(AnySnapshot::TransparentMutable(self.clone())));
+        f();
+        set_current_snapshot(prev);
+    }
+
     pub fn take_nested_snapshot(
         &self,
         read_observer: Option<ReadObserver>,
@@ -250,6 +267,23 @@ impl TransparentObserverSnapshot {
         let result = f();
         set_current_snapshot(previous);
         result
+    }
+
+    /// Type-erased version of enter to avoid monomorphization bloat.
+    #[inline(never)]
+    pub fn enter_erased(self: &Arc<Self>, f: &mut dyn FnMut()) {
+        let previous = current_snapshot();
+
+        if let Some(ref prev_snapshot) = previous {
+            if prev_snapshot.is_same_transparent_readonly(self) {
+                f();
+                return;
+            }
+        }
+
+        set_current_snapshot(Some(AnySnapshot::TransparentReadonly(self.clone())));
+        f();
+        set_current_snapshot(previous);
     }
 
     pub fn take_nested_snapshot(
