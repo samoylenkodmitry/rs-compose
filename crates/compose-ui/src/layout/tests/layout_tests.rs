@@ -7,6 +7,15 @@ use std::{cell::RefCell, rc::Rc};
 
 use super::core::Measurable;
 
+fn measure_layout(
+    applier: &mut MemoryApplier,
+    root: NodeId,
+    max_size: Size,
+) -> Result<LayoutMeasurements, NodeError> {
+    let measurements = super::measure_layout(applier, root, max_size)?;
+    Ok(measurements)
+}
+
 #[derive(Clone, Copy)]
 struct VerticalStackPolicy;
 
@@ -907,7 +916,7 @@ fn flex_parent_data_uses_resolved_weight() {
 
 #[test]
 fn semantics_tree_derives_roles_from_configuration() -> Result<(), NodeError> {
-    use crate::layout::{measure_layout, SemanticsRole};
+    use crate::layout::SemanticsRole;
 
     let mut applier = MemoryApplier::new();
 
@@ -945,8 +954,6 @@ fn semantics_tree_derives_roles_from_configuration() -> Result<(), NodeError> {
 
 #[test]
 fn semantics_configuration_merges_multiple_modifiers() -> Result<(), NodeError> {
-    use crate::layout::measure_layout;
-
     let mut applier = MemoryApplier::new();
 
     // Chain multiple semantics modifiers
@@ -988,7 +995,7 @@ fn semantics_only_updates_do_not_trigger_layout() -> Result<(), NodeError> {
     let node_id = applier.create(Box::new(node));
 
     // Do initial measure
-    let _ = crate::layout::measure_layout(&mut applier, node_id, Size::new(100.0, 100.0))?;
+    let _ = measure_layout(&mut applier, node_id, Size::new(100.0, 100.0))?;
 
     // Node should be clean after measure
     assert!(!applier.with_node::<LayoutNode, _>(node_id, |n| n.needs_layout())?);

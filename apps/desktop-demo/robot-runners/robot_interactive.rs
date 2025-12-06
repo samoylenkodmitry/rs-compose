@@ -88,9 +88,9 @@ fn main() {
 
             // Keep window open
             println!("--- Demo Complete ---");
-            println!("Window will stay open for 5 seconds...\n");
+            println!("Window will stay open for 2 seconds...\n");
 
-            for remaining in (1..=5).rev() {
+            for remaining in (1..=2).rev() {
                 println!("Closing in {} seconds...", remaining);
                 std::thread::sleep(Duration::from_secs(1));
             }

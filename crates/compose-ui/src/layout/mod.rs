@@ -27,6 +27,7 @@ use crate::modifier::{
     collect_semantics_from_modifier, collect_slices_from_modifier, DimensionConstraint, EdgeInsets,
     Modifier, ModifierNodeSlices, Point, Rect as GeometryRect, ResolvedModifiers, Size,
 };
+
 use crate::subcompose_layout::SubcomposeLayoutNode;
 use crate::widgets::nodes::{IntrinsicKind, LayoutNode, LayoutNodeCacheHandles};
 use compose_foundation::InvalidationKind;
@@ -76,6 +77,13 @@ impl ModifierNodeContext for LayoutNodeContext {
 }
 
 static NEXT_CACHE_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+/// Forces all layout caches to be invalidated on the next measure by incrementing the epoch.
+/// This should be called when state changes require remeasurement but don't change the composition tree.
+pub fn invalidate_all_layout_caches() {
+    NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
 
 /// Result of measuring through the modifier node chain.
 struct ModifierChainMeasurement {
@@ -407,10 +415,9 @@ pub fn measure_layout(
         }) {
             Ok(tuple) => tuple,
             Err(NodeError::TypeMismatch { .. }) => {
-                let (layout_dirty, semantics_dirty) = {
-                    let node = applier.get_mut(root)?;
-                    (node.needs_layout(), node.needs_semantics())
-                };
+                let node = applier.get_mut(root)?;
+                let layout_dirty = node.needs_layout();
+                let semantics_dirty = node.needs_semantics();
                 (layout_dirty, semantics_dirty, 0)
             }
             Err(err) => return Err(err),
@@ -427,16 +434,55 @@ pub fn measure_layout(
 
     let original_applier = std::mem::replace(applier, MemoryApplier::new());
     let applier_host = Rc::new(ConcreteApplierHost::new(original_applier));
-    let mut builder = LayoutBuilder::new_with_epoch(Rc::clone(&applier_host), epoch);
-    let measured = builder.measure_node(root, normalize_constraints(constraints))?;
+    // Take ownership of slots data to pass to LayoutBuilder
+    // We access it through the RefCell<MemoryApplier> inside the ConcreteApplierHost
+    let slots_data = std::mem::take(applier_host.borrow_typed().slots());
+    let mut builder = LayoutBuilder::new_with_epoch(Rc::clone(&applier_host), epoch, slots_data);
+    let measured = match builder.measure_node(root, normalize_constraints(constraints)) {
+        Ok(m) => m,
+        Err(e) => {
+            // Restore slots even on error
+            {
+                let mut applier_ref = applier_host.borrow_typed();
+                *applier_ref.slots() = builder.retrieve_slots();
+            }
+            return Err(e);
+        }
+    };
     let metadata = {
         let mut applier_ref = applier_host.borrow_typed();
-        collect_runtime_metadata(&mut applier_ref, &measured)?
+        match collect_runtime_metadata(&mut applier_ref, &measured) {
+            Ok(m) => m,
+            Err(e) => {
+                drop(applier_ref);
+                {
+                    let mut applier_ref = applier_host.borrow_typed();
+                    *applier_ref.slots() = builder.retrieve_slots();
+                }
+                return Err(e);
+            }
+        }
     };
     let semantics_snapshot = {
         let mut applier_ref = applier_host.borrow_typed();
-        collect_semantics_snapshot(&mut applier_ref, &measured)?
+        match collect_semantics_snapshot(&mut applier_ref, &measured) {
+            Ok(s) => s,
+            Err(e) => {
+                drop(applier_ref);
+                {
+                    let mut applier_ref = applier_host.borrow_typed();
+                    *applier_ref.slots() = builder.retrieve_slots();
+                }
+                return Err(e);
+            }
+        }
     };
+    // Restore slots data from builder to applier
+    {
+        let mut applier_ref = applier_host.borrow_typed();
+        *applier_ref.slots() = builder.retrieve_slots();
+    }
+    
     drop(builder);
     let applier_inner = Rc::try_unwrap(applier_host)
         .unwrap_or_else(|_| panic!("layout builder should be sole owner of applier host"))
@@ -445,6 +491,7 @@ pub fn measure_layout(
     let semantics_root = build_semantics_node(&measured, &metadata, &semantics_snapshot);
     let semantics = SemanticsTree::new(semantics_root);
     let layout_tree = build_layout_tree_from_metadata(&measured, &metadata);
+    
     Ok(LayoutMeasurements::new(measured, semantics, layout_tree))
 }
 
@@ -453,12 +500,17 @@ struct LayoutBuilder {
 }
 
 impl LayoutBuilder {
-    fn new_with_epoch(applier: Rc<ConcreteApplierHost<MemoryApplier>>, epoch: u64) -> Self {
+    fn new_with_epoch(applier: Rc<ConcreteApplierHost<MemoryApplier>>, epoch: u64, slots: SlotBackend) -> Self {
         Self {
             state: Rc::new(RefCell::new(LayoutBuilderState::new_with_epoch(
-                applier, epoch,
+                applier, epoch, slots,
             ))),
         }
+    }
+
+    fn retrieve_slots(&mut self) -> SlotBackend {
+        let mut state = self.state.borrow_mut();
+        std::mem::take(&mut state.slots)
     }
 
     fn measure_node(
@@ -484,12 +536,17 @@ struct LayoutBuilderState {
 }
 
 impl LayoutBuilderState {
-    fn new_with_epoch(applier: Rc<ConcreteApplierHost<MemoryApplier>>, epoch: u64) -> Self {
+    fn new_with_epoch(
+        applier: Rc<ConcreteApplierHost<MemoryApplier>>,
+        epoch: u64,
+        slots: SlotBackend,
+    ) -> Self {
         let runtime_handle = applier.borrow_typed().runtime_handle();
+        
         Self {
             applier,
             runtime_handle,
-            slots: SlotBackend::default(),
+            slots,
             cache_epoch: epoch,
             tmp_measurables: Vec::new(),
             tmp_records: Vec::new(),
@@ -714,7 +771,6 @@ impl LayoutBuilderState {
         measure_policy: &Rc<dyn MeasurePolicy>,
         constraints: Constraints,
     ) -> ModifierChainMeasurement {
-        use crate::modifier_nodes::{OffsetNode, PaddingNode};
         use compose_foundation::NodeCapabilities;
 
         // Collect layout node information from the modifier chain
@@ -724,7 +780,6 @@ impl LayoutBuilderState {
             usize,
             Rc<RefCell<Box<dyn compose_foundation::ModifierNode>>>,
         )> = Vec::new();
-        let mut padding = EdgeInsets::default();
         let mut offset = Point::default();
 
         {
@@ -745,15 +800,16 @@ impl LayoutBuilderState {
                         if let Some(index) = node_ref.entry_index() {
                             // Get the Rc clone for this node
                             if let Some(node_rc) = chain_handle.chain().get_node_rc(index) {
-                                layout_node_data.push((index, node_rc));
+                                layout_node_data.push((index, Rc::clone(&node_rc)));
                             }
 
-                            // Calculate padding and offset for backward compat
+                            // Extract offset from OffsetNode for the node's own position
+                            // The coordinator chain handles placement_offset (for children),
+                            // but the node's offset affects where IT is positioned in the parent
                             node_ref.with_node(|node| {
-                                let any = node.as_any();
-                                if let Some(padding_node) = any.downcast_ref::<PaddingNode>() {
-                                    padding += padding_node.padding();
-                                } else if let Some(offset_node) = any.downcast_ref::<OffsetNode>() {
+                                if let Some(offset_node) =
+                                    node.as_any().downcast_ref::<crate::modifier_nodes::OffsetNode>()
+                                {
                                     let delta = offset_node.offset();
                                     offset.x += delta.x;
                                     offset.y += delta.y;
@@ -787,7 +843,7 @@ impl LayoutBuilderState {
 
         // Wrap each layout modifier node in a coordinator, building the chain
         let mut current_coordinator = inner_coordinator;
-        for (_node_index, node_rc) in layout_node_data {
+        for (_, node_rc) in layout_node_data {
             current_coordinator = Box::new(coordinator::LayoutModifierCoordinator::new(
                 node_rc,
                 current_coordinator,
@@ -801,6 +857,22 @@ impl LayoutBuilderState {
             width: placeable.width(),
             height: placeable.height(),
         };
+
+        // Get accumulated content offset from coordinator chain
+        // This includes offsets from ScrollNode, OffsetNode, PaddingNode, etc.
+        let all_placement_offset = current_coordinator.placement_offset();
+
+        // For padding (which becomes content_offset in LayoutBox), we need to SUBTRACT
+        // the OffsetNode offset since that affects the node's position, not where
+        // content is placed within the node. Padding and scroll offset should still be included.
+        let padding = EdgeInsets {
+            left: all_placement_offset.x - offset.x,
+            top: all_placement_offset.y - offset.y,
+            right: 0.0,
+            bottom: 0.0,
+        };
+
+        // offset was already extracted from OffsetNode above
 
         let placements = policy_result
             .borrow_mut()
@@ -1060,6 +1132,7 @@ impl LayoutNodeSnapshot {
     }
 }
 
+// Helper types for accessing subsets of LayoutBuilderState
 struct VecPools {
     state: Rc<RefCell<LayoutBuilderState>>,
     measurables: Option<Vec<Box<dyn Measurable>>>,
@@ -1178,7 +1251,12 @@ pub(crate) struct MeasuredNode {
 }
 
 impl MeasuredNode {
-    fn new(node_id: NodeId, size: Size, offset: Point, children: Vec<MeasuredChild>) -> Self {
+    fn new(
+        node_id: NodeId,
+        size: Size,
+        offset: Point,
+        children: Vec<MeasuredChild>,
+    ) -> Self {
         Self {
             node_id,
             size,
@@ -1464,7 +1542,7 @@ fn measure_node_with_host(
         Some(handle) => Some(handle),
         None => applier.borrow_typed().runtime_handle(),
     };
-    let mut builder = LayoutBuilder::new_with_epoch(applier, epoch);
+    let mut builder = LayoutBuilder::new_with_epoch(applier, epoch, SlotBackend::default());
     builder.set_runtime_handle(runtime_handle);
     builder.measure_node(node_id, constraints)
 }
@@ -1692,6 +1770,7 @@ fn build_layout_tree_from_metadata(
         origin: Point,
         metadata: &HashMap<NodeId, RuntimeNodeMetadata>,
     ) -> LayoutBox {
+        // Include the node's own offset (from OffsetNode) in its position
         let top_left = Point {
             x: origin.x + node.offset.x,
             y: origin.y + node.offset.y,

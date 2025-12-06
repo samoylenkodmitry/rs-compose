@@ -70,3 +70,33 @@ required-features = ["robot-app"]
 name = "robot_demo"
 path = "robot-runners/robot_demo.rs"
 required-features = ["robot-app"]
+
+[[example]]
+name = "robot_scroll_drag"
+path = "robot-runners/robot_scroll_drag.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_tabs_scroll"
+path = "robot-runners/robot_tabs_scroll.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_offset_test"
+path = "robot-runners/robot_offset_test.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_click_drag"
+path = "robot-runners/robot_click_drag.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_async_tab_bug"
+path = "robot-runners/robot_async_tab_bug.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_tab_scroll"
+path = "robot-runners/robot_tab_scroll.rs"
+required-features = ["robot-app"]

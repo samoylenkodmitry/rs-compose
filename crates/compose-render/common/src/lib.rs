@@ -1,6 +1,6 @@
 //! Common rendering contracts shared between renderer backends.
 
-use compose_foundation::nodes::input::PointerEventKind;
+use compose_foundation::nodes::input::PointerEvent;
 use compose_ui::LayoutTree;
 use compose_ui_graphics::Size;
 
@@ -8,7 +8,7 @@ pub use compose_ui_graphics::Brush;
 
 /// Trait implemented by hit-test targets stored inside a [`RenderScene`].
 pub trait HitTestTarget {
-    fn dispatch(&self, kind: PointerEventKind, x: f32, y: f32);
+    fn dispatch(&self, event: PointerEvent);
 }
 
 /// Trait describing the minimal surface area required by the application
@@ -17,7 +17,7 @@ pub trait RenderScene {
     type HitTarget: HitTestTarget;
 
     fn clear(&mut self);
-    fn hit_test(&self, x: f32, y: f32) -> Option<Self::HitTarget>;
+    fn hit_test(&self, x: f32, y: f32) -> Vec<Self::HitTarget>;
 }
 
 /// Abstraction implemented by concrete renderer backends.

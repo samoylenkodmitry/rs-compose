@@ -2,10 +2,14 @@
 
 #![allow(non_snake_case)]
 
+pub mod gesture_constants;
 pub mod measurement_proxy;
 pub mod modifier;
 pub mod modifier_helpers;
 pub mod nodes;
+
+// Re-export gesture constants at crate root for convenience
+pub use gesture_constants::DRAG_THRESHOLD;
 
 // Re-export commonly used items
 pub use measurement_proxy::*;

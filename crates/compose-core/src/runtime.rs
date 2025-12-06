@@ -255,11 +255,13 @@ impl RuntimeInner {
 
     fn enqueue_update(&self, command: Command) {
         self.node_updates.borrow_mut().push(command);
+        self.schedule(); // Ensure frame is scheduled to process the command
     }
 
     fn take_updates(&self) -> Vec<Command> {
         // FUTURE(no_std): return stack-allocated smallvec.
-        self.node_updates.borrow_mut().drain(..).collect()
+        let updates = self.node_updates.borrow_mut().drain(..).collect::<Vec<_>>();
+        updates
     }
 
     fn has_updates(&self) -> bool {

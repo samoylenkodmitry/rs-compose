@@ -6,6 +6,7 @@ use compose_foundation::InvalidationKind;
 use compose_foundation::{
     BasicModifierNodeContext, ModifierInvalidation, ModifierNodeChain, NodeCapabilities,
 };
+use compose_core::NodeId;
 
 use super::{
     local::ModifierLocalManager, DimensionConstraint, EdgeInsets, LayoutProperties, Modifier,
@@ -106,6 +107,24 @@ impl ModifierChainHandle {
     /// Enables or disables per-handle modifier debug logging.
     pub fn set_debug_logging(&mut self, enabled: bool) {
         self.debug_logging = enabled;
+    }
+
+    pub fn set_node_id(&mut self, id: Option<NodeId>) {
+        self.context.borrow_mut().set_node_id(id);
+        
+        // When a valid ID is provided, force a reset of the modifier chain's lifecycle.
+        // This ensures that nodes can access the new ID via the context during `on_attach`.
+        if id.is_some() {
+            // We need to use chain_mut() but we can't borrow self.context at the same time
+            // So we scope the context borrow
+            {
+                let _ = self.context.borrow(); // sanity check
+            }
+            
+            self.chain.detach_nodes();
+            self.chain.repair_chain();
+            self.chain.attach_nodes(&mut *self.context.borrow_mut());
+        }
     }
 
     /// Returns the modifier node chain for read-only traversal.

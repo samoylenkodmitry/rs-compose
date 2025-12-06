@@ -1,4 +1,4 @@
-use compose_foundation::{PointerButtons, PointerEvent, PointerEventKind, PointerPhase};
+use compose_foundation::{PointerEvent, PointerEventKind};
 use compose_ui_graphics::Point;
 
 pub struct WebPlatform {
@@ -30,19 +30,7 @@ impl WebPlatform {
         y: f64,
     ) -> PointerEvent {
         let logical = self.pointer_position(x, y);
-        PointerEvent {
-            id: 0,
-            kind,
-            phase: match kind {
-                PointerEventKind::Down => PointerPhase::Start,
-                PointerEventKind::Move => PointerPhase::Move,
-                PointerEventKind::Up => PointerPhase::End,
-                PointerEventKind::Cancel => PointerPhase::Cancel,
-            },
-            position: logical,
-            global_position: logical,
-            buttons: PointerButtons::NONE,
-        }
+        PointerEvent::new(kind, logical, logical)
     }
 }
 

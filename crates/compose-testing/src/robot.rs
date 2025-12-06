@@ -24,7 +24,7 @@
 
 use compose_app_shell::AppShell;
 use compose_core::{location_key, Key};
-use compose_foundation::PointerEventKind;
+use compose_foundation::PointerEvent;
 use compose_render_common::{HitTestTarget, RenderScene, Renderer};
 use compose_ui::LayoutTree;
 use compose_ui_graphics::{Point, Rect, Size};
@@ -141,6 +141,25 @@ where
         self.wait_for_idle();
     }
 
+    /// Move the mouse cursor to the given coordinates.
+    pub fn mouse_move(&mut self, x: f32, y: f32) {
+        self.shell.set_cursor(x, y);
+        self.shell.update();
+    }
+
+    /// Press the mouse button.
+    pub fn mouse_down(&mut self) {
+        self.shell.pointer_pressed();
+        self.shell.update();
+    }
+
+    /// Release the mouse button.
+    pub fn mouse_up(&mut self) {
+        self.shell.pointer_released();
+        self.shell.update();
+    }
+
+
     /// Find an element by text content.
     ///
     /// Returns a finder that can be used to interact with or assert on the element.
@@ -215,9 +234,7 @@ where
 
     /// Get the layout tree if available.
     fn get_layout_tree(&self) -> Option<&LayoutTree> {
-        // We need to access the layout tree through the renderer
-        // This is a bit indirect but follows the existing architecture
-        None // TODO: Expose layout tree from AppShell
+        self.shell.layout_tree()
     }
 
     /// Get the render scene for hit testing and queries.
@@ -259,7 +276,7 @@ where
                 all_text.iter().any(|t| t.contains(text))
             }
             FinderQuery::Position(x, y) => {
-                self.robot.get_scene().hit_test(*x, *y).is_some()
+                !self.robot.get_scene().hit_test(*x, *y).is_empty()
             }
             FinderQuery::Clickable => {
                 // Check if there are any clickable elements
@@ -364,21 +381,49 @@ where
 }
 
 /// Extract all text content from a layout tree.
-fn extract_text_from_layout(_layout: &LayoutTree) -> Vec<String> {
-    // Traverse the layout tree and collect text
-    // This is a placeholder - actual implementation would traverse the tree
-    // and extract text from TextLayoutNode instances
+fn extract_text_from_layout(layout: &LayoutTree) -> Vec<String> {
+    fn collect_text(node: &compose_ui::LayoutBox, results: &mut Vec<String>) {
+        if let Some(text) = node.node_data.modifier_slices().text_content() {
+            results.push(text.to_string());
+        }
+        for child in &node.children {
+            collect_text(child, results);
+        }
+    }
 
-    Vec::new()
+    let mut results = Vec::new();
+    collect_text(layout.root(), &mut results);
+    results
 }
 
 /// Extract all rectangles with optional text from a layout tree.
-fn extract_rects_from_layout(_layout: &LayoutTree) -> Vec<(Rect, Option<String>)> {
-    // Traverse the layout tree and collect bounds
-    // This is a placeholder - actual implementation would traverse the tree
-    // and extract bounds from all LayoutNode instances
+fn extract_rects_from_layout(layout: &LayoutTree) -> Vec<(Rect, Option<String>)> {
+    fn collect_rects(
+        node: &compose_ui::LayoutBox,
+        results: &mut Vec<(Rect, Option<String>)>,
+    ) {
+        // Get the text content if present in modifier slices
+        let text = node.node_data.modifier_slices().text_content().map(|s| s.to_string());
 
-    Vec::new()
+        // Get the rect, including content_offset for proper positioning
+        let rect = Rect {
+            x: node.rect.x,
+            y: node.rect.y,
+            width: node.rect.width,
+            height: node.rect.height,
+        };
+
+        results.push((rect, text));
+
+        // Recurse into children
+        for child in &node.children {
+            collect_rects(child, results);
+        }
+    }
+
+    let mut results = Vec::new();
+    collect_rects(layout.root(), &mut results);
+    results
 }
 
 /// A simple test renderer for robot tests.
@@ -420,8 +465,8 @@ impl RenderScene for TestScene {
 
     fn clear(&mut self) {}
 
-    fn hit_test(&self, _x: f32, _y: f32) -> Option<Self::HitTarget> {
-        Some(TestHitTarget)
+    fn hit_test(&self, _x: f32, _y: f32) -> Vec<Self::HitTarget> {
+        vec![TestHitTarget]
     }
 }
 
@@ -430,7 +475,7 @@ impl RenderScene for TestScene {
 pub struct TestHitTarget;
 
 impl HitTestTarget for TestHitTarget {
-    fn dispatch(&self, _kind: PointerEventKind, _x: f32, _y: f32) {}
+    fn dispatch(&self, _event: PointerEvent) {}
 }
 
 /// Create a headless robot test rule for testing without a real renderer.

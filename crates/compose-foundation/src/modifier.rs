@@ -20,7 +20,9 @@ pub use compose_ui_graphics::DrawScope;
 pub use compose_ui_graphics::Size;
 pub use compose_ui_layout::{Constraints, Measurable};
 
+
 use crate::nodes::input::types::PointerEvent;
+// use compose_core::NodeId;
 
 /// Identifies which part of the rendering pipeline should be invalidated
 /// after a modifier node changes state.
@@ -42,6 +44,12 @@ pub trait ModifierNodeContext {
     /// regular composition pass.
     fn request_update(&mut self) {}
 
+    /// Returns the ID of the layout node this modifier is attached to, if known.
+    /// This is used by modifiers that need to register callbacks for invalidation (e.g. Scroll).
+    fn node_id(&self) -> Option<compose_core::NodeId> {
+        None
+    }
+
     /// Signals that a node with `capabilities` is about to interact with this context.
     fn push_active_capabilities(&mut self, _capabilities: NodeCapabilities) {}
 
@@ -62,6 +70,7 @@ pub struct BasicModifierNodeContext {
     invalidations: Vec<ModifierInvalidation>,
     update_requested: bool,
     active_capabilities: Vec<NodeCapabilities>,
+    node_id: Option<compose_core::NodeId>,
 }
 
 impl BasicModifierNodeContext {
@@ -96,6 +105,11 @@ impl BasicModifierNodeContext {
     /// Returns whether an update was requested and clears the flag.
     pub fn take_update_requested(&mut self) -> bool {
         std::mem::take(&mut self.update_requested)
+    }
+
+    /// Sets the node ID associated with this context.
+    pub fn set_node_id(&mut self, id: Option<compose_core::NodeId>) {
+        self.node_id = id;
     }
 
     fn push_invalidation(&mut self, kind: InvalidationKind) {
@@ -137,6 +151,10 @@ impl ModifierNodeContext for BasicModifierNodeContext {
 
     fn pop_active_capabilities(&mut self) {
         self.active_capabilities.pop();
+    }
+
+    fn node_id(&self) -> Option<compose_core::NodeId> {
+        self.node_id
     }
 }
 
@@ -1209,6 +1227,26 @@ impl ModifierNodeChain {
         };
         chain.sync_chain_links();
         chain
+    }
+
+    /// Detaches all nodes in the chain.
+    pub fn detach_nodes(&mut self) {
+        for entry in &self.entries {
+            detach_node_tree(&mut **entry.node.borrow_mut());
+        }
+    }
+
+    /// Attaches all nodes in the chain.
+    pub fn attach_nodes(&mut self, context: &mut dyn ModifierNodeContext) {
+        for entry in &self.entries {
+            attach_node_tree(&mut **entry.node.borrow_mut(), context);
+        }
+    }
+
+    /// Rebuilds the internal chain links (parent/child relationships).
+    /// This should be called if nodes have been detached but are intended to be reused.
+    pub fn repair_chain(&mut self) {
+        self.sync_chain_links();
     }
 
     /// Reconcile the chain against the provided elements, attaching newly

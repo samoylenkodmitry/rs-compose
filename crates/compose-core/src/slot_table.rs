@@ -142,6 +142,18 @@ impl SlotTable {
         }
     }
 
+    pub fn current_group(&self) -> usize {
+        self.group_stack.last().map(|f| f.start).unwrap_or(0)
+    }
+
+    pub fn group_key(&self, index: usize) -> Option<Key> {
+        match self.slots.get(index) {
+            Some(Slot::Group { key, .. }) => Some(*key),
+            Some(Slot::Gap { group_key, .. }) => *group_key,
+            _ => None,
+        }
+    }
+
     fn ensure_capacity(&mut self) {
         if self.slots.is_empty() {
             self.slots.reserve(Self::INITIAL_CAP);

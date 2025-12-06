@@ -86,6 +86,135 @@ pub fn assert_count<T>(items: &[T], expected: usize, msg: &str) {
     );
 }
 
+// ============================================================================
+// Semantic Tree Helpers
+// ============================================================================
+
+/// Bounds of a UI element (x, y, width, height)
+#[derive(Clone, Copy, Debug)]
+pub struct Bounds {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Bounds {
+    /// Get the center point of these bounds
+    pub fn center(&self) -> (f32, f32) {
+        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+    }
+}
+
+/// Generic semantic element trait for tree traversal
+/// This allows the helpers to work with both compose_app::SemanticElement and similar types
+pub trait SemanticElementLike {
+    fn text(&self) -> Option<&str>;
+    fn role(&self) -> &str;
+    fn clickable(&self) -> bool;
+    fn bounds(&self) -> Bounds;
+    fn children(&self) -> &[Self] where Self: Sized;
+}
+
+/// Find an element by text content in the semantic tree.
+/// Returns the center coordinates (x, y) if found.
+pub fn find_text_center<E: SemanticElementLike>(elements: &[E], text: &str) -> Option<(f32, f32)> {
+    fn search<E: SemanticElementLike>(elem: &E, text: &str) -> Option<(f32, f32)> {
+        if let Some(t) = elem.text() {
+            if t.contains(text) {
+                return Some(elem.bounds().center());
+            }
+        }
+        for child in elem.children() {
+            if let Some(pos) = search(child, text) {
+                return Some(pos);
+            }
+        }
+        None
+    }
+    
+    for elem in elements {
+        if let Some(pos) = search(elem, text) {
+            return Some(pos);
+        }
+    }
+    None
+}
+
+/// Find an element by text content and return full bounds.
+pub fn find_text_bounds<E: SemanticElementLike>(elements: &[E], text: &str) -> Option<Bounds> {
+    fn search<E: SemanticElementLike>(elem: &E, text: &str) -> Option<Bounds> {
+        if let Some(t) = elem.text() {
+            if t.contains(text) {
+                return Some(elem.bounds());
+            }
+        }
+        for child in elem.children() {
+            if let Some(bounds) = search(child, text) {
+                return Some(bounds);
+            }
+        }
+        None
+    }
+    
+    for elem in elements {
+        if let Some(bounds) = search(elem, text) {
+            return Some(bounds);
+        }
+    }
+    None
+}
+
+/// Find a clickable element (button) containing the specified text.
+/// Returns the bounds (x, y, width, height) if found.
+pub fn find_button_bounds<E: SemanticElementLike>(elements: &[E], text: &str) -> Option<Bounds> {
+    fn has_text<E: SemanticElementLike>(elem: &E, text: &str) -> bool {
+        if let Some(t) = elem.text() {
+            if t.contains(text) {
+                return true;
+            }
+        }
+        elem.children().iter().any(|c| has_text(c, text))
+    }
+    
+    fn search<E: SemanticElementLike>(elem: &E, text: &str) -> Option<Bounds> {
+        if elem.clickable() && has_text(elem, text) {
+            return Some(elem.bounds());
+        }
+        for child in elem.children() {
+            if let Some(bounds) = search(child, text) {
+                return Some(bounds);
+            }
+        }
+        None
+    }
+    
+    for elem in elements {
+        if let Some(bounds) = search(elem, text) {
+            return Some(bounds);
+        }
+    }
+    None
+}
+
+/// Find all elements matching a role (e.g., "Layout", "Text").
+pub fn find_elements_by_role<E: SemanticElementLike>(elements: &[E], role: &str) -> Vec<Bounds> {
+    fn search<E: SemanticElementLike>(elem: &E, role: &str, results: &mut Vec<Bounds>) {
+        if elem.role() == role {
+            results.push(elem.bounds());
+        }
+        for child in elem.children() {
+            search(child, role, results);
+        }
+    }
+    
+    let mut results = Vec::new();
+    for elem in elements {
+        search(elem, role, &mut results);
+    }
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,4 +274,13 @@ mod tests {
         let items = vec![1, 2, 3];
         assert_count(&items, 3, "correct count");
     }
+    
+    #[test]
+    fn test_bounds_center() {
+        let bounds = Bounds { x: 10.0, y: 20.0, width: 100.0, height: 50.0 };
+        let (cx, cy) = bounds.center();
+        assert_eq!(cx, 60.0);
+        assert_eq!(cy, 45.0);
+    }
 }
+

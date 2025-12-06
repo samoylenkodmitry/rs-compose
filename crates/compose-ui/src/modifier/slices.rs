@@ -7,7 +7,7 @@ use compose_ui_graphics::GraphicsLayer;
 use crate::draw::DrawCommand;
 use crate::modifier::Modifier;
 use crate::modifier_nodes::{
-    BackgroundNode, ClickableNode, ClipToBoundsNode, CornerShapeNode, DrawCommandNode,
+    BackgroundNode, ClipToBoundsNode, CornerShapeNode, DrawCommandNode,
     GraphicsLayerNode,
 };
 use crate::text_modifier_node::TextModifierNode;
@@ -94,14 +94,10 @@ pub fn collect_modifier_slices(chain: &ModifierNodeChain) -> ModifierNodeSlices 
     let mut slices = ModifierNodeSlices::default();
 
     chain.for_each_node_with_capability(NodeCapabilities::POINTER_INPUT, |_ref, node| {
-        let any = node.as_any();
+        let _any = node.as_any();
 
-        // Collect click handlers from ClickableNode
-        if let Some(clickable) = any.downcast_ref::<ClickableNode>() {
-            slices.click_handlers.push(clickable.handler());
-            // Skip adding to pointer_inputs to avoid duplicate invocation
-            return;
-        }
+        // ClickableNode is now handled as a standard PointerInputNode
+        // to support drag cancellation and proper click semantics (Up vs Down)
 
         // Collect general pointer input handlers (non-clickable)
         if let Some(handler) = node

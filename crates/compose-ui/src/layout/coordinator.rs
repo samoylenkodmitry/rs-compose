@@ -15,9 +15,16 @@ use crate::modifier::{Point, Size};
 
 /// Core coordinator trait that all coordinators implement.
 ///
-/// Coordinators are chained together, with each one wrapping the next inner coordinator.
-/// This forms a measurement and placement chain that mirrors the modifier chain.
-pub trait NodeCoordinator: Measurable {}
+/// Coordinators are chained together, with each one wrapping the/// Marker trait for coordinator nodes in the modifier chain.
+/// Coordinators wrap either other coordinators or the inner coordinator.
+pub trait NodeCoordinator: Measurable {
+    /// Get the accumulated placement offset for this coordinator and all wrapped coordinators.
+    /// This is used to apply dynamic offsets (like scroll offsets) to children during layout.
+    fn placement_offset(&self) -> Point {
+        Point::default() // Default for InnerCoordinator (no offset)
+    }
+}
+
 
 /// Coordinator that wraps a single LayoutModifierNode from the reconciled chain.
 ///
@@ -50,26 +57,36 @@ impl<'a> LayoutModifierCoordinator<'a> {
         Self {
             node,
             wrapped,
-            measured_size: Cell::new(Size::ZERO),
+            measured_size: Cell::new(Size::default()),
             placement_offset: Cell::new(Point::default()),
             context,
         }
     }
 }
 
-impl<'a> NodeCoordinator for LayoutModifierCoordinator<'a> {}
+impl<'a> NodeCoordinator for LayoutModifierCoordinator<'a> {
+    /// Get the accumulated placement offset, INCLUDING offsets from wrapped coordinators.
+    /// This ensures scroll offsets from inner coordinators bubble up to the outer layout.
+    fn placement_offset(&self) -> Point {
+        let mut total = self.placement_offset.get();
+        // Add the wrapped coordinator's offset (recursive accumulation)
+        let wrapped_offset = self.wrapped.placement_offset();
+        total.x += wrapped_offset.x;
+        total.y += wrapped_offset.y;
+        total
+    }
+}
+
 
 impl<'a> Measurable for LayoutModifierCoordinator<'a> {
+    /// Measure through this coordinator
     fn measure(&self, constraints: Constraints) -> Box<dyn Placeable> {
-        // Call the node's measure method directly using the Rc<RefCell<>> we hold.
-        // This achieves true 1:1 parity with Jetpack Compose where coordinators
-        // hold direct references to nodes and call them without proxies.
+        let node_borrow = self.node.borrow();
         let result = {
-            let node_borrow = self.node.borrow();
             if let Some(layout_node) = node_borrow.as_layout_node() {
                 match self.context.try_borrow_mut() {
-                    Ok(mut ctx) => {
-                        layout_node.measure(&mut *ctx, self.wrapped.as_ref(), constraints)
+                    Ok(mut context) => {
+                        layout_node.measure(&mut *context, self.wrapped.as_ref(), constraints)
                     }
                     Err(_) => {
                         // Context already borrowed - use a temporary context
