@@ -28,21 +28,15 @@ android_logger = { version = "0.14", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
+# Minimal web-sys features - only include what's actually used
 web-sys = { version = "0.3", optional = true, features = [
     "Window",
     "Document",
     "Element",
     "HtmlElement",
     "HtmlCanvasElement",
-    "CanvasRenderingContext2d",
-    "Performance",
     "MouseEvent",
-    "Touch",
-    "TouchList",
-    "TouchEvent",
     "PointerEvent",
-    "WheelEvent",
-    "KeyboardEvent",
     "CssStyleDeclaration",
 ] }
 log = "0.4"

@@ -64,6 +64,15 @@ impl NestedReadonlySnapshot {
         result
     }
 
+    /// Type-erased version of enter to avoid monomorphization bloat.
+    #[inline(never)]
+    pub fn enter_erased(self: &Arc<Self>, f: &mut dyn FnMut()) {
+        let previous = current_snapshot();
+        set_current_snapshot(Some(AnySnapshot::NestedReadonly(self.clone())));
+        f();
+        set_current_snapshot(previous);
+    }
+
     pub fn take_nested_snapshot(
         &self,
         read_observer: Option<ReadObserver>,
@@ -183,6 +192,15 @@ impl NestedMutableSnapshot {
         let result = f();
         set_current_snapshot(previous);
         result
+    }
+
+    /// Type-erased version of enter to avoid monomorphization bloat.
+    #[inline(never)]
+    pub fn enter_erased(self: &Arc<Self>, f: &mut dyn FnMut()) {
+        let previous = current_snapshot();
+        set_current_snapshot(Some(AnySnapshot::NestedMutable(self.clone())));
+        f();
+        set_current_snapshot(previous);
     }
 
     pub fn take_nested_snapshot(

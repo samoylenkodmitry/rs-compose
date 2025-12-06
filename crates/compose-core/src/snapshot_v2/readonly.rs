@@ -57,6 +57,15 @@ impl ReadonlySnapshot {
         result
     }
 
+    /// Type-erased version of enter to avoid monomorphization bloat.
+    #[inline(never)]
+    pub fn enter_erased(&self, f: &mut dyn FnMut()) {
+        let previous = current_snapshot();
+        set_current_snapshot(Some(AnySnapshot::Readonly(self.root_readonly())));
+        f();
+        set_current_snapshot(previous);
+    }
+
     pub fn take_nested_snapshot(&self, read_observer: Option<ReadObserver>) -> Arc<Self> {
         let merged_observer = merge_read_observers(read_observer, self.state.read_observer.clone());
         ReadonlySnapshot::new(

@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# Enable wasm-opt with size optimization (can reduce WASM size by 20-40%)
+wasm-opt = ["-Oz", "--enable-simd"]
 
 # Support both binary (desktop) and cdylib (Android)
 # IMPORTANT: The cdylib name (libdesktop_app.so) must match the android.app.lib_name
@@ -28,6 +29,8 @@ android = ["compose-app/android"]
 web = ["compose-app/web", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:wasm-logger"]
 # Enable real app robot testing
 robot-app = ["compose-testing/robot-app"]
+# Optional HTTP client for web fetch demo
+http-client = ["dep:reqwest"]
 
 [dependencies]
 compose-app = { path = "../../crates/compose-app", default-features = false }
@@ -46,7 +49,8 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.10"
 anyhow = "1.0"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# Optional: only needed for web_fetch demo example
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 
 # Android-specific dependencies (only when building for Android)
 [target.'cfg(target_os = "android")'.dependencies]

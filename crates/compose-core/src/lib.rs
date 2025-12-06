@@ -1296,6 +1296,15 @@ impl Composer {
         observer.observe_reads(scope_clone, move |scope_ref| scope_ref.invalidate(), block)
     }
 
+    /// Type-erased version of observe_scope to avoid monomorphization bloat.
+    /// Uses dynamic dispatch for the callback.
+    #[inline(never)]
+    fn observe_scope_erased(&self, scope: &RecomposeScope, block: &mut dyn FnMut()) {
+        let observer = self.observer();
+        let scope_clone = scope.clone();
+        observer.observe_reads_erased(scope_clone, move |scope_ref| scope_ref.invalidate(), block);
+    }
+
     fn slots(&self) -> Ref<'_, SlotBackend> {
         self.core.slots.borrow()
     }
@@ -1359,7 +1368,10 @@ impl Composer {
         result
     }
 
-    pub fn with_group<R>(&self, key: Key, f: impl FnOnce(&Composer) -> R) -> R {
+    /// Non-generic setup for with_group - prevents monomorphization bloat.
+    /// This function contains all the setup logic that doesn't depend on the closure type.
+    #[inline(never)]
+    fn with_group_enter(&self, key: Key) -> RecomposeScope {
         let (group, scope_ref, restored_from_gap) = {
             let mut slots = self.slots_mut();
             let StartGroup {
@@ -1406,8 +1418,13 @@ impl Composer {
             scope_ref.snapshot_locals(&locals);
         }
 
-        let result = self.observe_scope(&scope_ref, || f(self));
+        scope_ref
+    }
 
+    /// Non-generic teardown for with_group - prevents monomorphization bloat.
+    /// This function contains all the cleanup logic that doesn't depend on the closure type.
+    #[inline(never)]
+    fn with_group_exit(&self, scope_ref: &RecomposeScope) {
         let trimmed = {
             let mut slots = self.slots_mut();
             slots.finalize_current_group()
@@ -1422,7 +1439,30 @@ impl Composer {
         }
         scope_ref.mark_recomposed();
         self.slots_mut().end_group();
-        result
+    }
+
+    /// Executes a composable group with the given key.
+    ///
+    /// The implementation uses type erasure to minimize monomorphization bloat.
+    /// The non-generic `observe_scope_erased` handles the heavy lifting, while
+    /// only the result capture uses generics.
+    #[inline(always)]
+    pub fn with_group<R>(&self, key: Key, f: impl FnOnce(&Composer) -> R) -> R {
+        use std::cell::RefCell;
+        let scope_ref = self.with_group_enter(key);
+
+        // Use cells to capture result without full monomorphization of observe_scope
+        let result: RefCell<Option<R>> = RefCell::new(None);
+        let f_cell: RefCell<Option<_>> = RefCell::new(Some(f));
+
+        self.observe_scope_erased(&scope_ref, &mut || {
+            if let Some(func) = f_cell.borrow_mut().take() {
+                *result.borrow_mut() = Some(func(self));
+            }
+        });
+
+        self.with_group_exit(&scope_ref);
+        result.into_inner().expect("composable block was not called")
     }
 
     pub fn compose_with_reuse<R>(
