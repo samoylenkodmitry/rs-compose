@@ -161,26 +161,44 @@ fn measure_text_impl(text: &str) -> TextMetrics {
     let scale = Scale::uniform(TEXT_SIZE);
     let font = &*FONT;
     let v_metrics = font.v_metrics(scale);
-    let origin = point(0.0, v_metrics.ascent);
-    let mut glyph_count = 0_u32;
-    let mut min_x: f32 = f32::INFINITY;
-    let mut max_x: f32 = 0.0;
-    for glyph in font.layout(text, scale, origin) {
-        glyph_count += 1;
-        if let Some(bb) = glyph.pixel_bounding_box() {
-            min_x = min_x.min(bb.min.x as f32);
-            max_x = max_x.max(bb.max.x as f32);
+    let line_height = (v_metrics.ascent - v_metrics.descent).ceil();
+    
+    // Split by newlines for multiline support
+    let lines: Vec<&str> = text.split('\n').collect();
+    let line_count = lines.len().max(1);
+    
+    // Measure max width across all lines
+    let mut max_width: f32 = 0.0;
+    for line in &lines {
+        let origin = point(0.0, v_metrics.ascent);
+        let mut min_x: f32 = f32::INFINITY;
+        let mut line_max_x: f32 = 0.0;
+        let mut glyph_count = 0_u32;
+        
+        for glyph in font.layout(line, scale, origin) {
+            glyph_count += 1;
+            if let Some(bb) = glyph.pixel_bounding_box() {
+                min_x = min_x.min(bb.min.x as f32);
+                line_max_x = line_max_x.max(bb.max.x as f32);
+            }
         }
+        
+        let line_width = if glyph_count == 0 {
+            0.0
+        } else if min_x.is_infinite() {
+            line_max_x
+        } else {
+            (line_max_x - min_x).max(0.0)
+        };
+        max_width = max_width.max(line_width);
     }
-    let width = if glyph_count == 0 {
-        0.0
-    } else if min_x.is_infinite() {
-        max_x
-    } else {
-        (max_x - min_x).max(0.0)
-    };
-    let height = (v_metrics.ascent - v_metrics.descent).ceil();
-    TextMetrics { width, height }
+    
+    TextMetrics { 
+        width: max_width, 
+        height: line_count as f32 * line_height,
+        line_height,
+        line_count,
+    }
 }
 
 pub fn draw_scene(frame: &mut [u8], width: u32, height: u32, scene: &Scene) {

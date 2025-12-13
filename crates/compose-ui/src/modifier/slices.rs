@@ -8,9 +8,11 @@ use crate::draw::DrawCommand;
 use crate::modifier::Modifier;
 use crate::modifier_nodes::{
     BackgroundNode, ClipToBoundsNode, CornerShapeNode, DrawCommandNode,
-    GraphicsLayerNode,
+    GraphicsLayerNode, PaddingNode,
 };
+use compose_ui_graphics::EdgeInsets;
 use crate::text_modifier_node::TextModifierNode;
+use crate::text_field_modifier_node::TextFieldModifierNode;
 use std::cell::RefCell;
 
 use super::{ModifierChainHandle, Point};
@@ -147,12 +149,163 @@ pub fn collect_modifier_slices(chain: &ModifierNodeChain) -> ModifierNodeSlices 
         }
     });
 
-    // Collect text content from TextModifierNode (LAYOUT capability, not DRAW)
+    // Collect padding from modifier chain for cursor positioning
+    let mut padding = EdgeInsets::default();
+    chain.for_each_node_with_capability(NodeCapabilities::LAYOUT, |_ref, node| {
+        let any = node.as_any();
+        if let Some(padding_node) = any.downcast_ref::<PaddingNode>() {
+            let p = padding_node.padding();
+            padding.left += p.left;
+            padding.top += p.top;
+            padding.right += p.right;
+            padding.bottom += p.bottom;
+        }
+    });
+
+    // Collect text content from TextModifierNode or TextFieldModifierNode (LAYOUT capability)
     chain.for_each_node_with_capability(NodeCapabilities::LAYOUT, |_ref, node| {
         let any = node.as_any();
         if let Some(text_node) = any.downcast_ref::<TextModifierNode>() {
             // Rightmost text modifier wins
             slices.text_content = Some(text_node.text().to_string());
+        }
+        // Also check for TextFieldModifierNode (editable text fields)
+        if let Some(text_field_node) = any.downcast_ref::<TextFieldModifierNode>() {
+            let text = text_field_node.text();
+            slices.text_content = Some(text.clone());
+            
+            // Update content offset for accurate click-to-position cursor placement
+            text_field_node.set_content_offset(padding.left);
+            
+            // Add cursor draw command if focused
+            if text_field_node.is_focused() {
+                let selection = text_field_node.selection();
+                let cursor_brush = text_field_node.cursor_brush();
+                let selection_brush = text_field_node.selection_brush();
+                
+                // Get line height for multiline support
+                let full_text_metrics = crate::text::measure_text(&text);
+                let line_height = full_text_metrics.line_height;
+                
+                // Helper to find line index and x offset for a byte position
+                // Returns (line_index, x_offset, line_start_byte)
+                fn cursor_line_position(text: &str, byte_pos: usize, padding_left: f32) -> (usize, f32) {
+                    let pos = byte_pos.min(text.len());
+                    let text_before = &text[..pos];
+                    
+                    // Count newlines before cursor to get line index
+                    let line_index = text_before.matches('\n').count();
+                    
+                    // Find the start of the current line
+                    let line_start = text_before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    
+                    // Measure text from line start to cursor position
+                    let text_on_line = &text_before[line_start..];
+                    let x_offset = crate::text::measure_text(text_on_line).width + padding_left;
+                    
+                    (line_index, x_offset)
+                }
+                
+                // Calculate cursor position for multiline
+                let (cursor_line, cursor_x) = cursor_line_position(&text, selection.start, padding.left);
+                let cursor_y_offset = padding.top + cursor_line as f32 * line_height;
+                
+                // Draw selection highlight - reads selection at DRAW TIME to support live drag updates
+                let selection_state = text_field_node.get_state();
+                let selection_text = text.clone();
+                let selection_padding_left = padding.left;
+                let selection_padding_top = padding.top;
+                let selection_brush_clone = selection_brush.clone();
+                let sel_line_height = line_height;
+                
+                let selection_cmd = Rc::new(move |_size: crate::modifier::Size| {
+                    use crate::modifier::Rect;
+                    use compose_ui_graphics::DrawPrimitive;
+                    
+                    // Read CURRENT selection at DRAW time
+                    let current_selection = selection_state.selection();
+                    
+                    if current_selection.collapsed() {
+                        return vec![]; // No selection to draw
+                    }
+                    
+                    let sel_start = current_selection.min();
+                    let sel_end = current_selection.max();
+                    
+                    // Get the text content
+                    let text = &selection_text;
+                    
+                    // Split text into lines and draw selection per line
+                    let mut primitives = Vec::new();
+                    let lines: Vec<&str> = text.split('\n').collect();
+                    let mut byte_offset: usize = 0;
+                    
+                    for (line_idx, line) in lines.iter().enumerate() {
+                        let line_start = byte_offset;
+                        let line_end = byte_offset + line.len();
+                        
+                        // Check if selection intersects this line
+                        if sel_end > line_start && sel_start < line_end {
+                            // Calculate selection bounds within this line
+                            let sel_start_in_line = if sel_start > line_start { sel_start - line_start } else { 0 };
+                            let sel_end_in_line = (sel_end - line_start).min(line.len());
+                            
+                            // Measure x positions
+                            let sel_start_x = crate::text::measure_text(&line[..sel_start_in_line]).width + selection_padding_left;
+                            let sel_end_x = crate::text::measure_text(&line[..sel_end_in_line]).width + selection_padding_left;
+                            let sel_width = sel_end_x - sel_start_x;
+                            
+                            if sel_width > 0.0 {
+                                let sel_rect = Rect {
+                                    x: sel_start_x,
+                                    y: selection_padding_top + line_idx as f32 * sel_line_height,
+                                    width: sel_width,
+                                    height: sel_line_height,
+                                };
+                                primitives.push(DrawPrimitive::Rect { rect: sel_rect, brush: selection_brush_clone.clone() });
+                            }
+                        }
+                        
+                        // Move to next line (add 1 for newline character)
+                        byte_offset = line_end + 1;
+                    }
+                    
+                    primitives
+                });
+                
+                slices.draw_commands.push(DrawCommand::Behind(selection_cmd));
+                
+                // Draw command closure for cursor
+                let draw_cmd = Rc::new(move |_size: crate::modifier::Size| {
+                    use crate::modifier::Rect;
+                    use compose_ui_graphics::DrawPrimitive;
+                    
+                    // Cursor blinking: use elapsed milliseconds since app start
+                    // The instant crate provides WASM-compatible timing
+                    use std::sync::LazyLock;
+                    static START_TIME: LazyLock<instant::Instant> = LazyLock::new(instant::Instant::now);
+                    let now = START_TIME.elapsed().as_millis();
+                    let blink_phase = (now / 500) % 2;
+                    let cursor_visible = blink_phase == 0;
+                    
+                    if !cursor_visible {
+                        return vec![];
+                    }
+                    
+                    const CURSOR_WIDTH: f32 = 2.0;
+                    
+                    let cursor_rect = Rect {
+                        x: cursor_x,
+                        y: cursor_y_offset,
+                        width: CURSOR_WIDTH,
+                        height: line_height,
+                    };
+                    
+                    vec![DrawPrimitive::Rect { rect: cursor_rect, brush: cursor_brush.clone() }]
+                });
+                
+                slices.draw_commands.push(DrawCommand::Overlay(draw_cmd));
+            }
         }
     });
 

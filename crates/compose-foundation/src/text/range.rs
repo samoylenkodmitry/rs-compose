@@ -1,0 +1,129 @@
+//! Text range for representing cursor position and selection.
+//!
+//! Matches Jetpack Compose's `androidx.compose.ui.text.TextRange`.
+
+/// Represents a range in text, used for cursor position and selection.
+///
+/// When `start == end`, this represents a cursor position (collapsed selection).
+/// When `start != end`, this represents a text selection.
+///
+/// # Invariants
+///
+/// - Indices are in UTF-8 byte offsets (matching Rust's `String`)
+/// - `start` can be greater than `end` for reverse selections
+/// - Use `min()` and `max()` for ordered access
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+pub struct TextRange {
+    /// Start index of the range (can be > end for reverse selection)
+    pub start: usize,
+    /// End index of the range
+    pub end: usize,
+}
+
+impl TextRange {
+    /// Creates a new text range.
+    pub const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+
+    /// Creates a collapsed range (cursor) at the given position.
+    pub const fn cursor(position: usize) -> Self {
+        Self {
+            start: position,
+            end: position,
+        }
+    }
+
+    /// Creates a range from 0 to 0 (cursor at start).
+    pub const fn zero() -> Self {
+        Self { start: 0, end: 0 }
+    }
+
+    /// Returns true if this range is collapsed (cursor, not selection).
+    pub const fn collapsed(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// Returns the length of the selection in characters.
+    pub fn length(&self) -> usize {
+        self.end.abs_diff(self.start)
+    }
+
+    /// Returns the minimum (leftmost) index.
+    pub fn min(&self) -> usize {
+        self.start.min(self.end)
+    }
+
+    /// Returns the maximum (rightmost) index.
+    pub fn max(&self) -> usize {
+        self.start.max(self.end)
+    }
+
+    /// Returns true if this range contains the given index.
+    pub fn contains(&self, index: usize) -> bool {
+        index >= self.min() && index < self.max()
+    }
+
+    /// Coerces the range to be within [0, max].
+    pub fn coerce_in(&self, max: usize) -> Self {
+        Self {
+            start: self.start.min(max),
+            end: self.end.min(max),
+        }
+    }
+
+    /// Returns a range covering the entire text of given length.
+    pub const fn all(length: usize) -> Self {
+        Self {
+            start: 0,
+            end: length,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_is_collapsed() {
+        let cursor = TextRange::cursor(5);
+        assert!(cursor.collapsed());
+        assert_eq!(cursor.length(), 0);
+        assert_eq!(cursor.start, 5);
+        assert_eq!(cursor.end, 5);
+    }
+
+    #[test]
+    fn selection_is_not_collapsed() {
+        let selection = TextRange::new(2, 7);
+        assert!(!selection.collapsed());
+        assert_eq!(selection.length(), 5);
+    }
+
+    #[test]
+    fn reverse_selection_length() {
+        let reverse = TextRange::new(7, 2);
+        assert_eq!(reverse.length(), 5);
+        assert_eq!(reverse.min(), 2);
+        assert_eq!(reverse.max(), 7);
+    }
+
+    #[test]
+    fn coerce_in_bounds() {
+        let range = TextRange::new(5, 100);
+        let coerced = range.coerce_in(10);
+        assert_eq!(coerced.start, 5);
+        assert_eq!(coerced.end, 10);
+    }
+
+    #[test]
+    fn contains_index() {
+        let range = TextRange::new(2, 5);
+        assert!(!range.contains(1));
+        assert!(range.contains(2));
+        assert!(range.contains(3));
+        assert!(range.contains(4));
+        assert!(!range.contains(5)); // exclusive end
+    }
+}

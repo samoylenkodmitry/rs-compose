@@ -20,6 +20,9 @@ use compose_ui::{
 use compose_ui_graphics::{Point, Size};
 use hit_path_tracker::{HitPathTracker, PointerId};
 
+// Re-export key event types for use by compose-app
+pub use compose_ui::{KeyCode, KeyEvent, KeyEventType, Modifiers};
+
 pub struct AppShell<R>
 where
     R: Renderer,
@@ -45,7 +48,9 @@ where
     /// - On Move/Up/Cancel: resolve fresh HitTargets from current scene
     /// - Handler closures are preserved (same Rc), so internal state survives
     hit_path_tracker: HitPathTracker,
-
+    /// Persistent clipboard for desktop (Linux X11 requires clipboard to stay alive)
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    clipboard: Option<arboard::Clipboard>,
 }
 
 impl<R> AppShell<R>
@@ -76,7 +81,8 @@ where
             is_dirty: true,
             buttons_pressed: PointerButtons::NONE,
             hit_path_tracker: HitPathTracker::new(),
-
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+            clipboard: arboard::Clipboard::new().ok(),
         };
         shell.process_frame();
         shell
@@ -132,9 +138,13 @@ where
         self.runtime.take_frame_request() || self.composition.should_render()
     }
 
-    /// Returns true if the shell needs to redraw (dirty flag or active animations).
+    /// Returns true if the shell needs to redraw (dirty flag, layout dirty, active animations, or cursor blink).
     pub fn needs_redraw(&self) -> bool {
-        self.is_dirty || self.has_active_animations()
+        self.is_dirty 
+            || self.layout_dirty 
+            || self.has_active_animations()
+            // Continuous redraw while text field is focused for cursor blinking animation
+            || compose_ui::has_focused_field()
     }
 
     /// Marks the shell as dirty, indicating a redraw is needed.
@@ -356,6 +366,173 @@ where
             self.mark_dirty();
         }
     }
+    /// Routes a keyboard event to the focused text field, if any.
+    ///
+    /// Returns `true` if the event was consumed by a text field.
+    ///
+    /// On desktop, Ctrl+C/X/V are handled here with system clipboard (arboard).
+    /// On web, these keys are NOT handled here - they bubble to browser for native copy/paste events.
+    pub fn on_key_event(&mut self, event: &KeyEvent) -> bool {
+        use KeyEventType::KeyDown;
+        
+        // Only process KeyDown events for clipboard shortcuts
+        if event.event_type == KeyDown && event.modifiers.command_or_ctrl() {
+            // Desktop-only clipboard handling via arboard
+            // Use persistent self.clipboard to keep content alive on Linux X11
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+            {
+                match event.key_code {
+                    // Ctrl+C - Copy
+                    KeyCode::C => {
+                        // Get text first, then access clipboard to avoid borrow conflict
+                        let text = self.on_copy();
+                        if let (Some(text), Some(clipboard)) = (text, self.clipboard.as_mut()) {
+                            let _ = clipboard.set_text(&text);
+                            return true;
+                        }
+                    }
+                    // Ctrl+X - Cut
+                    KeyCode::X => {
+                        // Get text first (this also deletes it), then access clipboard
+                        let text = self.on_cut();
+                        if let (Some(text), Some(clipboard)) = (text, self.clipboard.as_mut()) {
+                            let _ = clipboard.set_text(&text);
+                            self.mark_dirty();
+                            self.layout_dirty = true;
+                            return true;
+                        }
+                    }
+                    // Ctrl+V - Paste
+                    KeyCode::V => {
+                        // Get text from clipboard first, then paste
+                        let text = self.clipboard.as_mut().and_then(|cb| cb.get_text().ok());
+                        if let Some(text) = text {
+                            if self.on_paste(&text) {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        // Get root_id first before borrowing applier
+        let Some(root_id) = self.composition.root() else {
+            return false;
+        };
+        
+        // Now borrow and dispatch
+        let mut applier = self.composition.applier_mut();
+        
+        // Simple recursive dispatch to find focused text fields
+        let handled = dispatch_key_to_text_fields(&mut applier, root_id, event);
+        
+        drop(applier);
+        
+        if handled {
+            // Mark both dirty (for redraw) and layout_dirty (to rebuild semantics tree)
+            self.mark_dirty();
+            self.layout_dirty = true;
+        }
+        
+        handled
+    }
+    
+    /// Handles paste event from platform clipboard.
+    /// Returns `true` if the paste was consumed by a focused text field.
+    pub fn on_paste(&mut self, text: &str) -> bool {
+        let Some(root_id) = self.composition.root() else {
+            return false;
+        };
+        
+        let mut applier = self.composition.applier_mut();
+        let handled = dispatch_paste_to_text_fields(&mut applier, root_id, text);
+        drop(applier);
+        
+        if handled {
+            self.mark_dirty();
+            self.layout_dirty = true;
+        }
+        
+        handled
+    }
+    
+    /// Handles copy request from platform.
+    /// Returns the selected text from focused text field, or None.
+    pub fn on_copy(&mut self) -> Option<String> {
+        let Some(root_id) = self.composition.root() else {
+            return None;
+        };
+        
+        let mut applier = self.composition.applier_mut();
+        let text = dispatch_copy_from_text_fields(&mut applier, root_id);
+        drop(applier);
+        
+        text
+    }
+    
+    /// Handles cut request from platform.
+    /// Returns the cut text from focused text field, or None.
+    pub fn on_cut(&mut self) -> Option<String> {
+        let Some(root_id) = self.composition.root() else {
+            return None;
+        };
+        
+        let mut applier = self.composition.applier_mut();
+        let text = dispatch_cut_from_text_fields(&mut applier, root_id);
+        drop(applier);
+        
+        if text.is_some() {
+            self.mark_dirty();
+            self.layout_dirty = true;
+        }
+        
+        text
+    }
+    
+    /// Sets the Linux primary selection (for middle-click paste).
+    /// This is called when text is selected in a text field.
+    /// On non-Linux platforms, this is a no-op.
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    pub fn set_primary_selection(&mut self, text: &str) {
+        use arboard::{SetExtLinux, LinuxClipboardKind};
+        if let Some(ref mut clipboard) = self.clipboard {
+            let result = clipboard.set()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text(text.to_string());
+            if let Err(e) = result {
+                // Primary selection may not be available on all systems
+                log::debug!("Primary selection set failed: {:?}", e);
+            }
+        }
+    }
+    
+    /// Gets text from the Linux primary selection (for middle-click paste).
+    /// On non-Linux platforms, returns None.
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    pub fn get_primary_selection(&mut self) -> Option<String> {
+        use arboard::{GetExtLinux, LinuxClipboardKind};
+        if let Some(ref mut clipboard) = self.clipboard {
+            clipboard.get()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text()
+                .ok()
+        } else {
+            None
+        }
+    }
+    
+    /// Syncs the current text field selection to PRIMARY (Linux X11).
+    /// Call this when selection changes in a text field.
+    pub fn sync_selection_to_primary(&mut self) {
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        {
+            if let Some(text) = self.on_copy() {
+                self.set_primary_selection(&text);
+            }
+        }
+    }
 
     pub fn log_debug_info(&mut self) {
         println!("\n\n");
@@ -428,19 +605,23 @@ where
         // If you see this firing frequently during normal interactions,
         // someone is abusing request_layout_invalidation() - investigate!
         let invalidation_requested = take_layout_invalidation();
-        let did_scoped_repass = self.layout_dirty; // True if we just processed repass_nodes above
         
-        if invalidation_requested && !did_scoped_repass {
+        // If invalidation was requested (e.g., text field content changed),
+        // we must invalidate caches AND mark for remeasure so intrinsic sizes are recalculated.
+        // This happens regardless of whether layout_dirty was already set from keyboard handling.
+        if invalidation_requested {
 
             // Invalidate all caches (O(app size) - expensive!)
             // This is internal-only API, only accessible via the internal path
             compose_ui::layout::invalidate_all_layout_caches();
             
-            // Mark root as needing layout so tree_needs_layout() returns true
+            // Mark root as needing layout AND measure so tree_needs_layout() returns true
+            // and intrinsic sizes are recalculated (e.g., text field resizing on content change)
             if let Some(root) = self.composition.root() {
                 let mut applier = self.composition.applier_mut();
                 if let Ok(node) = applier.get_mut(root) {
                     if let Some(layout_node) = node.as_any_mut().downcast_mut::<compose_ui::LayoutNode>() {
+                        layout_node.mark_needs_measure();
                         layout_node.mark_needs_layout();
                     }
                 }
@@ -465,7 +646,8 @@ where
             applier.set_runtime_handle(handle);
 
             // Selective measure optimization: skip layout if tree is clean (O(1) check)
-            let needs_layout =
+            // UNLESS layout_dirty was explicitly set (e.g., from keyboard input)
+            let tree_needs_layout_check =
                 compose_ui::tree_needs_layout(&mut *applier, root).unwrap_or_else(|err| {
                     log::warn!(
                         "Cannot check layout dirty status for root #{}: {}",
@@ -474,11 +656,15 @@ where
                     );
                     true // Assume dirty on error
                 });
+            
+            // Force layout if either:
+            // 1. Tree nodes are marked dirty (tree_needs_layout_check = true)
+            // 2. layout_dirty was explicitly set (e.g., from keyboard/external events)
+            let needs_layout = tree_needs_layout_check || self.layout_dirty;
 
             if !needs_layout {
-                // Tree is clean - skip layout computation and keep cached layout
+                // Tree is clean and no external dirtying - skip layout computation
                 log::trace!("Skipping layout: tree is clean");
-                self.layout_dirty = false;
                 applier.clear_runtime_handle();
                 return;
             }
@@ -561,7 +747,9 @@ where
         let render_dirty = take_render_invalidation();
         let pointer_dirty = take_pointer_invalidation();
         let focus_dirty = take_focus_invalidation();
-        if render_dirty || pointer_dirty || focus_dirty {
+        // Also mark dirty when text field is focused for continuous cursor blink animation
+        let cursor_blink_dirty = compose_ui::has_focused_field();
+        if render_dirty || pointer_dirty || focus_dirty || cursor_blink_dirty {
             self.scene_dirty = true;
         }
         if !self.scene_dirty {
@@ -589,6 +777,158 @@ where
     fn drop(&mut self) {
         self.runtime.clear_frame_waker();
     }
+}
+
+/// Helper: recursively dispatch a keyboard event to focused text fields.
+///
+/// Traverses the node tree looking for LayoutNodes with TextFieldModifierNode
+/// that are focused, and dispatches the key event to them.
+fn dispatch_key_to_text_fields(
+    applier: &mut MemoryApplier,
+    node_id: compose_core::NodeId,
+    event: &KeyEvent,
+) -> bool {
+    use compose_core::Node;
+    
+    // Try to get the node and check if it's a LayoutNode with a text field
+    let result = applier.with_node::<LayoutNode, _>(node_id, |layout_node| {
+        // Try to find and dispatch to text field modifier node
+        layout_node.with_text_field_modifier_mut(|text_field| {
+            if text_field.is_focused() {
+                text_field.handle_key_event(event)
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    });
+    
+    if let Ok(handled) = result {
+        if handled {
+            return true;
+        }
+    }
+    
+    // Get children IDs - need to get them via the Node trait
+    let children: Vec<_> = applier
+        .with_node::<LayoutNode, _>(node_id, |layout_node| {
+            layout_node.children()
+        })
+        .unwrap_or_default();
+    
+    // Recurse into children
+    for child_id in children {
+        if dispatch_key_to_text_fields(applier, child_id, event) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+/// Helper: dispatch paste text to focused text fields
+fn dispatch_paste_to_text_fields(
+    applier: &mut MemoryApplier,
+    node_id: compose_core::NodeId,
+    text: &str,
+) -> bool {
+    use compose_core::Node;
+    
+    let result = applier.with_node::<LayoutNode, _>(node_id, |layout_node| {
+        layout_node.with_text_field_modifier_mut(|text_field| {
+            if text_field.is_focused() {
+                text_field.insert_text(text);
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    });
+    
+    if let Ok(handled) = result {
+        if handled {
+            return true;
+        }
+    }
+    
+    let children: Vec<_> = applier
+        .with_node::<LayoutNode, _>(node_id, |layout_node| layout_node.children())
+        .unwrap_or_default();
+    
+    for child_id in children {
+        if dispatch_paste_to_text_fields(applier, child_id, text) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+/// Helper: get copied text from focused text field
+fn dispatch_copy_from_text_fields(
+    applier: &mut MemoryApplier,
+    node_id: compose_core::NodeId,
+) -> Option<String> {
+    use compose_core::Node;
+    
+    let result = applier.with_node::<LayoutNode, _>(node_id, |layout_node| {
+        layout_node.with_text_field_modifier_mut(|text_field| {
+            if text_field.is_focused() {
+                text_field.copy_selection()
+            } else {
+                None
+            }
+        }).unwrap_or(None)
+    });
+    
+    if let Ok(Some(text)) = result {
+        return Some(text);
+    }
+    
+    let children: Vec<_> = applier
+        .with_node::<LayoutNode, _>(node_id, |layout_node| layout_node.children())
+        .unwrap_or_default();
+    
+    for child_id in children {
+        if let Some(text) = dispatch_copy_from_text_fields(applier, child_id) {
+            return Some(text);
+        }
+    }
+    
+    None
+}
+
+/// Helper: cut text from focused text field (copy and delete)
+fn dispatch_cut_from_text_fields(
+    applier: &mut MemoryApplier,
+    node_id: compose_core::NodeId,
+) -> Option<String> {
+    use compose_core::Node;
+    
+    let result = applier.with_node::<LayoutNode, _>(node_id, |layout_node| {
+        layout_node.with_text_field_modifier_mut(|text_field| {
+            if text_field.is_focused() {
+                text_field.cut_selection()
+            } else {
+                None
+            }
+        }).unwrap_or(None)
+    });
+    
+    if let Ok(Some(text)) = result {
+        return Some(text);
+    }
+    
+    let children: Vec<_> = applier
+        .with_node::<LayoutNode, _>(node_id, |layout_node| layout_node.children())
+        .unwrap_or_default();
+    
+    for child_id in children {
+        if let Some(text) = dispatch_cut_from_text_fields(applier, child_id) {
+            return Some(text);
+        }
+    }
+    
+    None
 }
 
 pub fn default_root_key() -> Key {

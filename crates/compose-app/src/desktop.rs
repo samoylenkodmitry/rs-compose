@@ -65,6 +65,8 @@ enum RobotCommand {
     TouchDown { x: f32, y: f32 },
     TouchMove { x: f32, y: f32 },
     TouchUp { x: f32, y: f32 },
+    TypeText(String),
+    SendKey(String), // Key code like "Up", "Down", "Home", "End", "Return", "a", etc.
     WaitForIdle,
     GetSemantics,
     Exit,
@@ -240,6 +242,50 @@ impl Robot {
         }
     }
 
+    /// Type text into the currently focused text field
+    ///
+    /// This sends synthetic keyboard events for each character in the string.
+    /// The text field must already be focused (e.g., via a click).
+    ///
+    /// # Example
+    /// ```ignore
+    /// robot.click(100.0, 200.0)?; // Focus the text field
+    /// robot.type_text("Hello World")?;
+    /// ```
+    pub fn type_text(&self, text: &str) -> Result<(), String> {
+        self.tx.send(RobotCommand::TypeText(text.to_string()))
+            .map_err(|e| format!("Failed to send type_text command: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Ok) => Ok(()),
+            Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
+            Err(e) => Err(format!("Failed to receive response: {}", e)),
+        }
+    }
+
+    /// Send a key press event
+    ///
+    /// Simulates pressing and releasing a key. Supports:
+    /// - Letters: "a" to "z"
+    /// - Navigation: "Up", "Down", "Left", "Right", "Home", "End"
+    /// - Editing: "Return" (Enter), "BackSpace", "Delete"
+    ///
+    /// # Example
+    /// ```ignore
+    /// robot.send_key("Return")?; // Press Enter
+    /// robot.send_key("Up")?; // Press Up arrow
+    /// ```
+    pub fn send_key(&self, key: &str) -> Result<(), String> {
+        self.tx.send(RobotCommand::SendKey(key.to_string()))
+            .map_err(|e| format!("Failed to send send_key command: {}", e))?;
+        match self.rx.recv() {
+            Ok(RobotResponse::Ok) => Ok(()),
+            Ok(RobotResponse::Error(e)) => Err(e),
+            Ok(_) => Err("Unexpected response".to_string()),
+            Err(e) => Err(format!("Failed to receive response: {}", e)),
+        }
+    }
+
     /// Exit the application
     pub fn exit(&self) -> Result<(), String> {
         self.tx.send(RobotCommand::Exit)
@@ -396,6 +442,8 @@ struct App {
     app: Option<AppShell<WgpuRenderer>>,
     /// Platform adapter
     platform: Option<DesktopWinitPlatform>,
+    /// Current keyboard modifiers (shift, ctrl, alt, meta)
+    current_modifiers: winit::keyboard::ModifiersState,
     /// Robot controller
     #[cfg(feature = "robot")]
     robot_controller: Option<RobotController>,
@@ -411,6 +459,7 @@ impl App {
             surface_config: None,
             app: None,
             platform: None,
+            current_modifiers: winit::keyboard::ModifiersState::empty(),
             #[cfg(feature = "robot")]
             robot_controller: None,
         }
@@ -581,6 +630,10 @@ impl ApplicationHandler for App {
                 let logical = platform.pointer_position(position);
                 app.set_cursor(logical.x, logical.y);
             }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                // Track current keyboard modifiers for key events
+                self.current_modifiers = modifiers.state();
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -591,14 +644,114 @@ impl ApplicationHandler for App {
                 }
                 ElementState::Released => {
                     app.pointer_released();
+                    // Sync selection to PRIMARY (Linux X11 middle-click paste)
+                    app.sync_selection_to_primary();
+                }
+            },
+            // Middle-click paste from Linux primary selection
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Middle,
+                ..
+            } => {
+                #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+                if let Some(text) = app.get_primary_selection() {
+                    if app.on_paste(&text) {
+                        window.request_redraw();
+                    }
                 }
             },
             WindowEvent::KeyboardInput { event, .. } => {
-                use winit::keyboard::{KeyCode, PhysicalKey};
-                if event.state == ElementState::Pressed {
-                    if let PhysicalKey::Code(KeyCode::KeyD) = event.physical_key {
-                        app.log_debug_info();
-                    }
+                use winit::keyboard::{Key, PhysicalKey};
+                use compose_app_shell::{KeyCode, KeyEvent, KeyEventType, Modifiers};
+                
+                // Convert winit key event to compose-ui KeyEvent
+                let event_type = match event.state {
+                    ElementState::Pressed => KeyEventType::KeyDown,
+                    ElementState::Released => KeyEventType::KeyUp,
+                };
+                
+                // Get text from logical key
+                let text = match &event.logical_key {
+                    Key::Character(s) => s.to_string(),
+                    Key::Named(winit::keyboard::NamedKey::Space) => " ".to_string(),
+                    _ => String::new(),
+                };
+                
+                // Convert physical key to KeyCode
+                let key_code = match event.physical_key {
+                    PhysicalKey::Code(code) => match code {
+                        winit::keyboard::KeyCode::KeyA => KeyCode::A,
+                        winit::keyboard::KeyCode::KeyB => KeyCode::B,
+                        winit::keyboard::KeyCode::KeyC => KeyCode::C,
+                        winit::keyboard::KeyCode::KeyD => KeyCode::D,
+                        winit::keyboard::KeyCode::KeyE => KeyCode::E,
+                        winit::keyboard::KeyCode::KeyF => KeyCode::F,
+                        winit::keyboard::KeyCode::KeyG => KeyCode::G,
+                        winit::keyboard::KeyCode::KeyH => KeyCode::H,
+                        winit::keyboard::KeyCode::KeyI => KeyCode::I,
+                        winit::keyboard::KeyCode::KeyJ => KeyCode::J,
+                        winit::keyboard::KeyCode::KeyK => KeyCode::K,
+                        winit::keyboard::KeyCode::KeyL => KeyCode::L,
+                        winit::keyboard::KeyCode::KeyM => KeyCode::M,
+                        winit::keyboard::KeyCode::KeyN => KeyCode::N,
+                        winit::keyboard::KeyCode::KeyO => KeyCode::O,
+                        winit::keyboard::KeyCode::KeyP => KeyCode::P,
+                        winit::keyboard::KeyCode::KeyQ => KeyCode::Q,
+                        winit::keyboard::KeyCode::KeyR => KeyCode::R,
+                        winit::keyboard::KeyCode::KeyS => KeyCode::S,
+                        winit::keyboard::KeyCode::KeyT => KeyCode::T,
+                        winit::keyboard::KeyCode::KeyU => KeyCode::U,
+                        winit::keyboard::KeyCode::KeyV => KeyCode::V,
+                        winit::keyboard::KeyCode::KeyW => KeyCode::W,
+                        winit::keyboard::KeyCode::KeyX => KeyCode::X,
+                        winit::keyboard::KeyCode::KeyY => KeyCode::Y,
+                        winit::keyboard::KeyCode::KeyZ => KeyCode::Z,
+                        winit::keyboard::KeyCode::Digit0 => KeyCode::Digit0,
+                        winit::keyboard::KeyCode::Digit1 => KeyCode::Digit1,
+                        winit::keyboard::KeyCode::Digit2 => KeyCode::Digit2,
+                        winit::keyboard::KeyCode::Digit3 => KeyCode::Digit3,
+                        winit::keyboard::KeyCode::Digit4 => KeyCode::Digit4,
+                        winit::keyboard::KeyCode::Digit5 => KeyCode::Digit5,
+                        winit::keyboard::KeyCode::Digit6 => KeyCode::Digit6,
+                        winit::keyboard::KeyCode::Digit7 => KeyCode::Digit7,
+                        winit::keyboard::KeyCode::Digit8 => KeyCode::Digit8,
+                        winit::keyboard::KeyCode::Digit9 => KeyCode::Digit9,
+                        winit::keyboard::KeyCode::Backspace => KeyCode::Backspace,
+                        winit::keyboard::KeyCode::Delete => KeyCode::Delete,
+                        winit::keyboard::KeyCode::Enter => KeyCode::Enter,
+                        winit::keyboard::KeyCode::Tab => KeyCode::Tab,
+                        winit::keyboard::KeyCode::Space => KeyCode::Space,
+                        winit::keyboard::KeyCode::Escape => KeyCode::Escape,
+                        winit::keyboard::KeyCode::ArrowUp => KeyCode::ArrowUp,
+                        winit::keyboard::KeyCode::ArrowDown => KeyCode::ArrowDown,
+                        winit::keyboard::KeyCode::ArrowLeft => KeyCode::ArrowLeft,
+                        winit::keyboard::KeyCode::ArrowRight => KeyCode::ArrowRight,
+                        winit::keyboard::KeyCode::Home => KeyCode::Home,
+                        winit::keyboard::KeyCode::End => KeyCode::End,
+                        _ => KeyCode::Unknown,
+                    },
+                    _ => KeyCode::Unknown,
+                };
+                
+                // Convert winit modifier state to our Modifiers struct
+                let modifiers = Modifiers {
+                    shift: self.current_modifiers.shift_key(),
+                    ctrl: self.current_modifiers.control_key(),
+                    alt: self.current_modifiers.alt_key(),
+                    meta: self.current_modifiers.super_key(),
+                };
+                
+                let key_event = KeyEvent::new(key_code, text, modifiers, event_type);
+                
+                // Special: still handle D for debug info
+                if key_code == KeyCode::D && event_type == KeyEventType::KeyDown {
+                    app.log_debug_info();
+                }
+                
+                // Dispatch to text fields
+                if app.on_key_event(&key_event) {
+                    window.request_redraw();
                 }
             }
             WindowEvent::Focused(false) => {
@@ -707,6 +860,85 @@ impl ApplicationHandler for App {
                         let semantics = extract_semantics(app);
                         let _ = controller.tx.send(RobotResponse::Semantics(semantics));
                     }
+                    RobotCommand::TypeText(text) => {
+                        use compose_app_shell::{KeyEvent, KeyEventType, Modifiers};
+                        
+                        // Send key events for each character
+                        for ch in text.chars() {
+                            // Map character to key code (simplified)
+                            let key_code = char_to_key_code(ch);
+                            let key_event = KeyEvent::new(
+                                key_code,
+                                ch.to_string(),
+                                Modifiers::NONE,
+                                KeyEventType::KeyDown,
+                            );
+                            app.on_key_event(&key_event);
+                        }
+                        // Process the key events immediately to update layout/semantics
+                        app.update();
+                        window.request_redraw();
+                        let _ = controller.tx.send(RobotResponse::Ok);
+                    }
+                    RobotCommand::SendKey(key) => {
+                        use compose_app_shell::{KeyCode, KeyEvent, KeyEventType, Modifiers};
+                        
+                        // Map key string to KeyCode and text
+                        let (key_code, text) = match key.as_str() {
+                            // Navigation keys
+                            "Up" => (KeyCode::ArrowUp, String::new()),
+                            "Down" => (KeyCode::ArrowDown, String::new()),
+                            "Left" => (KeyCode::ArrowLeft, String::new()),
+                            "Right" => (KeyCode::ArrowRight, String::new()),
+                            "Home" => (KeyCode::Home, String::new()),
+                            "End" => (KeyCode::End, String::new()),
+                            // Editing keys
+                            "Return" => (KeyCode::Enter, String::from("\n")),
+                            "BackSpace" => (KeyCode::Backspace, String::new()),
+                            "Delete" => (KeyCode::Delete, String::new()),
+                            "Tab" => (KeyCode::Tab, String::from("\t")),
+                            "space" => (KeyCode::Space, String::from(" ")),
+                            // Letters
+                            "a" => (KeyCode::A, String::from("a")),
+                            "b" => (KeyCode::B, String::from("b")),
+                            "c" => (KeyCode::C, String::from("c")),
+                            "d" => (KeyCode::D, String::from("d")),
+                            "e" => (KeyCode::E, String::from("e")),
+                            "f" => (KeyCode::F, String::from("f")),
+                            "g" => (KeyCode::G, String::from("g")),
+                            "h" => (KeyCode::H, String::from("h")),
+                            "i" => (KeyCode::I, String::from("i")),
+                            "j" => (KeyCode::J, String::from("j")),
+                            "k" => (KeyCode::K, String::from("k")),
+                            "l" => (KeyCode::L, String::from("l")),
+                            "m" => (KeyCode::M, String::from("m")),
+                            "n" => (KeyCode::N, String::from("n")),
+                            "o" => (KeyCode::O, String::from("o")),
+                            "p" => (KeyCode::P, String::from("p")),
+                            "q" => (KeyCode::Q, String::from("q")),
+                            "r" => (KeyCode::R, String::from("r")),
+                            "s" => (KeyCode::S, String::from("s")),
+                            "t" => (KeyCode::T, String::from("t")),
+                            "u" => (KeyCode::U, String::from("u")),
+                            "v" => (KeyCode::V, String::from("v")),
+                            "w" => (KeyCode::W, String::from("w")),
+                            "x" => (KeyCode::X, String::from("x")),
+                            "y" => (KeyCode::Y, String::from("y")),
+                            "z" => (KeyCode::Z, String::from("z")),
+                            _ => (KeyCode::Unknown, String::new()),
+                        };
+                        
+                        let key_event = KeyEvent::new(
+                            key_code,
+                            text,
+                            Modifiers::NONE,
+                            KeyEventType::KeyDown,
+                        );
+                        app.on_key_event(&key_event);
+                        app.update();
+                        window.request_redraw();
+                        let _ = controller.tx.send(RobotResponse::Ok);
+                    }
                     RobotCommand::WaitForIdle => {
                         // Start waiting for idle
                         controller.waiting_for_idle = true;
@@ -723,7 +955,10 @@ impl ApplicationHandler for App {
             if controller.waiting_for_idle {
                 const MAX_IDLE_ITERATIONS: u32 = 200;
 
-                if !app.needs_redraw() && !app.has_active_animations() {
+                let needs_draw = app.needs_redraw();
+                let has_anim = app.has_active_animations();
+
+                if !needs_draw && !has_anim {
                     // App is idle - respond and stop waiting
                     controller.waiting_for_idle = false;
                     let _ = controller.tx.send(RobotResponse::Ok);
@@ -763,7 +998,11 @@ impl ApplicationHandler for App {
         #[cfg(not(feature = "robot"))]
         let robot_needs_poll = false;
 
-        if app.has_active_animations() || robot_needs_poll {
+        // Poll continuously when:
+        // - Active animations are running
+        // - Robot test is active
+        // - Text field is focused (for cursor blink animation)
+        if app.has_active_animations() || robot_needs_poll || compose_ui::has_focused_field() {
             event_loop.set_control_flow(ControlFlow::Poll);
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
@@ -868,5 +1107,52 @@ fn combine_trees(
         bounds,
         clickable,
         children,
+    }
+}
+
+/// Map a character to a KeyCode for robot typing
+#[cfg(feature = "robot")]
+fn char_to_key_code(ch: char) -> compose_app_shell::KeyCode {
+    use compose_app_shell::KeyCode;
+    
+    match ch.to_ascii_lowercase() {
+        'a' => KeyCode::A,
+        'b' => KeyCode::B,
+        'c' => KeyCode::C,
+        'd' => KeyCode::D,
+        'e' => KeyCode::E,
+        'f' => KeyCode::F,
+        'g' => KeyCode::G,
+        'h' => KeyCode::H,
+        'i' => KeyCode::I,
+        'j' => KeyCode::J,
+        'k' => KeyCode::K,
+        'l' => KeyCode::L,
+        'm' => KeyCode::M,
+        'n' => KeyCode::N,
+        'o' => KeyCode::O,
+        'p' => KeyCode::P,
+        'q' => KeyCode::Q,
+        'r' => KeyCode::R,
+        's' => KeyCode::S,
+        't' => KeyCode::T,
+        'u' => KeyCode::U,
+        'v' => KeyCode::V,
+        'w' => KeyCode::W,
+        'x' => KeyCode::X,
+        'y' => KeyCode::Y,
+        'z' => KeyCode::Z,
+        '0' => KeyCode::Digit0,
+        '1' => KeyCode::Digit1,
+        '2' => KeyCode::Digit2,
+        '3' => KeyCode::Digit3,
+        '4' => KeyCode::Digit4,
+        '5' => KeyCode::Digit5,
+        '6' => KeyCode::Digit6,
+        '7' => KeyCode::Digit7,
+        '8' => KeyCode::Digit8,
+        '9' => KeyCode::Digit9,
+        ' ' => KeyCode::Space,
+        _ => KeyCode::Unknown,
     }
 }

@@ -365,9 +365,12 @@ impl TextMeasurer for WgpuTextMeasurer {
         {
             let mut cache = self.size_cache.lock().unwrap();
             if let Some(size) = cache.get(&size_key) {
+                // For cached single-line text, use height as line_height
                 return compose_ui::TextMetrics {
                     width: size.width,
                     height: size.height,
+                    line_height: BASE_FONT_SIZE * 1.4,
+                    line_count: 1, // Cached entries are single-line simplified
                 };
             }
         }
@@ -409,9 +412,15 @@ impl TextMeasurer for WgpuTextMeasurer {
         let mut size_cache = self.size_cache.lock().unwrap();
         size_cache.put(size_key, size);
 
+        // Calculate line info for multiline support
+        let line_height = BASE_FONT_SIZE * 1.4;
+        let line_count = text.split('\n').count().max(1);
+        
         compose_ui::TextMetrics {
             width: size.width,
             height: size.height,
+            line_height,
+            line_count,
         }
     }
 }

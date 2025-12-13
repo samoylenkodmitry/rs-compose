@@ -18,7 +18,13 @@ pub mod scroll;
 mod subcompose_layout;
 mod text;
 mod text_modifier_node;
+mod text_field_modifier_node;
+mod text_field_focus;
+mod key_event;
 pub mod widgets;
+
+// Export for cursor blink animation - AppShell checks this to continuously redraw
+pub use text_field_focus::has_focused_field;
 
 pub use compose_ui_graphics::Dp;
 pub use compose_ui_layout::IntrinsicSize;
@@ -53,9 +59,9 @@ pub use pointer_dispatch::{
     schedule_pointer_repass,
 };
 pub use primitives::{
-    Box, BoxScope, BoxSpec, BoxWithConstraints, BoxWithConstraintsScope,
-    BoxWithConstraintsScopeImpl, Button, Column, ColumnSpec, ForEach, Layout, LayoutNode, Row,
-    RowSpec, Spacer, SubcomposeLayout, Text,
+    BasicTextField, BasicTextFieldOptions, Box, BoxScope, BoxSpec, BoxWithConstraints,
+    BoxWithConstraintsScope, BoxWithConstraintsScopeImpl, Button, Column, ColumnSpec, ForEach,
+    Layout, LayoutNode, Row, RowSpec, Spacer, SubcomposeLayout, Text,
 };
 pub use render_state::{
     peek_focus_invalidation, peek_pointer_invalidation, peek_render_invalidation, peek_layout_invalidation,
@@ -71,6 +77,8 @@ pub use subcompose_layout::{
 };
 pub use text::{measure_text, set_text_measurer, TextMeasurer, TextMetrics};
 pub use text_modifier_node::{TextModifierElement, TextModifierNode};
+pub use text_field_modifier_node::{TextFieldElement, TextFieldModifierNode};
+pub use key_event::{KeyCode, KeyEvent, KeyEventType, Modifiers};
 
 // Debug utilities
 pub use debug::{

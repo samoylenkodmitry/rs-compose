@@ -4,6 +4,10 @@ use std::sync::{OnceLock, RwLock};
 pub struct TextMetrics {
     pub width: f32,
     pub height: f32,
+    /// Height of a single line of text
+    pub line_height: f32,
+    /// Number of lines in the text
+    pub line_count: usize,
 }
 
 pub trait TextMeasurer: Send + Sync + 'static {
@@ -16,11 +20,22 @@ struct MonospacedTextMeasurer;
 impl TextMeasurer for MonospacedTextMeasurer {
     fn measure(&self, text: &str) -> TextMetrics {
         const CHAR_WIDTH: f32 = 8.0;
-        const HEIGHT: f32 = 20.0;
-        let width = text.chars().count() as f32 * CHAR_WIDTH;
+        const LINE_HEIGHT: f32 = 20.0;
+        
+        // Split by newlines to handle multiline
+        let lines: Vec<&str> = text.split('\n').collect();
+        let line_count = lines.len().max(1);
+        
+        // Width is the max width of any line
+        let width = lines.iter()
+            .map(|line| line.chars().count() as f32 * CHAR_WIDTH)
+            .fold(0.0_f32, f32::max);
+        
         TextMetrics {
             width,
-            height: HEIGHT,
+            height: line_count as f32 * LINE_HEIGHT,
+            line_height: LINE_HEIGHT,
+            line_count,
         }
     }
 }
