@@ -15,13 +15,13 @@ use super::slot_reuse::SlotReusePool;
 pub struct LazyLayoutStats {
     /// Number of items currently composed and visible.
     pub items_in_use: usize,
-    
+
     /// Number of items in the recycle pool (available for reuse).
     pub items_in_pool: usize,
-    
+
     /// Total number of items that have been composed.
     pub total_composed: usize,
-    
+
     /// Number of items that were reused instead of newly composed.
     pub reuse_count: usize,
 }
@@ -71,30 +71,30 @@ struct LazyListStateInner {
     /// Invalidation callbacks.
     invalidate_callbacks: Vec<(u64, Box<dyn Fn()>)>,
     next_callback_id: u64,
-    
+
     /// Item lifecycle statistics.
     stats: LazyLayoutStats,
-    
+
     /// Cache of recently measured item sizes (index -> main_axis_size).
     /// Limited capacity to avoid unbounded memory growth.
     item_size_cache: std::collections::HashMap<usize, f32>,
-    
+
     /// Running average of measured item sizes for estimation.
     average_item_size: f32,
     total_measured_items: usize,
-    
+
     /// Pool for recycling composed item slots.
     slot_pool: SlotReusePool,
-    
+
     /// Prefetch scheduler for pre-composing items.
     prefetch_scheduler: PrefetchScheduler,
-    
+
     /// Prefetch strategy configuration.
     prefetch_strategy: PrefetchStrategy,
-    
+
     /// Last scroll delta direction for prefetch.
     last_scroll_direction: f32,
-    
+
     /// Sliding window range for optimized key lookups.
     nearest_range_state: NearestRangeState,
 }
@@ -200,7 +200,7 @@ impl LazyListState {
     /// Updates the prefetch queue based on current visible items.
     /// Should be called after measurement to queue items for pre-composition.
     pub fn update_prefetch_queue(
-        &self, 
+        &self,
         first_visible_index: usize,
         last_visible_index: usize,
         total_items: usize,
@@ -236,6 +236,13 @@ impl LazyListState {
     pub fn scroll_to_item(&self, index: usize, scroll_offset: f32) {
         let mut inner = self.inner.borrow_mut();
         inner.pending_scroll_to_index = Some((index, scroll_offset));
+        // Also update the first visible index immediately so that if a second measure
+        // happens before the next frame, it uses the correct position
+        inner.first_visible_item_index = index;
+        inner.first_visible_item_scroll_offset = scroll_offset;
+        // Clear the last known key to prevent update_scroll_position_if_item_moved
+        // from resetting to the old position based on key lookup
+        inner.last_known_first_visible_key = None;
         drop(inner);
         self.invalidate();
     }
@@ -276,47 +283,42 @@ impl LazyListState {
         if inner.item_size_cache.len() >= MAX_CACHE_SIZE {
             // Evict item furthest from current scroll position
             let current_index = inner.first_visible_item_index;
-            let furthest_key = inner.item_size_cache
-                .keys()
-                .copied()
-                .max_by_key(|&k| {
-                    // Distance from current scroll position
-                    (k as isize - current_index as isize).unsigned_abs()
-                });
+            let furthest_key = inner.item_size_cache.keys().copied().max_by_key(|&k| {
+                // Distance from current scroll position - use abs_diff to avoid overflow
+                k.abs_diff(current_index)
+            });
             if let Some(key) = furthest_key {
                 inner.item_size_cache.remove(&key);
             }
         }
         inner.item_size_cache.insert(index, size);
-        
+
         // Update running average
         inner.total_measured_items += 1;
         let n = inner.total_measured_items as f32;
         inner.average_item_size = inner.average_item_size * ((n - 1.0) / n) + size / n;
     }
 
-    
     /// Gets a cached item size if available.
     pub(crate) fn get_cached_size(&self, index: usize) -> Option<f32> {
         self.inner.borrow().item_size_cache.get(&index).copied()
     }
-    
+
     /// Returns the running average of measured item sizes.
     pub(crate) fn average_item_size(&self) -> f32 {
         self.inner.borrow().average_item_size
     }
-    
+
     /// Returns the current nearest range for optimized key lookup.
     pub fn nearest_range(&self) -> std::ops::Range<usize> {
         self.inner.borrow().nearest_range_state.range()
     }
-    
+
     /// Updates the nearest range state based on current scroll position.
     pub fn update_nearest_range(&self) {
         let idx = self.first_visible_item_index();
         self.inner.borrow_mut().nearest_range_state.update(idx);
     }
-
 
     /// Updates the scroll position from a layout pass.
     ///
@@ -347,11 +349,11 @@ impl LazyListState {
     }
 
     /// Adjusts scroll position if the first visible item was moved due to data changes.
-    /// 
+    ///
     /// Matches JC's `updateScrollPositionIfTheFirstItemWasMoved`.
     /// If items were inserted/removed before the current scroll position,
     /// this finds the item by its key and updates the index accordingly.
-    /// 
+    ///
     /// Returns the adjusted first visible item index.
     pub fn update_scroll_position_if_item_moved<F>(
         &self,
@@ -362,13 +364,15 @@ impl LazyListState {
         F: Fn(u64) -> Option<usize>,
     {
         let mut inner = self.inner.borrow_mut();
-        
+
         // If no key stored, just clamp index to valid range
         let Some(last_key) = inner.last_known_first_visible_key else {
-            inner.first_visible_item_index = inner.first_visible_item_index.min(new_item_count.saturating_sub(1));
+            inner.first_visible_item_index = inner
+                .first_visible_item_index
+                .min(new_item_count.saturating_sub(1));
             return inner.first_visible_item_index;
         };
-        
+
         // Try to find the item by key
         if let Some(new_index) = get_index_by_key(last_key) {
             if new_index != inner.first_visible_item_index {
@@ -377,9 +381,11 @@ impl LazyListState {
             }
         } else {
             // Item removed - clamp to valid range
-            inner.first_visible_item_index = inner.first_visible_item_index.min(new_item_count.saturating_sub(1));
+            inner.first_visible_item_index = inner
+                .first_visible_item_index
+                .min(new_item_count.saturating_sub(1));
         }
-        
+
         inner.first_visible_item_index
     }
 

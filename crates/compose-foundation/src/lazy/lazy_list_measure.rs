@@ -4,7 +4,7 @@
 //! which items should be composed and measured based on the current scroll
 //! position and viewport size.
 
-use super::lazy_list_measured_item::{LazyListMeasuredItem, LazyListMeasureResult};
+use super::lazy_list_measured_item::{LazyListMeasureResult, LazyListMeasuredItem};
 use super::lazy_list_state::{LazyListLayoutInfo, LazyListState};
 
 /// Default estimated item size for scroll calculations.
@@ -33,6 +33,14 @@ pub struct LazyListMeasureConfig {
     /// Number of items to keep composed beyond visible bounds.
     /// Default is 2 items before and after.
     pub beyond_bounds_item_count: usize,
+
+    /// Vertical arrangement for distributing items.
+    /// Used when `is_vertical` is true.
+    pub vertical_arrangement: Option<compose_ui_layout::LinearArrangement>,
+
+    /// Horizontal arrangement for distributing items.
+    /// Used when `is_vertical` is false.
+    pub horizontal_arrangement: Option<compose_ui_layout::LinearArrangement>,
 }
 
 impl Default for LazyListMeasureConfig {
@@ -44,6 +52,8 @@ impl Default for LazyListMeasureConfig {
             after_content_padding: 0.0,
             spacing: 0.0,
             beyond_bounds_item_count: 2,
+            vertical_arrangement: None,
+            horizontal_arrangement: None,
         }
     }
 }
@@ -89,7 +99,9 @@ where
             (clamped, target_offset)
         } else {
             (
-                state.first_visible_item_index().min(items_count.saturating_sub(1)),
+                state
+                    .first_visible_item_index()
+                    .min(items_count.saturating_sub(1)),
                 state.first_visible_item_scroll_offset(),
             )
         };
@@ -104,7 +116,8 @@ where
     while first_item_scroll_offset < 0.0 && first_item_index > 0 {
         first_item_index -= 1;
         // Use cached size if available, otherwise use running average
-        let estimated_size = state.get_cached_size(first_item_index)
+        let estimated_size = state
+            .get_cached_size(first_item_index)
             .unwrap_or_else(|| state.average_item_size());
         first_item_scroll_offset += estimated_size + config.spacing;
     }
@@ -113,24 +126,25 @@ where
     first_item_index = first_item_index.min(items_count.saturating_sub(1));
     first_item_scroll_offset = first_item_scroll_offset.max(0.0);
 
-
     // Optimize huge forward scroll (handle scrolling past item boundaries)
     // This complements the backward scroll logic above by estimating items to skip
     if first_item_scroll_offset > 0.0 {
         let average_size = state.average_item_size();
-        
+
         if average_size > 0.0 {
             // Check if we can skip items
             // We keep a buffer of items to avoid over-skipping due to size variance
-            let buffer_pixels = viewport_size; 
+            let buffer_pixels = viewport_size;
             if first_item_scroll_offset > buffer_pixels {
                 let pixels_to_skip = first_item_scroll_offset - buffer_pixels;
                 let items_to_skip = (pixels_to_skip / average_size).floor() as usize;
-                
+
                 if items_to_skip > 0 {
-                    let max_skip = items_count.saturating_sub(1).saturating_sub(first_item_index);
+                    let max_skip = items_count
+                        .saturating_sub(1)
+                        .saturating_sub(first_item_index);
                     let actual_skip = items_to_skip.min(max_skip);
-                    
+
                     if actual_skip > 0 {
                         first_item_index += actual_skip;
                         first_item_scroll_offset -= actual_skip as f32 * average_size;
@@ -160,7 +174,9 @@ where
     }
 
     // Measure beyond-bounds items after visible
-    let after_count = config.beyond_bounds_item_count.min(items_count - current_index);
+    let after_count = config
+        .beyond_bounds_item_count
+        .min(items_count - current_index);
     for _ in 0..after_count {
         if current_index >= items_count {
             break;
@@ -204,6 +220,26 @@ where
         }
     }
 
+    // Adjust scroll offset if we scrolled past the last item
+    // Prevents the last item from scrolling above the viewport bottom
+    if !visible_items.is_empty() {
+        let last_visible = visible_items.last().unwrap();
+        let last_item_end = last_visible.offset + last_visible.main_axis_size;
+        let viewport_end = viewport_size - config.after_content_padding;
+
+        // If last item is the actual last item AND its end is above viewport bottom, clamp
+        if last_visible.index == items_count - 1 && last_item_end < viewport_end {
+            let adjustment = viewport_end - last_item_end;
+            // Only adjust if we wouldn't push first item above start
+            let first_offset_after = visible_items[0].offset + adjustment;
+            if first_offset_after <= config.before_content_padding || visible_items[0].index > 0 {
+                for item in &mut visible_items {
+                    item.offset += adjustment;
+                }
+            }
+        }
+    }
+
     // Calculate total content size (estimated)
     let total_content_size = estimate_total_content_size(
         items_count,
@@ -231,7 +267,11 @@ where
     if let Some(first) = actual_first_visible {
         state.update_scroll_position_with_key(final_first_index, final_scroll_offset, first.key);
     } else if !visible_items.is_empty() {
-        state.update_scroll_position_with_key(final_first_index, final_scroll_offset, visible_items[0].key);
+        state.update_scroll_position_with_key(
+            final_first_index,
+            final_scroll_offset,
+            visible_items[0].key,
+        );
     } else {
         state.update_scroll_position(final_first_index, final_scroll_offset);
     }
@@ -286,25 +326,24 @@ fn estimate_total_content_size(
         state_average_size
     };
 
-    config.before_content_padding
-        + (avg_size + config.spacing) * items_count as f32
+    config.before_content_padding + (avg_size + config.spacing) * items_count as f32
         - config.spacing
         + config.after_content_padding
 }
 
 /// Extended measurement context with optimization support.
-/// 
+///
 /// Contains prefetch scheduler and slot reuse pool for optimized measurement.
 pub struct LazyListMeasureContext {
     /// Scheduler for prefetching items before they become visible.
     pub prefetch_scheduler: super::PrefetchScheduler,
-    
+
     /// Pool for reusing composed item slots.
     pub slot_pool: super::SlotReusePool,
-    
+
     /// Prefetch strategy configuration.
     pub prefetch_strategy: super::PrefetchStrategy,
-    
+
     /// Previous scroll offset for direction detection.
     previous_scroll_offset: f32,
 }
@@ -338,7 +377,7 @@ impl LazyListMeasureContext {
 }
 
 /// Parameters for lazy list measurement.
-/// 
+///
 /// Bundles the non-closure arguments to avoid too-many-arguments clippy warning.
 #[derive(Clone)]
 pub struct MeasureParams<'a> {
@@ -353,7 +392,6 @@ pub struct MeasureParams<'a> {
     /// Measurement configuration.
     pub config: &'a LazyListMeasureConfig,
 }
-
 
 /// Measures a lazy list with prefetch and slot reuse optimizations.
 ///
@@ -437,7 +475,6 @@ where
 
     result
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -532,7 +569,8 @@ mod tests {
             config: &config,
         };
         let _ = measure_lazy_list_optimized(
-            params, &mut context,
+            params,
+            &mut context,
             |i| create_test_item(i, 50.0),
             |i| i as u64,
         );
@@ -558,7 +596,8 @@ mod tests {
             config: &config,
         };
         let result = measure_lazy_list_optimized(
-            params, &mut context,
+            params,
+            &mut context,
             |i| create_test_item(i, 50.0),
             |i| i as u64,
         );

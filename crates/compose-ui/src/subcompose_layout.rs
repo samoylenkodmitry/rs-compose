@@ -25,7 +25,7 @@ pub struct SubcomposeChild {
 
 impl SubcomposeChild {
     pub fn new(node_id: NodeId) -> Self {
-        Self { 
+        Self {
             node_id,
             measured_size: None,
         }
@@ -44,11 +44,14 @@ impl SubcomposeChild {
     }
 
     /// Returns the measured size of this child.
-    /// 
+    ///
     /// Returns a default size if the child hasn't been measured yet.
     /// For lazy layouts using placeholder sizes, this returns the estimated size.
     pub fn size(&self) -> Size {
-        self.measured_size.unwrap_or(Size { width: 0.0, height: 0.0 })
+        self.measured_size.unwrap_or(Size {
+            width: 0.0,
+            height: 0.0,
+        })
     }
 
     /// Returns the measured width.
@@ -132,6 +135,7 @@ pub struct SubcomposeMeasureScopeImpl<'a> {
     state: &'a mut SubcomposeState,
     constraints: Constraints,
     measurer: Box<dyn FnMut(NodeId, Constraints) -> Size + 'a>,
+    error: Rc<RefCell<Option<NodeError>>>,
 }
 
 impl<'a> SubcomposeMeasureScopeImpl<'a> {
@@ -140,12 +144,21 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
         state: &'a mut SubcomposeState,
         constraints: Constraints,
         measurer: Box<dyn FnMut(NodeId, Constraints) -> Size + 'a>,
+        error: Rc<RefCell<Option<NodeError>>>,
     ) -> Self {
         Self {
             composer,
             state,
             constraints,
             measurer,
+            error,
+        }
+    }
+
+    fn record_error(&self, err: NodeError) {
+        let mut slot = self.error.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(err);
         }
     }
 }
@@ -168,6 +181,15 @@ impl<'a> SubcomposeMeasureScope for SubcomposeMeasureScopeImpl<'a> {
     }
 
     fn measure(&mut self, child: SubcomposeChild, constraints: Constraints) -> SubcomposePlaceable {
+        if self.error.borrow().is_some() {
+            return SubcomposePlaceable::new(child.node_id, Size::default());
+        }
+
+        if let Err(err) = self.composer.apply_pending_commands() {
+            self.record_error(err);
+            return SubcomposePlaceable::new(child.node_id, Size::default());
+        }
+
         let size = (self.measurer)(child.node_id, constraints);
         SubcomposePlaceable::new(child.node_id, size)
     }
@@ -179,8 +201,8 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
     /// This is used by lazy layouts where true measurement happens later.
     /// The `estimate_size` function provides size estimates based on index.
     pub fn subcompose_with_size<Content, F>(
-        &mut self, 
-        slot_id: SlotId, 
+        &mut self,
+        slot_id: SlotId,
         content: Content,
         estimate_size: F,
     ) -> Vec<SubcomposeChild>
@@ -198,7 +220,6 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
             .collect()
     }
 }
-
 
 /// Trait object representing a reusable measure policy.
 pub type MeasurePolicy =
@@ -347,9 +368,10 @@ impl SubcomposeLayoutNodeHandle {
     pub fn measure<'a>(
         &self,
         composer: &Composer,
-        node_id: NodeId,
+        _node_id: NodeId,
         constraints: Constraints,
         measurer: Box<dyn FnMut(NodeId, Constraints) -> Size + 'a>,
+        error: Rc<RefCell<Option<NodeError>>>,
     ) -> Result<MeasureResult, NodeError> {
         let (policy, mut state, slots) = {
             let mut inner = self.inner.borrow_mut();
@@ -358,6 +380,7 @@ impl SubcomposeLayoutNodeHandle {
             let slots = std::mem::take(&mut inner.slots);
             (policy, state, slots)
         };
+        state.begin_pass();
 
         let previous = composer.phase();
         if !matches!(previous, Phase::Measure | Phase::Layout) {
@@ -366,17 +389,22 @@ impl SubcomposeLayoutNodeHandle {
 
         let slots_host = Rc::new(SlotsHost::new(slots));
         let constraints_copy = constraints;
-        let result = composer.subcompose_in(&slots_host, Some(node_id), |inner_composer| {
+        // Use subcompose_slot instead of subcompose_in to preserve slot table across
+        // measurement passes. This prevents lazy list item groups from being wiped and
+        // recreated on every scroll, which caused thrashing.
+        // TODO: validate this architecture with JC kotlin codebase
+        let result = composer.subcompose_slot(&slots_host, |inner_composer| {
             let mut scope = SubcomposeMeasureScopeImpl::new(
                 inner_composer.clone(),
                 &mut state,
                 constraints_copy,
                 measurer,
+                Rc::clone(&error),
             );
             (policy)(&mut scope, constraints_copy)
         })?;
 
-        state.dispose_or_reuse_starting_from_index(0);
+        state.finish_pass();
 
         if previous != composer.phase() {
             composer.enter_phase(previous);

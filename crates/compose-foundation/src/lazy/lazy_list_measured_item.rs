@@ -29,6 +29,10 @@ pub struct LazyListMeasuredItem {
 
     /// Node IDs of the composed item's children (for placing all subcomposed nodes).
     pub node_ids: Vec<u64>,
+
+    /// Offset of each child within the item (for stacking multiple children).
+    /// Each entry corresponds to the same index in `node_ids`.
+    pub child_offsets: Vec<f32>,
 }
 
 impl LazyListMeasuredItem {
@@ -48,6 +52,7 @@ impl LazyListMeasuredItem {
             cross_axis_size,
             offset: 0.0,
             node_ids: Vec::new(),
+            child_offsets: Vec::new(),
         }
     }
 

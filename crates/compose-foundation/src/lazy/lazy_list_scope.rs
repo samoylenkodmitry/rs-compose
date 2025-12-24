@@ -7,6 +7,52 @@
 
 use std::rc::Rc;
 
+/// Key type for lazy list items.
+///
+/// Separates user-provided keys from default index-based keys to prevent collisions.
+/// This matches JC's `getDefaultLazyLayoutKey()` pattern where a wrapper type
+/// (`DefaultLazyKey`) ensures default keys never collide with user-provided keys.
+///
+/// # JC Reference
+/// - `LazyLayoutIntervalContent.getKey()` returns `content.key?.invoke(localIndex) ?: getDefaultLazyLayoutKey(index)`
+/// - `Lazy.android.kt` defines `DefaultLazyKey(index)` as a wrapper data class
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LazyLayoutKey {
+    /// User-provided key (from `scope.item(key: Some(k), ...)` or `scope.items(key: Some(|i| ...), ...)`)
+    User(u64),
+    /// Default key based on global index. Cannot collide with User keys due to enum separation.
+    Index(usize),
+}
+
+impl LazyLayoutKey {
+    /// Converts to u64 for slot ID usage, ensuring no collision between User and Index keys.
+    ///
+    /// User keys retain their value directly.
+    /// Index keys are tagged with a high bit to ensure they never overlap with user keys
+    /// in the u64 space (users typically use small positive integers or hashes).
+    #[inline]
+    pub fn to_slot_id(self) -> u64 {
+        match self {
+            LazyLayoutKey::User(k) => k,
+            // Use high bit (bit 63) to separate index keys from user keys.
+            // This ensures Index(0) != User(0), Index(1) != User(1), etc.
+            LazyLayoutKey::Index(i) => (1u64 << 63) | (i as u64),
+        }
+    }
+
+    /// Returns true if this is a user-provided key.
+    #[inline]
+    pub fn is_user_key(self) -> bool {
+        matches!(self, LazyLayoutKey::User(_))
+    }
+
+    /// Returns true if this is a default index-based key.
+    #[inline]
+    pub fn is_index_key(self) -> bool {
+        matches!(self, LazyLayoutKey::Index(_))
+    }
+}
+
 /// Marker type for lazy scope DSL.
 #[doc(hidden)]
 pub struct LazyScopeMarker;
@@ -123,15 +169,19 @@ impl LazyListIntervalContent {
     }
 
     /// Gets the key for an item at the given global index.
-    /// Matches JC's `LazyLayoutIntervalContent.getKey(index)`.
-    pub fn get_key(&self, index: usize) -> u64 {
+    ///
+    /// Returns a [`LazyLayoutKey`] that distinguishes between user-provided keys
+    /// and default index-based keys to prevent collisions.
+    ///
+    /// Matches JC's `LazyLayoutIntervalContent.getKey(index)` pattern.
+    pub fn get_key(&self, index: usize) -> LazyLayoutKey {
         if let Some((interval, local_index)) = self.find_interval(index) {
             if let Some(key_fn) = &interval.key {
-                return key_fn(local_index);
+                return LazyLayoutKey::User(key_fn(local_index));
             }
         }
-        // Default key is the index itself (matches JC's getDefaultLazyLayoutKey)
-        index as u64
+        // Default key wraps the index (matches JC's getDefaultLazyLayoutKey)
+        LazyLayoutKey::Index(index)
     }
 
     /// Gets the content type for an item at the given global index.
@@ -167,7 +217,7 @@ impl LazyListIntervalContent {
 
     /// Returns the index of an item with the given key, or None if not found.
     /// Matches JC's `LazyLayoutItemProvider.getIndex(key: Any): Int`.
-    /// 
+    ///
     /// This is used for scroll position stability - when items are added/removed,
     /// the scroll position can be maintained by finding the new index of the
     /// item that was previously at the scroll position (identified by key).
@@ -177,25 +227,65 @@ impl LazyListIntervalContent {
     /// search. Use [`get_index_by_key_in_range`] with a [`NearestRangeState`]
     /// for efficient key lookup in large lists.
     #[must_use]
-    pub fn get_index_by_key(&self, key: u64) -> Option<usize> {
+    pub fn get_index_by_key(&self, key: LazyLayoutKey) -> Option<usize> {
         // For small lists, do full O(n) search
         const SMALL_LIST_THRESHOLD: usize = 1000;
         if self.total_count <= SMALL_LIST_THRESHOLD {
             return (0..self.total_count).find(|&index| self.get_key(index) == key);
         }
-        
+
         // For large lists, return None - caller should use get_index_by_key_in_range
         // with a NearestRangeState to limit the search
-        log::debug!("get_index_by_key: skipping O(n) search for large list ({} items)", self.total_count);
+        log::debug!(
+            "get_index_by_key: skipping O(n) search for large list ({} items)",
+            self.total_count
+        );
         None
     }
 
     /// Returns the index of an item with the given key, searching only within the range.
     /// Used with NearestRangeState for O(1) key lookup in large lists.
-    pub fn get_index_by_key_in_range(&self, key: u64, range: std::ops::Range<usize>) -> Option<usize> {
+    pub fn get_index_by_key_in_range(
+        &self,
+        key: LazyLayoutKey,
+        range: std::ops::Range<usize>,
+    ) -> Option<usize> {
         let start = range.start.min(self.total_count);
         let end = range.end.min(self.total_count);
         (start..end).find(|&index| self.get_key(index) == key)
+    }
+
+    /// Returns the index of an item with the given slot ID, or None if not found.
+    ///
+    /// This is used for scroll position stability when the stored key is a slot ID (u64).
+    /// Slot IDs are generated by `LazyLayoutKey::to_slot_id()`.
+    ///
+    /// # Warning: Large Lists
+    /// For lists with more than 1000 items, this returns `None` to avoid O(n)
+    /// search. Use [`get_index_by_slot_id_in_range`] with a range for efficient lookup.
+    #[must_use]
+    pub fn get_index_by_slot_id(&self, slot_id: u64) -> Option<usize> {
+        const SMALL_LIST_THRESHOLD: usize = 1000;
+        if self.total_count <= SMALL_LIST_THRESHOLD {
+            return (0..self.total_count)
+                .find(|&index| self.get_key(index).to_slot_id() == slot_id);
+        }
+        log::debug!(
+            "get_index_by_slot_id: skipping O(n) search for large list ({} items)",
+            self.total_count
+        );
+        None
+    }
+
+    /// Returns the index of an item with the given slot ID, searching only within the range.
+    pub fn get_index_by_slot_id_in_range(
+        &self,
+        slot_id: u64,
+        range: std::ops::Range<usize>,
+    ) -> Option<usize> {
+        let start = range.start.min(self.total_count);
+        let end = range.end.min(self.total_count);
+        (start..end).find(|&index| self.get_key(index).to_slot_id() == slot_id)
     }
 
     /// Finds the interval containing the given global index.
@@ -205,12 +295,12 @@ impl LazyListIntervalContent {
         if self.intervals.is_empty() || index >= self.total_count {
             return None;
         }
-        
+
         // Binary search to find the interval containing this index
-        let pos = self.intervals.partition_point(|interval| {
-            interval.start_index + interval.count <= index
-        });
-        
+        let pos = self
+            .intervals
+            .partition_point(|interval| interval.start_index + interval.count <= index);
+
         if pos < self.intervals.len() {
             let interval = &self.intervals[pos];
             if index >= interval.start_index && index < interval.start_index + interval.count {
@@ -330,7 +420,7 @@ mod tests {
         });
 
         assert_eq!(content.item_count(), 1);
-        assert_eq!(content.get_key(0), 42);
+        assert_eq!(content.get_key(0), LazyLayoutKey::User(42));
 
         content.invoke_content(0);
         assert!(called.get());
@@ -348,9 +438,9 @@ mod tests {
         );
 
         assert_eq!(content.item_count(), 5);
-        assert_eq!(content.get_key(0), 0);
-        assert_eq!(content.get_key(1), 10);
-        assert_eq!(content.get_key(4), 40);
+        assert_eq!(content.get_key(0), LazyLayoutKey::User(0));
+        assert_eq!(content.get_key(1), LazyLayoutKey::User(10));
+        assert_eq!(content.get_key(4), LazyLayoutKey::User(40));
     }
 
     #[test]
@@ -367,22 +457,66 @@ mod tests {
         content.item(Some(200), None, || {});
 
         assert_eq!(content.item_count(), 5);
-        assert_eq!(content.get_key(0), 100); // Header
-        assert_eq!(content.get_key(1), 0); // First item
-        assert_eq!(content.get_key(2), 1); // Second item
-        assert_eq!(content.get_key(3), 2); // Third item
-        assert_eq!(content.get_key(4), 200); // Footer
+        assert_eq!(content.get_key(0), LazyLayoutKey::User(100)); // Header
+        assert_eq!(content.get_key(1), LazyLayoutKey::User(0)); // First item
+        assert_eq!(content.get_key(2), LazyLayoutKey::User(1)); // Second item
+        assert_eq!(content.get_key(3), LazyLayoutKey::User(2)); // Third item
+        assert_eq!(content.get_key(4), LazyLayoutKey::User(200)); // Footer
     }
 
     #[test]
     fn test_with_interval() {
         let mut content = LazyListIntervalContent::new();
-        content.items(5, None::<fn(usize) -> u64>, None::<fn(usize) -> u64>, |_| {});
+        content.items(
+            5,
+            None::<fn(usize) -> u64>,
+            None::<fn(usize) -> u64>,
+            |_| {},
+        );
 
-        let result = content.with_interval(3, |local_idx, interval| {
-            (local_idx, interval.count)
-        });
+        let result = content.with_interval(3, |local_idx, interval| (local_idx, interval.count));
 
         assert_eq!(result, Some((3, 5)));
+    }
+
+    #[test]
+    fn test_user_keys_dont_collide_with_default_keys() {
+        let mut content = LazyListIntervalContent::new();
+
+        // Item 0: User key = 0
+        content.item(Some(0), None, || {});
+        // Item 1: No key (default Index(1))
+        content.item(None, None, || {});
+        // Item 2: User key = 1
+        content.item(Some(1), None, || {});
+
+        // User key 0 should NOT equal default Index(0)
+        assert_eq!(content.get_key(0), LazyLayoutKey::User(0));
+        assert_eq!(content.get_key(1), LazyLayoutKey::Index(1));
+        assert_eq!(content.get_key(2), LazyLayoutKey::User(1));
+
+        // Critically: User(0) != Index(1) and User(1) != Index(1)
+        assert_ne!(content.get_key(0), content.get_key(1));
+        assert_ne!(content.get_key(2), content.get_key(1));
+
+        // Keys should convert to different slot IDs
+        assert_ne!(
+            content.get_key(0).to_slot_id(),
+            content.get_key(1).to_slot_id()
+        );
+    }
+
+    #[test]
+    fn test_slot_id_collision_prevention() {
+        // User(0) and Index(0) should produce different slot IDs
+        let user_key = LazyLayoutKey::User(0);
+        let index_key = LazyLayoutKey::Index(0);
+
+        assert_ne!(user_key.to_slot_id(), index_key.to_slot_id());
+
+        // Index keys should have high bit set
+        assert!(index_key.to_slot_id() & (1u64 << 63) != 0);
+        // User keys should NOT have high bit set (assuming normal usage)
+        assert!(user_key.to_slot_id() & (1u64 << 63) == 0);
     }
 }

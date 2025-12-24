@@ -221,3 +221,53 @@ required-features = ["robot-app"]
 name = "robot_lazy_max_jump"
 path = "robot-runners/robot_lazy_max_jump.rs"
 required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_lifecycle"
+path = "robot-runners/robot_lazy_lifecycle.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_varheight_lifecycle"
+path = "robot-runners/robot_lazy_varheight_lifecycle.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_extreme_nav"
+path = "robot-runners/robot_lazy_extreme_nav.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_perf_validation"
+path = "robot-runners/robot_lazy_perf_validation.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_recursive_layout"
+path = "robot-runners/robot_recursive_layout.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_list_after_modifiers"
+path = "robot-runners/robot_lazy_list_after_modifiers.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_list_end_start_dup"
+path = "robot-runners/robot_lazy_list_end_start_dup.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_list_end_alignment"
+path = "robot-runners/robot_lazy_list_end_alignment.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_list_remove_dup"
+path = "robot-runners/robot_lazy_list_remove_dup.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_positioned_boxes_after_lazy_list"
+path = "robot-runners/robot_positioned_boxes_after_lazy_list.rs"
+required-features = ["robot-app"]
