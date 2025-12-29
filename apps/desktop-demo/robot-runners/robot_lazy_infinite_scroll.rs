@@ -1,5 +1,5 @@
 use compose_app::AppLauncher;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::{find_button_in_semantics, find_text_in_semantics};
 use compose_ui::widgets::{Box, BoxSpec, Button, Column, ColumnSpec, Row, RowSpec, Text};
 use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
@@ -77,65 +77,54 @@ fn main() {
              robot.exit().ok();
         })
         .run(move || {
-            let state = LazyListState::new();
-            let state_clone = state.clone();
+            let state = remember_lazy_list_state();
 
             Column(Modifier::default(), ColumnSpec::default(), move || {
                 // Controls
-                let row_state = state_clone.clone();
-
                 Row(Modifier::default().fill_max_width().height(50.0), RowSpec::default(), move || {
-                    let state = row_state.clone();
                     Button(
                         Modifier::default(),
                         move || {
-                            state.clone().scroll_to_item(99_990, 0.0);
+                            state.scroll_to_item(99_990, 0.0);
                         },
                         || { Text("Jump 1M", Modifier::default()); }
                     );
                 });
 
-                let state_clone_2 = state.clone();
-
                 Box(
                     Modifier::default().fill_max_width().height(550.0),
                     BoxSpec::default(),
                     move || {
-                        // List content defined inside closure to avoid move errors
-                        let items_content = {
-                            let mut content = LazyListIntervalContent::new();
-                            // Debugging count: 100k
-                            let count = 100_000;
-                            content.items(count, None::<fn(usize)->u64>, None::<fn(usize)->u64>, move |index| {
-                                let height = 48.0 * (index % 5) as f32;
-
-                                // Color cycle
-                                let color = match index % 5 {
-                                    0 => Color::rgb(1.0, 0.0, 0.0), // Red
-                                    1 => Color::rgb(0.0, 1.0, 0.0), // Green
-                                    2 => Color::rgb(0.0, 0.0, 1.0), // Blue
-                                    3 => Color::rgb(1.0, 1.0, 0.0), // Yellow
-                                    _ => Color::rgb(0.0, 1.0, 1.0), // Cyan
-                                };
-
-                                Box(
-                                    Modifier::default()
-                                        .size(Size { width: 300.0, height })
-                                        .background(color),
-                                    BoxSpec::new().content_alignment(Alignment::CENTER),
-                                    move || {
-                                        Text(format!("Item {}", index), Modifier::default());
-                                    }
-                                );
-                            });
-                            content
-                        };
-
+                        // Debugging count: 100k
+                        let count = 100_000;
                         LazyColumn(
                             Modifier::default().fill_max_width().fill_max_height(),
-                            state_clone_2.clone(),
+                            state,
                             LazyColumnSpec::default(),
-                            items_content,
+                            |scope| {
+                                scope.items(count, None::<fn(usize)->u64>, None::<fn(usize)->u64>, move |index| {
+                                    let height = 48.0 * (index % 5) as f32;
+
+                                    // Color cycle
+                                    let color = match index % 5 {
+                                        0 => Color::rgb(1.0, 0.0, 0.0), // Red
+                                        1 => Color::rgb(0.0, 1.0, 0.0), // Green
+                                        2 => Color::rgb(0.0, 0.0, 1.0), // Blue
+                                        3 => Color::rgb(1.0, 1.0, 0.0), // Yellow
+                                        _ => Color::rgb(0.0, 1.0, 1.0), // Cyan
+                                    };
+
+                                    Box(
+                                        Modifier::default()
+                                            .size(Size { width: 300.0, height })
+                                            .background(color),
+                                        BoxSpec::new().content_alignment(Alignment::CENTER),
+                                        move || {
+                                            Text(format!("Item {}", index), Modifier::default());
+                                        }
+                                    );
+                                });
+                            },
                         );
                     }
                 );

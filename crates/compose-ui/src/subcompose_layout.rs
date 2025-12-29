@@ -250,6 +250,26 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
     pub fn register_content_type(&mut self, slot_id: SlotId, content_type: u64) {
         self.state.register_content_type(slot_id, content_type);
     }
+
+    /// Updates the content type for a slot, handling Some→None transitions.
+    ///
+    /// If `content_type` is `Some(type)`, registers the type for the slot.
+    /// If `content_type` is `None`, removes any previously registered type.
+    /// This ensures stale types don't drive incorrect reuse after transitions.
+    pub fn update_content_type(&mut self, slot_id: SlotId, content_type: Option<u64>) {
+        self.state.update_content_type(slot_id, content_type);
+    }
+
+    /// Returns whether the last subcomposed slot was reused.
+    ///
+    /// Returns `Some(true)` if the slot already existed (was reused from pool or
+    /// was recomposed), `Some(false)` if it was newly created, or `None` if no
+    /// slot has been subcomposed yet this pass.
+    ///
+    /// This is useful for tracking composition statistics in lazy layouts.
+    pub fn was_last_slot_reused(&self) -> Option<bool> {
+        self.state.was_last_slot_reused()
+    }
 }
 
 /// Trait object representing a reusable measure policy.
@@ -287,8 +307,9 @@ impl SubcomposeLayoutNode {
             needs_focus_sync: Cell::new(false),
         };
         // Set modifier and dispatch invalidations after borrow is released
+        // Pass empty prev_caps since this is initial construction
         let (invalidations, _) = node.inner.borrow_mut().set_modifier_collect(modifier);
-        node.dispatch_modifier_invalidations(&invalidations);
+        node.dispatch_modifier_invalidations(&invalidations, NodeCapabilities::empty());
         node
     }
 
@@ -315,8 +336,9 @@ impl SubcomposeLayoutNode {
             needs_focus_sync: Cell::new(false),
         };
         // Set modifier and dispatch invalidations after borrow is released
+        // Pass empty prev_caps since this is initial construction
         let (invalidations, _) = node.inner.borrow_mut().set_modifier_collect(modifier);
-        node.dispatch_modifier_invalidations(&invalidations);
+        node.dispatch_modifier_invalidations(&invalidations, NodeCapabilities::empty());
         node
     }
 
@@ -331,13 +353,16 @@ impl SubcomposeLayoutNode {
     }
 
     pub fn set_modifier(&mut self, modifier: Modifier) {
+        // Capture capabilities BEFORE updating to detect removed modifiers
+        let prev_caps = self.modifier_capabilities();
         // Collect invalidations while inner is borrowed, then dispatch after release
         let (invalidations, modifier_changed) = {
             let mut inner = self.inner.borrow_mut();
             inner.set_modifier_collect(modifier)
         };
         // Now dispatch invalidations after the borrow is released
-        self.dispatch_modifier_invalidations(&invalidations);
+        // Pass both prev and curr caps so removed modifiers still trigger invalidation
+        self.dispatch_modifier_invalidations(&invalidations, prev_caps);
         if modifier_changed {
             self.mark_needs_measure();
             self.request_semantics_update();
@@ -479,21 +504,37 @@ impl SubcomposeLayoutNode {
     }
 
     /// Dispatches modifier invalidations to the appropriate subsystems.
-    fn dispatch_modifier_invalidations(&self, invalidations: &[ModifierInvalidation]) {
+    ///
+    /// `prev_caps` contains the capabilities BEFORE the modifier update.
+    /// Invalidations are dispatched if EITHER the previous OR current capabilities
+    /// include the relevant type. This ensures that removing the last modifier
+    /// of a type still triggers proper invalidation.
+    fn dispatch_modifier_invalidations(
+        &self,
+        invalidations: &[ModifierInvalidation],
+        prev_caps: NodeCapabilities,
+    ) {
+        let curr_caps = self.modifier_capabilities();
         for invalidation in invalidations {
             match invalidation.kind() {
                 InvalidationKind::Layout => {
-                    if self.has_layout_modifier_nodes() {
+                    if curr_caps.contains(NodeCapabilities::LAYOUT)
+                        || prev_caps.contains(NodeCapabilities::LAYOUT)
+                    {
                         self.mark_needs_measure();
                     }
                 }
                 InvalidationKind::Draw => {
-                    if self.has_draw_modifier_nodes() {
+                    if curr_caps.contains(NodeCapabilities::DRAW)
+                        || prev_caps.contains(NodeCapabilities::DRAW)
+                    {
                         self.mark_needs_redraw();
                     }
                 }
                 InvalidationKind::PointerInput => {
-                    if self.has_pointer_input_modifier_nodes() {
+                    if curr_caps.contains(NodeCapabilities::POINTER_INPUT)
+                        || prev_caps.contains(NodeCapabilities::POINTER_INPUT)
+                    {
                         self.mark_needs_pointer_pass();
                         crate::request_pointer_invalidation();
                         // Schedule pointer repass for this node
@@ -506,7 +547,9 @@ impl SubcomposeLayoutNode {
                     self.request_semantics_update();
                 }
                 InvalidationKind::Focus => {
-                    if self.has_focus_modifier_nodes() {
+                    if curr_caps.contains(NodeCapabilities::FOCUS)
+                        || prev_caps.contains(NodeCapabilities::FOCUS)
+                    {
                         self.mark_needs_focus_sync();
                         crate::request_focus_invalidation();
                         // Schedule focus invalidation for this node
@@ -743,10 +786,7 @@ impl SubcomposeLayoutNodeInner {
 
     /// Updates the modifier and collects invalidations without dispatching them.
     /// Returns the invalidations and whether the modifier changed.
-    fn set_modifier_collect(
-        &mut self,
-        modifier: Modifier,
-    ) -> (Vec<ModifierInvalidation>, bool) {
+    fn set_modifier_collect(&mut self, modifier: Modifier) -> (Vec<ModifierInvalidation>, bool) {
         let modifier_changed = self.modifier != modifier;
         self.modifier = modifier;
         self.modifier_chain.set_debug_logging(self.debug_modifiers);

@@ -244,3 +244,40 @@ fn content_type_reuse_in_subcompose_state() {
         "Should reuse node across slots with same content type"
     );
 }
+
+#[test]
+fn content_type_none_clears_policy() {
+    // This test verifies that transitioning a slot's content type to None
+    // properly clears the policy mapping, preventing stale type-based reuse.
+
+    // Test via SubcomposeState which uses ContentTypeReusePolicy
+    let mut state = SubcomposeState::new(Box::new(ContentTypeReusePolicy::new()));
+
+    // Register slot 1 with content type 100
+    state.register_content_type(SlotId::new(1), 100);
+    state.register_active(SlotId::new(1), &[10], &[]);
+
+    // Verify type is set
+    assert_eq!(state.get_content_type(SlotId::new(1)), Some(100));
+
+    // Transition to None - this should clear BOTH local and policy mappings
+    state.update_content_type(SlotId::new(1), None);
+
+    // Verify local mapping cleared
+    assert_eq!(state.get_content_type(SlotId::new(1)), None);
+
+    // Move slot 1 to reusable (goes to untyped pool since type was cleared)
+    state.dispose_or_reuse_starting_from_index(0);
+
+    // Register slot 2 with content type 100
+    state.register_content_type(SlotId::new(2), 100);
+
+    // KEY ASSERTION: Since slot 1's type was cleared, it's in the untyped pool.
+    // ContentTypeReusePolicy::are_compatible returns false for (untyped, typed) pairs.
+    // Therefore, the node should NOT be returned for a typed slot request.
+    let reused = state.take_node_from_reusables(SlotId::new(2));
+    assert_eq!(
+        reused, None,
+        "Untyped slot should not match typed slot 2 (type 100)"
+    );
+}

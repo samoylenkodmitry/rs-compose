@@ -15,13 +15,33 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! lazy_column(modifier, state, |scope| {
-//!     scope.items(&my_data, |item| {
-//!         Text::new(item.name.clone())
+//! use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
+//! use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
+//!
+//! let state = remember_lazy_list_state();
+//! LazyColumn(Modifier::empty(), state, LazyColumnSpec::default(), |scope| {
+//!     scope.items(100, None::<fn(usize)->u64>, None::<fn(usize)->u64>, |i| {
+//!         Text(format!("Item {}", i), Modifier::empty());
+//!     });
+//! });
+//! ```
+//!
+//! For convenience with slices, use the [`LazyListScopeExt`] extension methods:
+//!
+//! ```rust,ignore
+//! use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
+//! use compose_foundation::lazy::{remember_lazy_list_state, LazyListScopeExt};
+//!
+//! let state = remember_lazy_list_state();
+//! LazyColumn(Modifier::empty(), state, LazyColumnSpec::default(), |scope| {
+//!     scope.items_slice(&my_data, |item| {
+//!         Text(item.name.clone(), Modifier::empty());
 //!     });
 //! });
 //! ```
 
+mod bounds_adjuster;
+mod item_measurer;
 mod item_provider;
 mod lazy_list_layout_info;
 mod lazy_list_measure;
@@ -30,6 +50,8 @@ mod lazy_list_scope;
 mod lazy_list_state;
 mod nearest_range;
 mod prefetch;
+mod scroll_position_resolver;
+mod viewport;
 
 pub use item_provider::*;
 pub use lazy_list_measure::*;

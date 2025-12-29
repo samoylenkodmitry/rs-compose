@@ -15,7 +15,7 @@
 
 use compose_app::AppLauncher;
 use compose_core::useState;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::{find_button, find_in_semantics, find_text_in_semantics};
 use compose_ui::widgets::*;
 use compose_ui::{Color, Modifier};
@@ -27,7 +27,7 @@ fn test_app() {
 
     // State to track color scheme
     let color_scheme = useState(|| 0u32);
-    let list_state = LazyListState::new();
+    let list_state = remember_lazy_list_state();
 
     Column(
         Modifier::empty()
@@ -77,51 +77,49 @@ fn test_app() {
                 },
             );
 
-            // Build lazy content with colored items
+            // LazyColumn using SubcomposeLayoutNode internally with colored items
             let scheme = current_scheme;
-            let mut content = LazyListIntervalContent::new();
-            content.items(
-                5,
-                Some(|i: usize| i as u64),
-                None::<fn(usize) -> u64>,
-                move |i| {
-                    // Colors that change based on scheme
-                    let bg = match scheme {
-                        0 => Color(0.1, 0.15, 0.3 + (i as f32 * 0.05), 1.0), // Blue
-                        1 => Color(0.1, 0.3 + (i as f32 * 0.05), 0.15, 1.0), // Green
-                        2 => Color(0.3 + (i as f32 * 0.05), 0.1, 0.15, 1.0), // Red
-                        _ => Color(0.2, 0.2, 0.2, 1.0),
-                    };
-
-                    Row(
-                        Modifier::empty()
-                            .fill_max_width()
-                            .height(60.0)
-                            .padding(10.0)
-                            .background(bg)
-                            .semantics(move |c| {
-                                c.content_description = Some(format!("item{}", i));
-                            }),
-                        RowSpec::new(),
-                        move || {
-                            Text(
-                                format!("Item {} - Scheme {}", i, scheme),
-                                Modifier::empty(),
-                            );
-                        },
-                    );
-                },
-            );
-
-            // LazyColumn using SubcomposeLayoutNode internally
             LazyColumn(
                 Modifier::empty()
                     .fill_max_width()
                     .height(350.0)
                     .background(Color(0.05, 0.05, 0.1, 1.0)),
-                list_state.clone(),
+                list_state,
                 LazyColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(4.0)),
-                content,
+                |scope| {
+                    scope.items(
+                        5,
+                        Some(|i: usize| i as u64),
+                        None::<fn(usize) -> u64>,
+                        move |i| {
+                            // Colors that change based on scheme
+                            let bg = match scheme {
+                                0 => Color(0.1, 0.15, 0.3 + (i as f32 * 0.05), 1.0), // Blue
+                                1 => Color(0.1, 0.3 + (i as f32 * 0.05), 0.15, 1.0), // Green
+                                2 => Color(0.3 + (i as f32 * 0.05), 0.1, 0.15, 1.0), // Red
+                                _ => Color(0.2, 0.2, 0.2, 1.0),
+                            };
+
+                            Row(
+                                Modifier::empty()
+                                    .fill_max_width()
+                                    .height(60.0)
+                                    .padding(10.0)
+                                    .background(bg)
+                                    .semantics(move |c| {
+                                        c.content_description = Some(format!("item{}", i));
+                                    }),
+                                RowSpec::new(),
+                                move || {
+                                    Text(
+                                        format!("Item {} - Scheme {}", i, scheme),
+                                        Modifier::empty(),
+                                    );
+                                },
+                            );
+                        },
+                    );
+                },
             );
         },
     );

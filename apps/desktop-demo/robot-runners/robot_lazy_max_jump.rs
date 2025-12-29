@@ -8,7 +8,7 @@
 //! Height pattern: index % 5 -> 0=48, 1=56, 2=64, 3=72, 4=80
 
 use compose_app::AppLauncher;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::{find_button_in_semantics, find_text_in_semantics};
 use compose_ui::widgets::{
     Box, BoxSpec, Button, Column, ColumnSpec, LazyColumn, LazyColumnSpec, Row, RowSpec, Text,
@@ -128,8 +128,7 @@ fn main() {
             robot.exit().ok();
         })
         .run(|| {
-            let state = LazyListState::new();
-            let state_for_jump = state.clone();
+            let state = remember_lazy_list_state();
             let item_count = compose_core::useState(|| 100usize);
 
             Column(
@@ -137,19 +136,15 @@ fn main() {
                 ColumnSpec::default(),
                 move || {
                     // Control buttons row
-                    let count_state = item_count;
-                    let jump_state = state_for_jump.clone();
-
                     Row(
                         Modifier::default().fill_max_width().height(50.0),
                         RowSpec::default(),
                         move || {
                             // Set MAX button
-                            let count = count_state;
                             Button(
                                 Modifier::default().background(Color::rgb(0.6, 0.3, 0.6)),
                                 move || {
-                                    count.set(usize::MAX);
+                                    item_count.set(usize::MAX);
                                 },
                                 || {
                                     Text("Set MAX", Modifier::default());
@@ -157,12 +152,10 @@ fn main() {
                             );
 
                             // Go Middle button
-                            let state = jump_state.clone();
-                            let count = count_state;
                             Button(
                                 Modifier::default().background(Color::rgb(0.3, 0.4, 0.6)),
                                 move || {
-                                    let c = count.get();
+                                    let c = item_count.get();
                                     let middle = c / 2;
                                     state.scroll_to_item(middle, 0.0);
                                 },
@@ -174,46 +167,47 @@ fn main() {
                     );
 
                     // LazyColumn with variable height items
-                    let state_for_box = state.clone();
                     Box(
                         Modifier::default().fill_max_width().weight(1.0),
                         BoxSpec::new().content_alignment(Alignment::TOP_START),
                         move || {
                             let count = item_count.get();
-                            let mut content = LazyListIntervalContent::new();
-                            content.items(
-                                count,
-                                None::<fn(usize) -> u64>,
-                                None::<fn(usize) -> u64>,
-                                move |index| {
-                                    // Height: 48 + (index % 5) * 8 -> 48, 56, 64, 72, 80
-                                    let height = 48.0 + (index % 5) as f32 * 8.0;
-                                    let bg = if index % 2 == 0 {
-                                        Color::rgb(0.2, 0.3, 0.4)
-                                    } else {
-                                        Color::rgb(0.3, 0.4, 0.5)
-                                    };
+                            LazyColumn(
+                                Modifier::default().fill_max_size(),
+                                state,
+                                LazyColumnSpec::default(),
+                                |scope| {
+                                    scope.items(
+                                        count,
+                                        None::<fn(usize) -> u64>,
+                                        None::<fn(usize) -> u64>,
+                                        move |index| {
+                                            // Height: 48 + (index % 5) * 8 -> 48, 56, 64, 72, 80
+                                            let height = 48.0 + (index % 5) as f32 * 8.0;
+                                            let bg = if index % 2 == 0 {
+                                                Color::rgb(0.2, 0.3, 0.4)
+                                            } else {
+                                                Color::rgb(0.3, 0.4, 0.5)
+                                            };
 
-                                    Box(
-                                        Modifier::default()
-                                            .size(Size {
-                                                width: 400.0,
-                                                height,
-                                            })
-                                            .background(bg),
-                                        BoxSpec::new().content_alignment(Alignment::CENTER),
-                                        move || {
-                                            Text(format!("Item {}", index), Modifier::default());
+                                            Box(
+                                                Modifier::default()
+                                                    .size(Size {
+                                                        width: 400.0,
+                                                        height,
+                                                    })
+                                                    .background(bg),
+                                                BoxSpec::new().content_alignment(Alignment::CENTER),
+                                                move || {
+                                                    Text(
+                                                        format!("Item {}", index),
+                                                        Modifier::default(),
+                                                    );
+                                                },
+                                            );
                                         },
                                     );
                                 },
-                            );
-
-                            LazyColumn(
-                                Modifier::default().fill_max_size(),
-                                state_for_box.clone(),
-                                LazyColumnSpec::default(),
-                                content,
                             );
                         },
                     );

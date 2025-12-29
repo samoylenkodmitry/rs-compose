@@ -1,5 +1,5 @@
 use compose_app::AppLauncher;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::{find_button_in_semantics, find_text_in_semantics};
 use compose_ui::widgets::{Box, BoxSpec, Button, Column, ColumnSpec, Row, RowSpec, Text};
 use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
@@ -60,22 +60,19 @@ fn main() {
             robot.exit().ok();
         })
         .run(|| {
-            let state = LazyListState::new();
-            let state_clone = state.clone();
+            let state = remember_lazy_list_state();
 
             Column(Modifier::default(), ColumnSpec::default(), move || {
                 // Controls
-                let row_state = state_clone.clone();
                 Row(
                     Modifier::default().fill_max_width().height(50.0),
                     RowSpec::default(),
                     move || {
-                        let state = row_state.clone();
                         Button(
                             Modifier::default(),
                             move || {
                                 // On Click
-                                state.clone().scroll_to_item(50, 0.0);
+                                state.scroll_to_item(50, 0.0);
                             },
                             || {
                                 Text("Jump 50", Modifier::default());
@@ -85,46 +82,42 @@ fn main() {
                 );
 
                 // List
-                let items_content = {
-                    let mut content = LazyListIntervalContent::new();
-                    content.items(
-                        100,
-                        None::<fn(usize) -> u64>,
-                        None::<fn(usize) -> u64>,
-                        move |index| {
-                            let height = match index % 3 {
-                                0 => 50.0,
-                                1 => 100.0,
-                                _ => 150.0,
-                            };
-                            let color = match index % 3 {
-                                0 => Color::RED,
-                                1 => Color::GREEN,
-                                _ => Color::BLUE,
-                            };
-
-                            Box(
-                                Modifier::default()
-                                    .size(Size {
-                                        width: 300.0,
-                                        height,
-                                    })
-                                    .background(color),
-                                BoxSpec::new().content_alignment(Alignment::CENTER),
-                                move || {
-                                    Text(format!("Item {}", index), Modifier::default());
-                                },
-                            );
-                        },
-                    );
-                    content
-                };
-
                 LazyColumn(
                     Modifier::default().fill_max_width().fill_max_height(),
-                    state.clone(),
+                    state,
                     LazyColumnSpec::default(),
-                    items_content,
+                    |scope| {
+                        scope.items(
+                            100,
+                            None::<fn(usize) -> u64>,
+                            None::<fn(usize) -> u64>,
+                            move |index| {
+                                let height = match index % 3 {
+                                    0 => 50.0,
+                                    1 => 100.0,
+                                    _ => 150.0,
+                                };
+                                let color = match index % 3 {
+                                    0 => Color::RED,
+                                    1 => Color::GREEN,
+                                    _ => Color::BLUE,
+                                };
+
+                                Box(
+                                    Modifier::default()
+                                        .size(Size {
+                                            width: 300.0,
+                                            height,
+                                        })
+                                        .background(color),
+                                    BoxSpec::new().content_alignment(Alignment::CENTER),
+                                    move || {
+                                        Text(format!("Item {}", index), Modifier::default());
+                                    },
+                                );
+                            },
+                        );
+                    },
                 );
             });
         });

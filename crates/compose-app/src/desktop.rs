@@ -9,9 +9,9 @@ use compose_render_wgpu::WgpuRenderer;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ButtonSource, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 #[cfg(feature = "robot")]
 use compose_ui::{LayoutBox, SemanticsAction, SemanticsNode, SemanticsRole};
@@ -512,8 +512,8 @@ struct App {
     settings: AppSettings,
     /// Content function to be called (taken on first resume)
     content: Option<Box<dyn FnMut()>>,
-    /// Window (created on resumed)
-    window: Option<Arc<Window>>,
+    /// Window (created when surfaces can be created)
+    window: Option<Arc<dyn Window>>,
     /// WGPU surface
     surface: Option<wgpu::Surface<'static>>,
     /// Surface configuration
@@ -552,7 +552,7 @@ impl App {
 }
 
 impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         // Create window if not already created
         if self.window.is_some() {
             return;
@@ -561,12 +561,12 @@ impl ApplicationHandler for App {
         let initial_width = self.settings.initial_width;
         let initial_height = self.settings.initial_height;
 
-        let window = Arc::new(
+        let window: Arc<dyn Window> = Arc::from(
             event_loop
                 .create_window(
-                    Window::default_attributes()
+                    WindowAttributes::default()
                         .with_title(self.settings.window_title.clone())
-                        .with_inner_size(LogicalSize::new(
+                        .with_surface_size(LogicalSize::new(
                             initial_width as f64,
                             initial_height as f64,
                         )),
@@ -659,7 +659,7 @@ impl ApplicationHandler for App {
         }))
         .expect("failed to create device");
 
-        let size = window.inner_size();
+        let size = window.surface_size();
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
@@ -712,7 +712,7 @@ impl ApplicationHandler for App {
 
     fn window_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -734,7 +734,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-            WindowEvent::Resized(new_size) => {
+            WindowEvent::SurfaceResized(new_size) => {
                 if new_size.width > 0 && new_size.height > 0 {
                     surface_config.width = new_size.width;
                     surface_config.height = new_size.height;
@@ -749,11 +749,16 @@ impl ApplicationHandler for App {
                     app.set_viewport(logical_width, logical_height);
                 }
             }
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                surface_size_writer,
+            } => {
                 platform.set_scale_factor(scale_factor);
                 app.renderer().set_root_scale(scale_factor as f32);
 
-                let new_size = window.inner_size();
+                let new_size = surface_size_writer
+                    .surface_size()
+                    .unwrap_or_else(|_| window.surface_size());
                 if new_size.width > 0 && new_size.height > 0 {
                     surface_config.width = new_size.width;
                     surface_config.height = new_size.height;
@@ -767,35 +772,52 @@ impl ApplicationHandler for App {
                     app.set_viewport(logical_width, logical_height);
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                let logical = platform.pointer_position(position);
-                app.set_cursor(logical.x, logical.y);
+            WindowEvent::PointerMoved {
+                position, primary, ..
+            } => {
+                if primary {
+                    let logical = platform.pointer_position(position);
+                    app.set_cursor(logical.x, logical.y);
+                }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 // Track current keyboard modifiers for key events
                 self.current_modifiers = modifiers.state();
             }
-            WindowEvent::MouseInput {
+            WindowEvent::PointerButton {
                 state,
-                button: MouseButton::Left,
+                position,
+                primary,
+                button: ButtonSource::Mouse(MouseButton::Left),
                 ..
-            } => match state {
-                ElementState::Pressed => {
-                    app.pointer_pressed();
+            } => {
+                if primary {
+                    let logical = platform.pointer_position(position);
+                    app.set_cursor(logical.x, logical.y);
+                    match state {
+                        ElementState::Pressed => {
+                            app.pointer_pressed();
+                        }
+                        ElementState::Released => {
+                            app.pointer_released();
+                            // Sync selection to PRIMARY (Linux X11 middle-click paste)
+                            app.sync_selection_to_primary();
+                        }
+                    }
                 }
-                ElementState::Released => {
-                    app.pointer_released();
-                    // Sync selection to PRIMARY (Linux X11 middle-click paste)
-                    app.sync_selection_to_primary();
-                }
-            },
+            }
             // Middle-click paste from Linux primary selection
-            WindowEvent::MouseInput {
+            WindowEvent::PointerButton {
                 state: ElementState::Pressed,
-                button: MouseButton::Middle,
+                position,
+                primary,
+                button: ButtonSource::Mouse(MouseButton::Middle),
                 ..
-            } =>
-            {
+            } => {
+                if primary {
+                    let logical = platform.pointer_position(position);
+                    app.set_cursor(logical.x, logical.y);
+                }
                 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
                 if let Some(text) = app.get_primary_selection() {
                     if app.on_paste(&text) {
@@ -816,7 +838,6 @@ impl ApplicationHandler for App {
                 // Get text from logical key
                 let text = match &event.logical_key {
                     Key::Character(s) => s.to_string(),
-                    Key::Named(winit::keyboard::NamedKey::Space) => " ".to_string(),
                     _ => String::new(),
                 };
 
@@ -878,10 +899,18 @@ impl ApplicationHandler for App {
 
                 // Convert winit modifier state to our Modifiers struct
                 let modifiers = Modifiers {
-                    shift: self.current_modifiers.shift_key(),
-                    ctrl: self.current_modifiers.control_key(),
-                    alt: self.current_modifiers.alt_key(),
-                    meta: self.current_modifiers.super_key(),
+                    shift: self
+                        .current_modifiers
+                        .contains(winit::keyboard::ModifiersState::SHIFT),
+                    ctrl: self
+                        .current_modifiers
+                        .contains(winit::keyboard::ModifiersState::CONTROL),
+                    alt: self
+                        .current_modifiers
+                        .contains(winit::keyboard::ModifiersState::ALT),
+                    meta: self
+                        .current_modifiers
+                        .contains(winit::keyboard::ModifiersState::META),
                 };
 
                 let key_event = KeyEvent::new(key_code, text, modifiers, event_type);
@@ -919,6 +948,14 @@ impl ApplicationHandler for App {
                             window.request_redraw();
                         }
                     }
+                    Ime::DeleteSurrounding {
+                        before_bytes,
+                        after_bytes,
+                    } => {
+                        if app.on_ime_delete_surrounding(before_bytes, after_bytes) {
+                            window.request_redraw();
+                        }
+                    }
                     Ime::Enabled => {
                         // IME was enabled - no action needed
                     }
@@ -930,9 +967,11 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            WindowEvent::CursorLeft { .. } => {
-                // Cursor left the window - cancel any in-progress gestures
-                app.cancel_gesture();
+            WindowEvent::PointerLeft { primary, .. } => {
+                if primary {
+                    // Pointer left the window - cancel any in-progress gestures
+                    app.cancel_gesture();
+                }
             }
             WindowEvent::RedrawRequested => {
                 app.update();
@@ -941,7 +980,7 @@ impl ApplicationHandler for App {
                     Ok(output) => output,
                     Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
                         // Reconfigure surface with current window size
-                        let size = window.inner_size();
+                        let size = window.surface_size();
                         if size.width > 0 && size.height > 0 {
                             surface_config.width = size.width;
                             surface_config.height = size.height;
@@ -983,7 +1022,7 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         let Some(app) = &mut self.app else { return };
         let Some(window) = &self.window else { return };
 
@@ -1278,7 +1317,7 @@ pub fn run(mut settings: AppSettings, content: impl FnMut() + 'static) -> ! {
         app.set_robot_controller(controller);
     }
 
-    let _ = event_loop.run_app(&mut app);
+    let _ = event_loop.run_app(app);
 
     std::process::exit(0)
 }

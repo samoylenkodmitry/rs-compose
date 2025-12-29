@@ -218,6 +218,11 @@ path = "robot-runners/robot_lazy_complex_scroll.rs"
 required-features = ["robot-app"]
 
 [[example]]
+name = "robot_lazy_duplication_bug"
+path = "robot-runners/robot_lazy_duplication_bug.rs"
+required-features = ["robot-app"]
+
+[[example]]
 name = "robot_lazy_infinite_scroll"
 path = "robot-runners/robot_lazy_infinite_scroll.rs"
 required-features = ["robot-app"]
@@ -290,4 +295,24 @@ required-features = ["robot-app"]
 [[example]]
 name = "robot_lazy_recursive_composition"
 path = "robot-runners/robot_lazy_recursive_composition.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_list_state_reactivity"
+path = "robot-runners/robot_lazy_list_state_reactivity.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_items_rc"
+path = "robot-runners/robot_lazy_items_rc.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_items_provider"
+path = "robot-runners/robot_lazy_items_provider.rs"
+required-features = ["robot-app"]
+
+[[example]]
+name = "robot_lazy_scroll_edge_cases"
+path = "robot-runners/robot_lazy_scroll_edge_cases.rs"
 required-features = ["robot-app"]

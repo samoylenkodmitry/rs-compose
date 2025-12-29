@@ -3,8 +3,6 @@
 //! This module defines the [`LazyLayoutItemProvider`] trait which provides
 //! all needed information about items for lazy composition and measurement.
 
-use std::any::Any;
-
 /// Provides all the needed info about items which could be composed and
 /// measured by lazy layouts.
 ///
@@ -31,7 +29,9 @@ pub trait LazyLayoutItemProvider {
     ///
     /// Items with the same content type can be reused more efficiently.
     /// Returns `None` for items with no specific type (compatible with any).
-    fn get_content_type(&self, index: usize) -> Option<&dyn Any> {
+    ///
+    /// Content types are represented as `u64` for efficient comparison and storage.
+    fn get_content_type(&self, index: usize) -> Option<u64> {
         let _ = index;
         None
     }

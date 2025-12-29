@@ -3,7 +3,7 @@
 //! This module contains the lazy list demonstration for the desktop-demo app.
 
 use compose_core::{DisposableEffect, DisposableEffectResult, MutableState};
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_foundation::SemanticsConfiguration;
 use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
 use compose_ui::{
@@ -42,6 +42,58 @@ fn LifecycleStatsDisplay(stats: MutableState<LifecycleStats>) {
         Modifier::empty()
             .padding(8.0)
             .background(Color(0.0, 0.4, 0.2, 0.8))
+            .rounded_corners(8.0),
+    );
+}
+
+/// Displays the visible and cached item counts from LazyListState.
+/// This is in its own composable scope to isolate stats() reactivity.
+/// The reactive read happens INSIDE this function, not at the call site.
+#[allow(non_snake_case)]
+#[composable]
+fn LazyListStatsDisplay(list_state: compose_foundation::lazy::LazyListState) {
+    // Reactive read happens here - isolated from parent scope
+    let stats = list_state.stats();
+    let visible = stats.items_in_use;
+    let cached = stats.items_in_pool;
+    println!("Compose stats text, visible={visible}");
+
+    Row(
+        Modifier::empty(),
+        RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(16.0)),
+        move || {
+            Text(
+                format!("Visible: {}", visible),
+                Modifier::empty()
+                    .padding(8.0)
+                    .background(Color(0.2, 0.5, 0.3, 0.8))
+                    .rounded_corners(8.0),
+            );
+            Text(
+                format!("Cached: {}", cached),
+                Modifier::empty()
+                    .padding(8.0)
+                    .background(Color(0.5, 0.4, 0.2, 0.8))
+                    .rounded_corners(8.0),
+            );
+        },
+    );
+}
+
+/// Displays the first visible item index from LazyListState.
+/// This is in its own composable scope to isolate first_visible_item_index() reactivity.
+/// The reactive read happens INSIDE this function, not at the call site.
+#[allow(non_snake_case)]
+#[composable]
+fn FirstVisibleIndexDisplay(list_state: compose_foundation::lazy::LazyListState) {
+    // Reactive read happens here - isolated from parent scope
+    let first_index = list_state.first_visible_item_index();
+    println!("Compose ISOLATED FirstIndex text: {}", first_index);
+    Text(
+        format!("FirstIndex: {}", first_index),
+        Modifier::empty()
+            .padding(8.0)
+            .background(Color(0.4, 0.3, 0.5, 0.8))
             .rounded_corners(8.0),
     );
 }
@@ -129,41 +181,11 @@ fn LifecycleListItem(index: usize, stats: MutableState<LifecycleStats>) {
     );
 }
 
-fn build_lazy_list_content(
-    count: usize,
-    stats: MutableState<LifecycleStats>,
-) -> LazyListIntervalContent {
-    println!("build items");
-    let mut content = LazyListIntervalContent::new();
-    content.items(
-        count,
-        None::<fn(usize) -> u64>, // Auto-generate keys from index
-        // Content type = index % 5 to match height groups (40/60/80/100/120px)
-        // This allows content-type reuse to prefer slots with matching heights
-        Some(|index: usize| (index % 5) as u64),
-        move |index| {
-            LifecycleListItem(index, stats);
-            Text(
-                format!("Hello #{}", index),
-                Modifier::empty()
-                    .padding(8.0)
-                    .background(Color(0.3, 0.3, 0.4, 0.4))
-                    .rounded_corners(8.0),
-            );
-        },
-    );
-    content
-}
-
 #[composable]
 pub fn lazy_list_example() {
-    let list_state = compose_core::remember(LazyListState::new).with(|s| s.clone());
+    let list_state = remember_lazy_list_state();
     let item_count = compose_core::useState(|| 100usize);
     let lifecycle_stats = compose_core::useState(LifecycleStats::default);
-
-    let list_state_for_lazy_column = list_state.clone();
-    let list_state_for_stats = list_state.clone();
-    let list_state_for_button = list_state.clone();
 
     Column(
         Modifier::empty()
@@ -208,34 +230,18 @@ pub fn lazy_list_example() {
                 height: 8.0,
             });
 
-            // Stats from LazyListState (updated via SideEffect after measurement)
-            // Using cached values that trigger recomposition when changed
-            let list_state = list_state_for_stats.clone();
-            Row(
-                Modifier::empty().fill_max_width(),
-                RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(16.0)),
-                move || {
-                    // Stats are now reactive - reading creates a subscription and triggers recomposition
-                    let stats = list_state.stats();
-                    let visible = stats.items_in_use;
-                    let cached = stats.items_in_pool;
-                    println!("Compose stats text, visible={visible}");
-                    Text(
-                        format!("Visible: {}", visible),
-                        Modifier::empty()
-                            .padding(8.0)
-                            .background(Color(0.2, 0.5, 0.3, 0.8))
-                            .rounded_corners(8.0),
-                    );
-                    Text(
-                        format!("Cached: {}", cached),
-                        Modifier::empty()
-                            .padding(8.0)
-                            .background(Color(0.5, 0.4, 0.2, 0.8))
-                            .rounded_corners(8.0),
-                    );
-                },
-            );
+            // Stats from LazyListState - in its own isolated composable scope
+            // Reactive read happens INSIDE LazyListStatsDisplay, not here
+            LazyListStatsDisplay(list_state);
+
+            Spacer(Size {
+                width: 0.0,
+                height: 8.0,
+            });
+
+            // First visible item index - in its own isolated composable scope
+            // Reactive read happens INSIDE FirstVisibleIndexDisplay, not here
+            FirstVisibleIndexDisplay(list_state);
 
             Spacer(Size {
                 width: 0.0,
@@ -296,7 +302,6 @@ pub fn lazy_list_example() {
             });
 
             // Extreme demo row
-            let list_state_for_button = list_state_for_button.clone();
             Row(
                 Modifier::empty().fill_max_width(),
                 RowSpec::new().horizontal_arrangement(LinearArrangement::SpacedBy(8.0)),
@@ -335,12 +340,11 @@ pub fn lazy_list_example() {
                             })
                             .padding(10.0),
                         {
-                            let state = list_state_for_button.clone();
                             let count_state = item_count;
                             move || {
                                 let count = count_state.get();
                                 let middle = count / 2;
-                                state.scroll_to_item(middle, 0.0);
+                                list_state.scroll_to_item(middle, 0.0);
                             }
                         },
                         || {
@@ -360,9 +364,8 @@ pub fn lazy_list_example() {
                             })
                             .padding(10.0),
                         {
-                            let state = list_state_for_button.clone();
                             move || {
-                                state.scroll_to_item(0, 0.0);
+                                list_state.scroll_to_item(0, 0.0);
                             }
                         },
                         || {
@@ -382,12 +385,11 @@ pub fn lazy_list_example() {
                             })
                             .padding(10.0),
                         {
-                            let state = list_state_for_button.clone();
                             let count_state = item_count;
                             move || {
                                 let count = count_state.get();
                                 if count > 0 {
-                                    state.scroll_to_item(count - 1, 0.0);
+                                    list_state.scroll_to_item(count - 1, 0.0);
                                 }
                             }
                         },
@@ -403,12 +405,8 @@ pub fn lazy_list_example() {
                 height: 16.0,
             });
 
-            // Build LazyColumn content
+            // The actual LazyColumn with virtualization using the DSL
             let count = item_count.get();
-            let content = build_lazy_list_content(count, lifecycle_stats);
-
-            // The actual LazyColumn with virtualization
-            // LazyListState handles scroll internally (matching JC API)
             LazyColumn(
                 Modifier::empty()
                     .semantics(|config: &mut SemanticsConfiguration| {
@@ -418,9 +416,26 @@ pub fn lazy_list_example() {
                     .height(400.0)
                     .background(Color(0.06, 0.08, 0.14, 1.0))
                     .rounded_corners(12.0),
-                list_state_for_lazy_column.clone(),
+                list_state,
                 LazyColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(4.0)),
-                content,
+                |scope| {
+                    scope.items(
+                        count,
+                        None::<fn(usize) -> u64>, // Auto-generate keys from index
+                        // Content type = index % 5 to match height groups
+                        Some(|index: usize| (index % 5) as u64),
+                        move |index| {
+                            LifecycleListItem(index, lifecycle_stats);
+                            Text(
+                                format!("Hello #{}", index),
+                                Modifier::empty()
+                                    .padding(8.0)
+                                    .background(Color(0.3, 0.3, 0.4, 0.4))
+                                    .rounded_corners(8.0),
+                            );
+                        },
+                    );
+                },
             );
         },
     );

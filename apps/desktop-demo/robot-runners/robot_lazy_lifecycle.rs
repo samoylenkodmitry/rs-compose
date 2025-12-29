@@ -10,7 +10,7 @@
 
 use compose_app::AppLauncher;
 use compose_core::{DisposableEffect, DisposableEffectResult, MutableState};
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope, LazyListState};
 use compose_macros::composable;
 use compose_testing::find_text_in_semantics;
 use compose_ui::widgets::*;
@@ -43,16 +43,6 @@ fn stats_display(stats: MutableState<LifecycleStats>) {
 
 /// Lazy list component - NOT composable (LazyListState doesn't impl PartialEq)
 fn lifecycle_lazy_list(state: LazyListState, stats: MutableState<LifecycleStats>) {
-    let mut content = LazyListIntervalContent::new();
-    content.items(
-        20,
-        Some(|i: usize| i as u64),
-        None::<fn(usize) -> u64>,
-        move |index| {
-            lifecycle_item(index, stats);
-        },
-    );
-
     LazyColumn(
         Modifier::empty()
             .fill_max_width()
@@ -63,14 +53,23 @@ fn lifecycle_lazy_list(state: LazyListState, stats: MutableState<LifecycleStats>
         LazyColumnSpec::new()
             .vertical_arrangement(LinearArrangement::SpacedBy(4.0))
             .content_padding(8.0, 8.0),
-        content,
+        |scope| {
+            scope.items(
+                20,
+                Some(|i: usize| i as u64),
+                None::<fn(usize) -> u64>,
+                move |index| {
+                    lifecycle_item(index, stats);
+                },
+            );
+        },
     );
 }
 
 #[composable]
 fn lifecycle_test_app() {
     let stats: MutableState<LifecycleStats> = compose_core::useState(LifecycleStats::default);
-    let state = compose_core::remember(LazyListState::new).with(|s| s.clone());
+    let state = remember_lazy_list_state();
 
     Column(
         Modifier::empty()

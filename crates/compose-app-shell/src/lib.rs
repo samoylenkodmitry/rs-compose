@@ -248,7 +248,24 @@ where
                 }
 
                 // Gesture exists but we can't resolve any nodes (removed / no hit region).
-                // Do NOT switch to hover mode while buttons are pressed.
+                // Fall back to a fresh hit test so gestures can continue after node disposal.
+                let hits = self.renderer.scene().hit_test(x, y);
+                if !hits.is_empty() {
+                    let node_ids: Vec<_> = hits.iter().map(|h| h.node_id()).collect();
+                    self.hit_path_tracker
+                        .add_hit_path(PointerId::PRIMARY, node_ids);
+                    let event =
+                        PointerEvent::new(PointerEventKind::Move, Point { x, y }, Point { x, y })
+                            .with_buttons(self.buttons_pressed);
+                    for hit in hits {
+                        hit.dispatch(event.clone());
+                        if event.is_consumed() {
+                            break;
+                        }
+                    }
+                    self.mark_dirty();
+                    return true;
+                }
                 return false;
             }
 
@@ -599,6 +616,22 @@ where
         handled
     }
 
+    /// Handles IME delete-surrounding events.
+    /// Returns `true` if a text field consumed the event.
+    pub fn on_ime_delete_surrounding(&mut self, before_bytes: usize, after_bytes: usize) -> bool {
+        let handled = run_in_mutable_snapshot(|| {
+            compose_ui::text_field_focus::dispatch_delete_surrounding(before_bytes, after_bytes)
+        })
+        .unwrap_or(false);
+
+        if handled {
+            self.mark_dirty();
+            self.layout_dirty = true;
+        }
+
+        handled
+    }
+
     pub fn log_debug_info(&mut self) {
         println!("\n\n");
         println!("════════════════════════════════════════════════════════");
@@ -643,7 +676,8 @@ where
         // This bubbles dirty flags up from specific nodes WITHOUT invalidating all caches.
         // Result: O(subtree) remeasurement, not O(app).
         let repass_nodes = compose_ui::take_layout_repass_nodes();
-        if !repass_nodes.is_empty() {
+        let had_repass_nodes = !repass_nodes.is_empty();
+        if had_repass_nodes {
             let mut applier = self.composition.applier_mut();
             for node_id in repass_nodes {
                 compose_core::bubble_layout_dirty(
@@ -674,10 +708,13 @@ where
         // someone is abusing request_layout_invalidation() - investigate!
         let invalidation_requested = take_layout_invalidation();
 
-        // If invalidation was requested (e.g., text field content changed),
-        // we must invalidate caches AND mark for remeasure so intrinsic sizes are recalculated.
-        // This happens regardless of whether layout_dirty was already set from keyboard handling.
-        if invalidation_requested {
+        // Only do global cache invalidation if:
+        // 1. Invalidation was requested (flag was set)
+        // 2. AND there were no scoped repass nodes (which handle layout more efficiently)
+        //
+        // If scoped repasses were handled above, they've already marked the tree dirty
+        // and bubbled up the hierarchy. We don't need to also invalidate all caches.
+        if invalidation_requested && !had_repass_nodes {
             // Invalidate all caches (O(app size) - expensive!)
             // This is internal-only API, only accessible via the internal path
             compose_ui::layout::invalidate_all_layout_caches();
@@ -695,6 +732,10 @@ where
                     }
                 }
             }
+            self.layout_dirty = true;
+        } else if invalidation_requested {
+            // Invalidation was requested but scoped repasses already handled it.
+            // Just make sure layout_dirty is set.
             self.layout_dirty = true;
         }
 

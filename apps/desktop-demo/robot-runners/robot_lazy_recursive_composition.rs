@@ -97,16 +97,16 @@ fn main() {
             // Additional check: Look for duplicate children outside their parent
             // If there's an "Item #0" text AND an ItemRow #0, and Item #0 is outside the row bounds
             // but at a different position, that would indicate the bug.
-            
+
             // Count how many direct children of LazyListViewport exist
             let direct_children_count = list_elem.children.len();
             println!("  LazyListViewport has {} direct children", direct_children_count);
-            
+
             // In the buggy case, there would be many more direct children (all the nested elements)
             // In the correct case, only the root rows should be direct children (around 6-10)
             if direct_children_count > 50 {
                 println!("  ✗ BUG: Too many direct children ({})!", direct_children_count);
-                println!("    Expected ~10 root items, got {} - suggests nested children are placed separately", 
+                println!("    Expected ~10 root items, got {} - suggests nested children are placed separately",
                          direct_children_count);
                 robot.exit().ok();
                 std::process::exit(1);

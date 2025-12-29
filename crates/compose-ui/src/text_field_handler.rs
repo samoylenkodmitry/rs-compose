@@ -69,6 +69,22 @@ impl crate::text_field_focus::FocusedTextFieldHandler for TextFieldHandler {
         crate::request_render_invalidation();
     }
 
+    fn delete_surrounding(&self, before_bytes: usize, after_bytes: usize) {
+        if before_bytes == 0 && after_bytes == 0 {
+            return;
+        }
+
+        self.state.edit(|buffer| {
+            buffer.delete_surrounding(before_bytes, after_bytes);
+        });
+        self.state.set_desired_column(None);
+        crate::cursor_animation::reset_cursor_blink();
+        if let Some(node_id) = self.node_id {
+            crate::schedule_layout_repass(node_id);
+        }
+        crate::request_render_invalidation();
+    }
+
     fn copy_selection(&self) -> Option<String> {
         let value = self.state.value();
         let selection = value.selection;
@@ -111,6 +127,9 @@ impl crate::text_field_focus::FocusedTextFieldHandler for TextFieldHandler {
         self.state.edit(|buffer| {
             if text.is_empty() {
                 // Clear composition
+                if let Some(range) = buffer.composition() {
+                    buffer.delete(range);
+                }
                 buffer.set_composition(None);
             } else {
                 // Set composition text and range

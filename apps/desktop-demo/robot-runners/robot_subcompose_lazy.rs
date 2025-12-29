@@ -12,7 +12,7 @@
 //! ```
 
 use compose_app::AppLauncher;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::find_text_in_semantics;
 use compose_ui::widgets::*;
 use compose_ui::Modifier;
@@ -23,8 +23,8 @@ fn test_app() {
     use compose_ui::Color;
     use compose_ui::LinearArrangement;
 
-    // Create LazyListState for scroll control
-    let list_state = LazyListState::new();
+    // Create LazyListState for scroll control (Copy - no clone needed!)
+    let list_state = remember_lazy_list_state();
 
     Column(
         Modifier::empty()
@@ -42,46 +42,45 @@ fn test_app() {
             // Item count indicator
             Text("20 test items".to_string(), Modifier::empty().padding(4.0));
 
-            // Build lazy content with 20 simple items
-            let mut content = LazyListIntervalContent::new();
-            content.items(
-                20,
-                Some(|i: usize| i as u64), // Use index as key
-                None::<fn(usize) -> u64>,
-                move |i| {
-                    // Simple row with predictable content
-                    let bg = if i % 2 == 0 {
-                        Color(0.2, 0.25, 0.3, 1.0)
-                    } else {
-                        Color(0.15, 0.18, 0.22, 1.0)
-                    };
-
-                    Row(
-                        Modifier::empty()
-                            .fill_max_width()
-                            .height(50.0) // Fixed height for predictable layout
-                            .padding(10.0)
-                            .background(bg),
-                        RowSpec::new().horizontal_arrangement(LinearArrangement::SpaceBetween),
-                        move || {
-                            // Left: Item label
-                            Text(format!("TestItem{}", i), Modifier::empty());
-                            // Right: Value
-                            Text(format!("val={}", i * 10), Modifier::empty());
-                        },
-                    );
-                },
-            );
-
-            // LazyColumn with fixed height for scroll testing
+            // LazyColumn with fixed height for scroll testing and 20 simple items
             LazyColumn(
                 Modifier::empty()
                     .fill_max_width()
                     .height(300.0) // Fixed height to force virtualization
                     .background(Color(0.05, 0.05, 0.1, 1.0)),
-                list_state.clone(),
+                list_state,
                 LazyColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(4.0)),
-                content,
+                |scope| {
+                    scope.items(
+                        20,
+                        Some(|i: usize| i as u64), // Use index as key
+                        None::<fn(usize) -> u64>,
+                        move |i| {
+                            // Simple row with predictable content
+                            let bg = if i % 2 == 0 {
+                                Color(0.2, 0.25, 0.3, 1.0)
+                            } else {
+                                Color(0.15, 0.18, 0.22, 1.0)
+                            };
+
+                            Row(
+                                Modifier::empty()
+                                    .fill_max_width()
+                                    .height(50.0) // Fixed height for predictable layout
+                                    .padding(10.0)
+                                    .background(bg),
+                                RowSpec::new()
+                                    .horizontal_arrangement(LinearArrangement::SpaceBetween),
+                                move || {
+                                    // Left: Item label
+                                    Text(format!("TestItem{}", i), Modifier::empty());
+                                    // Right: Value
+                                    Text(format!("val={}", i * 10), Modifier::empty());
+                                },
+                            );
+                        },
+                    );
+                },
             );
 
             // Stats display

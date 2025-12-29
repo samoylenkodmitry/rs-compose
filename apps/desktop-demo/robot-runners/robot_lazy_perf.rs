@@ -9,7 +9,7 @@
 //! ```
 
 use compose_app::AppLauncher;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::find_text_in_semantics;
 use compose_ui::widgets::*;
 use compose_ui::{Color, LinearArrangement, Modifier};
@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 const ITEM_COUNT: usize = usize::MAX;
 
 fn test_app() {
-    let list_state = LazyListState::new();
+    let list_state = remember_lazy_list_state();
 
     Column(
         Modifier::empty()
@@ -40,43 +40,41 @@ fn test_app() {
                 Modifier::empty().padding(4.0),
             );
 
-            // Build lazy content with MASSIVE item count
-            let mut content = LazyListIntervalContent::new();
-            content.items(
-                ITEM_COUNT,
-                Some(|i: usize| i as u64),
-                None::<fn(usize) -> u64>,
-                move |i| {
-                    // Simple text item - just the index
-                    let bg = if i % 2 == 0 {
-                        Color(0.15, 0.18, 0.25, 1.0)
-                    } else {
-                        Color(0.12, 0.14, 0.20, 1.0)
-                    };
-
-                    Box(
-                        Modifier::empty()
-                            .fill_max_width()
-                            .height(40.0)
-                            .padding(8.0)
-                            .background(bg),
-                        BoxSpec::new(),
-                        move || {
-                            Text(format!("Item #{}", i), Modifier::empty());
-                        },
-                    );
-                },
-            );
-
-            // LazyColumn
+            // LazyColumn with MASSIVE item count
             LazyColumn(
                 Modifier::empty()
                     .fill_max_width()
                     .height(400.0)
                     .background(Color(0.05, 0.05, 0.08, 1.0)),
-                list_state.clone(),
+                list_state,
                 LazyColumnSpec::new().vertical_arrangement(LinearArrangement::SpacedBy(2.0)),
-                content,
+                |scope| {
+                    scope.items(
+                        ITEM_COUNT,
+                        Some(|i: usize| i as u64),
+                        None::<fn(usize) -> u64>,
+                        move |i| {
+                            // Simple text item - just the index
+                            let bg = if i % 2 == 0 {
+                                Color(0.15, 0.18, 0.25, 1.0)
+                            } else {
+                                Color(0.12, 0.14, 0.20, 1.0)
+                            };
+
+                            Box(
+                                Modifier::empty()
+                                    .fill_max_width()
+                                    .height(40.0)
+                                    .padding(8.0)
+                                    .background(bg),
+                                BoxSpec::new(),
+                                move || {
+                                    Text(format!("Item #{}", i), Modifier::empty());
+                                },
+                            );
+                        },
+                    );
+                },
             );
 
             // Stats
@@ -90,14 +88,13 @@ fn test_app() {
             );
 
             // Jump to Middle button
-            let state_for_button = list_state.clone();
             let middle_index = ITEM_COUNT / 2;
             Button(
                 Modifier::empty()
                     .padding(8.0)
                     .background(Color(0.3, 0.5, 0.8, 1.0)),
                 move || {
-                    state_for_button.scroll_to_item(middle_index, 0.0);
+                    list_state.scroll_to_item(middle_index, 0.0);
                 },
                 || {
                     Text("Jump to Middle".to_string(), Modifier::empty());

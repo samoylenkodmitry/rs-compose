@@ -22,6 +22,8 @@ pub trait FocusedTextFieldHandler {
     fn handle_key(&self, event: &KeyEvent) -> bool;
     /// Insert pasted text.
     fn insert_text(&self, text: &str);
+    /// Delete text surrounding the cursor or selection.
+    fn delete_surrounding(&self, before_bytes: usize, after_bytes: usize);
     /// Copy current selection. Returns None if nothing selected.
     fn copy_selection(&self) -> Option<String>;
     /// Cut current selection (copy + delete). Returns None if nothing selected.
@@ -151,6 +153,19 @@ pub fn dispatch_paste(text: &str) -> bool {
     })
 }
 
+/// Deletes text surrounding the cursor or selection.
+/// O(1) operation using stored handler.
+pub fn dispatch_delete_surrounding(before_bytes: usize, after_bytes: usize) -> bool {
+    FOCUSED_HANDLER.with(|h| {
+        if let Some(handler) = h.borrow().as_ref() {
+            handler.delete_surrounding(before_bytes, after_bytes);
+            true
+        } else {
+            false
+        }
+    })
+}
+
 /// Copies selection from focused text field.
 /// O(1) operation using stored handler.
 pub fn dispatch_copy() -> Option<String> {
@@ -192,6 +207,7 @@ pub fn dispatch_ime_preedit(text: &str, cursor: Option<(usize, usize)>) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     // Mock handler for testing
     struct MockHandler;
@@ -200,6 +216,7 @@ mod tests {
             false
         }
         fn insert_text(&self, _: &str) {}
+        fn delete_surrounding(&self, _: usize, _: usize) {}
         fn copy_selection(&self) -> Option<String> {
             None
         }
@@ -218,6 +235,7 @@ mod tests {
         let focus = Rc::new(RefCell::new(false));
         request_focus(focus.clone(), mock_handler());
         assert!(*focus.borrow());
+        clear_focus();
     }
 
     #[test]
@@ -231,6 +249,7 @@ mod tests {
         request_focus(focus2.clone(), mock_handler());
         assert!(!*focus1.borrow()); // First should be unfocused
         assert!(*focus2.borrow()); // Second should be focused
+        clear_focus();
     }
 
     #[test]
@@ -241,5 +260,45 @@ mod tests {
 
         clear_focus();
         assert!(!*focus.borrow());
+    }
+
+    struct DeleteHandler {
+        last_delete: Cell<Option<(usize, usize)>>,
+    }
+
+    impl FocusedTextFieldHandler for DeleteHandler {
+        fn handle_key(&self, _: &KeyEvent) -> bool {
+            false
+        }
+
+        fn insert_text(&self, _: &str) {}
+
+        fn delete_surrounding(&self, before_bytes: usize, after_bytes: usize) {
+            self.last_delete.set(Some((before_bytes, after_bytes)));
+        }
+
+        fn copy_selection(&self) -> Option<String> {
+            None
+        }
+
+        fn cut_selection(&self) -> Option<String> {
+            None
+        }
+
+        fn set_composition(&self, _: &str, _: Option<(usize, usize)>) {}
+    }
+
+    #[test]
+    fn dispatch_delete_surrounding_calls_handler() {
+        let focus = Rc::new(RefCell::new(false));
+        let handler = Rc::new(DeleteHandler {
+            last_delete: Cell::new(None),
+        });
+
+        request_focus(focus, handler.clone());
+        assert!(dispatch_delete_surrounding(3, 1));
+        assert_eq!(handler.last_delete.get(), Some((3, 1)));
+
+        clear_focus();
     }
 }

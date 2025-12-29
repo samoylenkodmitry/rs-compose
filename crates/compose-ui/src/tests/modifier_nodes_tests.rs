@@ -916,7 +916,7 @@ fn draw_command_updates_on_closure_change() {
     // Verify elements are "equal" (PartialEq ignores closures)
 
     // Initial update
-    chain.update_from_slice(&vec![element_1], &mut context);
+    chain.update_from_slice(&[element_1], &mut context);
 
     // Execute command from node
     {
@@ -929,7 +929,7 @@ fn draw_command_updates_on_closure_change() {
 
     // Second update with different closure
     executed.set(0);
-    chain.update_from_slice(&vec![element_2], &mut context);
+    chain.update_from_slice(&[element_2], &mut context);
 
     // Verify node updated to new closure despite equality
     let node = chain.node::<DrawCommandNode>(0).unwrap();

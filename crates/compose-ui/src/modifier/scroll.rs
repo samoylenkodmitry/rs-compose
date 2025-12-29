@@ -100,11 +100,16 @@ impl ScrollTarget for ScrollState {
 impl ScrollTarget for LazyListState {
     fn apply_delta(&self, delta: f32) -> f32 {
         // LazyListState uses positive delta directly
+        // dispatch_scroll_delta already calls self.invalidate() which triggers the
+        // layout invalidation callback registered in lazy_scroll_impl
         self.dispatch_scroll_delta(delta)
     }
 
     fn invalidate(&self) {
-        crate::request_layout_invalidation();
+        // dispatch_scroll_delta already handles invalidation internally via callback.
+        // We do NOT call request_layout_invalidation() here - that's the global
+        // nuclear option that invalidates ALL layout caches app-wide.
+        // The registered callback uses schedule_layout_repass for scoped invalidation.
     }
 }
 
@@ -122,6 +127,9 @@ struct ScrollGestureDetector<S: ScrollTarget> {
 
     /// Whether this is vertical or horizontal scroll.
     is_vertical: bool,
+
+    /// Whether to reverse the scroll direction (flip delta).
+    reverse_scrolling: bool,
 }
 
 impl<S: ScrollTarget> ScrollGestureDetector<S> {
@@ -130,11 +138,13 @@ impl<S: ScrollTarget> ScrollGestureDetector<S> {
         gesture_state: Rc<RefCell<ScrollGestureState>>,
         scroll_target: S,
         is_vertical: bool,
+        reverse_scrolling: bool,
     ) -> Self {
         Self {
             gesture_state,
             scroll_target,
             is_vertical,
+            reverse_scrolling,
         }
     }
 
@@ -198,7 +208,12 @@ impl<S: ScrollTarget> ScrollGestureDetector<S> {
 
         if gs.is_dragging {
             drop(gs); // Release borrow before calling scroll target
-            let _ = self.scroll_target.apply_delta(incremental_delta);
+            let delta = if self.reverse_scrolling {
+                -incremental_delta
+            } else {
+                incremental_delta
+            };
+            let _ = self.scroll_target.apply_delta(delta);
             self.scroll_target.invalidate();
             true // Consume event while dragging
         } else {
@@ -289,8 +304,12 @@ fn scroll_impl(state: ScrollState, is_vertical: bool, reverse_scrolling: bool) -
     let key = (state.id(), is_vertical);
     let pointer_input = Modifier::empty().pointer_input(key, move |scope| {
         // Create detector inside the async closure to capture the cloned state
-        let detector =
-            ScrollGestureDetector::new(gesture_state.clone(), scroll_state.clone(), is_vertical);
+        let detector = ScrollGestureDetector::new(
+            gesture_state.clone(),
+            scroll_state.clone(),
+            is_vertical,
+            false, // ScrollState handles reversing in layout, not input
+        );
 
         async move {
             scope
@@ -349,34 +368,54 @@ impl Modifier {
     /// This connects pointer gestures to LazyListState for scroll handling.
     /// Unlike regular vertical_scroll, no layout offset is applied here
     /// since LazyListState manages item positioning internally.
-    pub fn lazy_vertical_scroll(self, state: LazyListState) -> Self {
-        self.then(lazy_scroll_impl(state, true))
+    /// Creates a vertically scrollable modifier for lazy lists.
+    ///
+    /// This connects pointer gestures to LazyListState for scroll handling.
+    /// Unlike regular vertical_scroll, no layout offset is applied here
+    /// since LazyListState manages item positioning internally.
+    pub fn lazy_vertical_scroll(
+        self,
+        state: LazyListState,
+        reverse_scrolling: bool,
+    ) -> Self {
+        self.then(lazy_scroll_impl(state, true, reverse_scrolling))
     }
 
     /// Creates a horizontally scrollable modifier for lazy lists.
-    pub fn lazy_horizontal_scroll(self, state: LazyListState) -> Self {
-        self.then(lazy_scroll_impl(state, false))
+    pub fn lazy_horizontal_scroll(
+        self,
+        state: LazyListState,
+        reverse_scrolling: bool,
+    ) -> Self {
+        self.then(lazy_scroll_impl(state, false, reverse_scrolling))
     }
 }
 
 /// Internal implementation for lazy scroll modifiers.
-fn lazy_scroll_impl(state: LazyListState, is_vertical: bool) -> Modifier {
+fn lazy_scroll_impl(
+    state: LazyListState,
+    is_vertical: bool,
+    reverse_scrolling: bool,
+) -> Modifier {
     let gesture_state = Rc::new(RefCell::new(ScrollGestureState::default()));
-    let list_state = state.clone();
+    let list_state = state;
 
-    // Register invalidation callback so scroll_to_item() triggers layout
-    state.add_invalidate_callback(Box::new(|| {
-        crate::request_layout_invalidation();
-    }));
+    // Note: Layout invalidation callback is registered in LazyColumnImpl/LazyRowImpl
+    // after the node is created, using schedule_layout_repass(node_id) for O(subtree)
+    // performance instead of request_layout_invalidation() which is O(entire app).
 
     // Use a unique key per LazyListState
     let state_id = std::ptr::addr_of!(*state.inner_ptr()) as usize;
-    let key = (state_id, is_vertical);
+    let key = (state_id, is_vertical, reverse_scrolling);
 
     Modifier::empty().pointer_input(key, move |scope| {
         // Use the same generic detector with LazyListState
-        let detector =
-            ScrollGestureDetector::new(gesture_state.clone(), list_state.clone(), is_vertical);
+        let detector = ScrollGestureDetector::new(
+            gesture_state.clone(),
+            list_state,
+            is_vertical,
+            reverse_scrolling,
+        );
 
         async move {
             scope

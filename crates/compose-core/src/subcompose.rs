@@ -62,6 +62,23 @@ pub trait SlotReusePolicy: 'static {
     fn register_content_type(&self, _slot_id: SlotId, _content_type: u64) {
         // Default: no-op for policies that don't care about content types
     }
+
+    /// Removes the content type for a slot (e.g., when transitioning to None).
+    ///
+    /// Policies that track content types should override this to clean up.
+    /// The default implementation is a no-op.
+    fn remove_content_type(&self, _slot_id: SlotId) {
+        // Default: no-op for policies that don't track content types
+    }
+
+    /// Prunes slot data for slots not in the active set.
+    ///
+    /// Called during [`SubcomposeState::prune_inactive_slots`] to allow policies
+    /// to clean up any internal state for slots that are no longer needed.
+    /// The default implementation is a no-op.
+    fn prune_slots(&self, _keep_slots: &HashSet<SlotId>) {
+        // Default: no-op for policies without per-slot state
+    }
 }
 
 /// Default reuse policy that mirrors Jetpack Compose behaviour: dispose
@@ -178,6 +195,16 @@ impl SlotReusePolicy for ContentTypeReusePolicy {
     fn register_content_type(&self, slot_id: SlotId, content_type: u64) {
         self.set_content_type(slot_id, content_type);
     }
+
+    fn remove_content_type(&self, slot_id: SlotId) {
+        ContentTypeReusePolicy::remove_content_type(self, slot_id);
+    }
+
+    fn prune_slots(&self, keep_slots: &HashSet<SlotId>) {
+        self.slot_types
+            .borrow_mut()
+            .retain(|slot, _| keep_slots.contains(slot));
+    }
 }
 
 #[derive(Default, Clone)]
@@ -292,6 +319,9 @@ pub struct SubcomposeState {
     max_reusable_per_type: usize,
     /// Maximum number of reusable slots for the untyped pool.
     max_reusable_untyped: usize,
+    /// Whether the last slot registered via register_active was reused.
+    /// Set during register_active, read via was_last_slot_reused().
+    last_slot_reused: Option<bool>,
 }
 
 impl fmt::Debug for SubcomposeState {
@@ -342,6 +372,7 @@ impl SubcomposeState {
             slot_compositions: HashMap::default(),
             max_reusable_per_type: DEFAULT_MAX_REUSABLE_PER_TYPE,
             max_reusable_untyped: DEFAULT_MAX_REUSABLE_UNTYPED,
+            last_slot_reused: None,
         }
     }
 
@@ -359,6 +390,21 @@ impl SubcomposeState {
     pub fn register_content_type(&mut self, slot_id: SlotId, content_type: u64) {
         self.slot_content_types.insert(slot_id, content_type);
         self.policy.register_content_type(slot_id, content_type);
+    }
+
+    /// Updates the content type for a slot, handling Some→None transitions.
+    ///
+    /// If `content_type` is `Some(type)`, registers the type for the slot.
+    /// If `content_type` is `None`, removes any previously registered type.
+    /// This ensures stale types don't drive incorrect reuse.
+    pub fn update_content_type(&mut self, slot_id: SlotId, content_type: Option<u64>) {
+        match content_type {
+            Some(ct) => self.register_content_type(slot_id, ct),
+            None => {
+                self.slot_content_types.remove(&slot_id);
+                self.policy.remove_content_type(slot_id);
+            }
+        }
     }
 
     /// Returns the content type for a slot, if registered.
@@ -400,6 +446,11 @@ impl SubcomposeState {
         node_ids: &[NodeId],
         scopes: &[RecomposeScope],
     ) {
+        // Track whether this slot was reused (had existing nodes before this call)
+        let was_reused =
+            self.mapping.get_nodes(&slot_id).is_some() || self.active_order.contains(&slot_id);
+        self.last_slot_reused = Some(was_reused);
+
         if let Some(position) = self.active_order.iter().position(|slot| *slot == slot_id) {
             if position < self.current_index {
                 for scope in scopes {
@@ -635,6 +686,9 @@ impl SubcomposeState {
         self.slot_content_types
             .retain(|slot, _| keep_slots.contains(slot));
 
+        // Notify policy to prune its internal slot data
+        self.policy.prune_slots(&keep_slots);
+
         // Track count before pruning to compute removed count
         let before_count = self.precomposed_count;
         let mut removed_from_precomposed = 0usize;
@@ -687,6 +741,17 @@ impl SubcomposeState {
     /// by compatible content types.
     pub fn reusable_slots_count(&self) -> usize {
         self.reusable_count
+    }
+
+    /// Returns whether the last slot registered via [`register_active`] was reused.
+    ///
+    /// Returns `Some(true)` if the slot already existed (was reused from pool or
+    /// was recomposed), `Some(false)` if it was newly created, or `None` if no
+    /// slot has been registered yet this pass.
+    ///
+    /// This is useful for tracking composition statistics in lazy layouts.
+    pub fn was_last_slot_reused(&self) -> Option<bool> {
+        self.last_slot_reused
     }
 
     /// Returns a snapshot of precomposed nodes.
