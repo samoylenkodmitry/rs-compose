@@ -362,10 +362,12 @@ impl Modifier {
 /// Internal implementation for lazy scroll modifiers.
 fn lazy_scroll_impl(state: LazyListState, is_vertical: bool) -> Modifier {
     let gesture_state = Rc::new(RefCell::new(ScrollGestureState::default()));
-    let list_state = state.clone();
+    let list_state = state;
 
-    // Register invalidation callback so scroll_to_item() triggers layout
-    state.add_invalidate_callback(Box::new(|| {
+    // Register layout invalidation callback so scroll_to_item() triggers layout.
+    // Uses try_register_layout_callback to ensure only one callback per LazyListState,
+    // preventing leaks from duplicate registrations on recomposition.
+    state.try_register_layout_callback(Rc::new(|| {
         crate::request_layout_invalidation();
     }));
 
@@ -376,7 +378,7 @@ fn lazy_scroll_impl(state: LazyListState, is_vertical: bool) -> Modifier {
     Modifier::empty().pointer_input(key, move |scope| {
         // Use the same generic detector with LazyListState
         let detector =
-            ScrollGestureDetector::new(gesture_state.clone(), list_state.clone(), is_vertical);
+            ScrollGestureDetector::new(gesture_state.clone(), list_state, is_vertical);
 
         async move {
             scope

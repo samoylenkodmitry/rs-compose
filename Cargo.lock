@@ -563,6 +563,7 @@ name = "compose-foundation"
 version = "0.1.0"
 dependencies = [
  "compose-core",
+ "compose-macros",
  "compose-ui-graphics",
  "compose-ui-layout",
  "log",

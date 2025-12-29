@@ -1,5 +1,5 @@
 use compose_app::AppLauncher;
-use compose_foundation::lazy::{LazyListIntervalContent, LazyListScope, LazyListState};
+use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
 use compose_testing::find_text_in_semantics;
 use compose_ui::widgets::{Box, BoxSpec};
 use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
@@ -48,52 +48,46 @@ fn main() {
         })
         .run(|| {
             // Define the UI within the app
-            let state = LazyListState::new();
-
-            let items_content = {
-                let mut content = LazyListIntervalContent::new();
-
-                // Item 0: Height 100
-                content.item(Some(0), None, move || {
-                    Box(
-                        Modifier::default()
-                            .size(Size { width: 100.0, height: 100.0 })
-                            .background(Color::RED),
-                        BoxSpec::new().content_alignment(Alignment::CENTER),
-                        || { compose_ui::widgets::Text("Item0", Modifier::default()); }
-                    );
-                });
-
-                // Item 1: Height 50
-                content.item(Some(1), None, move || {
-                    Box(
-                        Modifier::default()
-                            .size(Size { width: 100.0, height: 50.0 })
-                            .background(Color::GREEN),
-                        BoxSpec::new().content_alignment(Alignment::CENTER),
-                        || { compose_ui::widgets::Text("Item1", Modifier::default()); }
-                    );
-                });
-
-                // Item 2: Height 200
-                content.item(Some(2), None, move || {
-                     Box(
-                        Modifier::default()
-                            .size(Size { width: 100.0, height: 200.0 })
-                            .background(Color::BLUE),
-                        BoxSpec::new().content_alignment(Alignment::CENTER),
-                        || { compose_ui::widgets::Text("Item2", Modifier::default()); }
-                    );
-                });
-
-                content
-            };
+            let state = remember_lazy_list_state();
 
             LazyColumn(
                 Modifier::default().size(Size { width: 300.0, height: 400.0 }),
                 state,
                 LazyColumnSpec::default(),
-                items_content,
+                |scope| {
+                    // Item 0: Height 100
+                    scope.item(Some(0), None, move || {
+                        Box(
+                            Modifier::default()
+                                .size(Size { width: 100.0, height: 100.0 })
+                                .background(Color::RED),
+                            BoxSpec::new().content_alignment(Alignment::CENTER),
+                            || { compose_ui::widgets::Text("Item0", Modifier::default()); }
+                        );
+                    });
+
+                    // Item 1: Height 50
+                    scope.item(Some(1), None, move || {
+                        Box(
+                            Modifier::default()
+                                .size(Size { width: 100.0, height: 50.0 })
+                                .background(Color::GREEN),
+                            BoxSpec::new().content_alignment(Alignment::CENTER),
+                            || { compose_ui::widgets::Text("Item1", Modifier::default()); }
+                        );
+                    });
+
+                    // Item 2: Height 200
+                    scope.item(Some(2), None, move || {
+                         Box(
+                            Modifier::default()
+                                .size(Size { width: 100.0, height: 200.0 })
+                                .background(Color::BLUE),
+                            BoxSpec::new().content_alignment(Alignment::CENTER),
+                            || { compose_ui::widgets::Text("Item2", Modifier::default()); }
+                        );
+                    });
+                },
             );
         });
 }

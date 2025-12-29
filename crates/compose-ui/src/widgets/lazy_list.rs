@@ -146,16 +146,15 @@ fn measure_lazy_list_internal(
     // Scroll position stability: if items were added/removed before the first visible,
     // find the item by key and adjust scroll position (JC's updateScrollPositionIfTheFirstItemWasMoved)
     if items_count > 0 {
-        // For small lists, get_index_by_slot_id does full O(n) search
-        // For large lists, use NearestRangeState range for O(1) search
+        // Scroll position stability: try O(1) range search first, fall back to O(N) global search
+        // This matches the performance-optimal pattern: most items are found within the range
         let range = state.nearest_range();
         state.update_scroll_position_if_item_moved(items_count, |slot_id| {
             content
-                .get_index_by_slot_id(slot_id)
-                .or_else(|| content.get_index_by_slot_id_in_range(slot_id, range.clone()))
+                .get_index_by_slot_id_in_range(slot_id, range.clone())
+                .or_else(|| content.get_index_by_slot_id(slot_id))
         });
-        // Update nearest range for next measurement
-        state.update_nearest_range();
+        // Note: nearest range is automatically updated by scroll_position when index changes
     }
 
     // Measure function that subcomposes and measures each item
@@ -168,15 +167,18 @@ fn measure_lazy_list_internal(
         // The Composer handles node reuse internally via slot ID matching
         let slot_id = SlotId(key_slot_id);
 
-        // Register content type for policy-based reuse matching
-        // If policy is ContentTypeReusePolicy, slots with matching types can reuse each other
-        if let Some(ct) = content_type {
-            scope.register_content_type(slot_id, ct);
-        }
+        // Update content type for policy-based reuse matching
+        // Uses update_content_type to handle both Some and None cases,
+        // ensuring stale types don't drive incorrect reuse after transitions
+        scope.update_content_type(slot_id, content_type);
 
         let children = scope.subcompose(slot_id, || {
             content.invoke_content(index);
         });
+
+        // Record composition statistics for diagnostics
+        let was_reused = scope.was_last_slot_reused().unwrap_or(false);
+        state.record_composition(was_reused);
 
         // IMPORTANT: Filter to only ROOT nodes (those without a parent).
         // During subsequent subcomposition passes, the slot table may return ALL nodes
@@ -250,6 +252,12 @@ fn measure_lazy_list_internal(
         item
     };
 
+    // Capture scroll delta for direction inference BEFORE measurement consumes it.
+    // This is more accurate than comparing first visible index, especially for:
+    // - Scrolling within the same item (partial scroll)
+    // - Variable height items where scroll offset changes without index change
+    let scroll_delta_for_direction = state.peek_scroll_delta();
+
     // Run the lazy list measurement algorithm
     let result = measure_lazy_list(
         items_count,
@@ -280,31 +288,17 @@ fn measure_lazy_list_internal(
     state.update_stats(truly_visible_count, in_pool);
 
     // Prefetching: pre-compose items before they become visible
-    // 1. Record scroll direction from consumed delta
-    let layout_info = state.layout_info();
-    // Approximate direction: compare current first visible with stored
-    // We use the delta that was consumed (negative = scroll down gesture = forward scroll)
-    // For now, derive from result - if first visible != previous, we scrolled
+    // Direction is inferred from actual scroll delta (more accurate than index comparison)
 
-    // 2. Update prefetch queue based on visible items
+    // Update prefetch queue based on visible items
     if !result.visible_items.is_empty() {
         let first_visible = result.visible_items.first().map(|i| i.index).unwrap_or(0);
         let last_visible = result.visible_items.last().map(|i| i.index).unwrap_or(0);
 
-        // Infer direction from comparison to previous first visible
-        let prev_first = layout_info
-            .visible_items_info
-            .first()
-            .map(|i| i.index)
-            .unwrap_or(0);
-        let direction = if first_visible > prev_first {
-            1.0 // Forward
-        } else if first_visible < prev_first {
-            -1.0 // Backward
-        } else {
-            0.0 // No change
-        };
-        state.record_scroll_direction(direction);
+        // Use actual scroll delta for direction (more accurate than index comparison)
+        // Positive delta = scrolling forward (content moving up/left)
+        // Negative delta = scrolling backward (content moving down/right)
+        state.record_scroll_direction(scroll_delta_for_direction);
 
         state.update_prefetch_queue(first_visible, last_visible, items_count);
 
@@ -321,10 +315,8 @@ fn measure_lazy_list_internal(
                 let content_type_prefetch = content.get_content_type(idx);
                 let slot_id = SlotId(key_slot_id);
 
-                // Register content type for prefetched items too
-                if let Some(ct) = content_type_prefetch {
-                    scope.register_content_type(slot_id, ct);
-                }
+                // Update content type for prefetched items too
+                scope.update_content_type(slot_id, content_type_prefetch);
 
                 // Use cached size if available, otherwise use average
                 let estimated_size = state
@@ -332,14 +324,27 @@ fn measure_lazy_list_internal(
                     .unwrap_or(average_size.max(DEFAULT_ITEM_SIZE_ESTIMATE));
 
                 let prefetch_idx = idx;
+                let is_vertical = config.is_vertical;
                 let _ = scope.subcompose_with_size(
                     slot_id,
                     || {
                         content.invoke_content(prefetch_idx);
                     },
-                    move |_| crate::modifier::Size {
-                        width: cross_axis_size,
-                        height: estimated_size + config.spacing,
+                    move |_| {
+                        // Use correct axis based on orientation:
+                        // Vertical list: width = cross_axis, height = main_axis (estimated)
+                        // Horizontal list: width = main_axis (estimated), height = cross_axis
+                        if is_vertical {
+                            crate::modifier::Size {
+                                width: cross_axis_size,
+                                height: estimated_size + config.spacing,
+                            }
+                        } else {
+                            crate::modifier::Size {
+                                width: estimated_size + config.spacing,
+                                height: cross_axis_size,
+                            }
+                        }
                     },
                 );
             }
@@ -347,90 +352,26 @@ fn measure_lazy_list_internal(
     }
 
     // Create placements from measured items - place only ROOT nodes
-    //
-    // JC Pattern (LazyListMeasure.kt:calculateItemsOffsets):
-    // When all items fit in viewport (hasSpareSpace), apply the arrangement.
-    // Otherwise, use sequential positioning from measurement.
-    let arrangement = if is_vertical {
-        config
-            .vertical_arrangement
-            .unwrap_or(LinearArrangement::Start)
-    } else {
-        config
-            .horizontal_arrangement
-            .unwrap_or(LinearArrangement::Start)
-    };
+    // JC Pattern (LazyListMeasure.kt:calculateItemsOffsets)
+    let placements = create_lazy_list_placements(
+        &result.visible_items,
+        items_count,
+        is_vertical,
+        viewport_size,
+        config,
+    );
 
-    // Check if we should apply arrangement:
-    // 1. All items are visible (visible_items.len() == total items)
-    // 2. Content is smaller than viewport (hasSpareSpace)
-    // 3. Arrangement is not sequential (Start or SpacedBy)
-    let total_item_size: f32 = result.visible_items.iter().map(|i| i.main_axis_size).sum();
-    let has_spare_space =
-        total_item_size < viewport_size && result.visible_items.len() == items_count;
-    let should_apply_arrangement = has_spare_space
-        && !matches!(
-            arrangement,
-            LinearArrangement::Start | LinearArrangement::SpacedBy(_)
-        );
-
-    let placements: Vec<Placement> = if should_apply_arrangement {
-        // Apply arrangement to compute final positions
-        // JC: density.arrange(mainAxisLayoutSize, sizes, offsets)
-        use compose_ui_layout::Arrangement; // Import the trait
-
-        let sizes: Vec<f32> = result
-            .visible_items
-            .iter()
-            .map(|i| i.main_axis_size)
-            .collect();
-        let mut positions = vec![0.0; sizes.len()];
-        arrangement.arrange(viewport_size, &sizes, &mut positions);
-
-        result
-            .visible_items
-            .iter()
-            .zip(positions.iter())
-            .flat_map(|(item, &pos)| {
-                item.node_ids.iter().zip(item.child_offsets.iter()).map(
-                    move |(&nid, &child_offset)| {
-                        let node_id: NodeId = nid as NodeId;
-                        if is_vertical {
-                            Placement::new(node_id, 0.0, pos + child_offset, 0)
-                        } else {
-                            Placement::new(node_id, pos + child_offset, 0.0, 0)
-                        }
-                    },
-                )
-            })
-            .collect()
-    } else {
-        // Use sequential offsets from measurement (scrolling case)
-        result
-            .visible_items
-            .iter()
-            .flat_map(|item| {
-                item.node_ids.iter().zip(item.child_offsets.iter()).map(
-                    move |(&nid, &child_offset)| {
-                        let node_id: NodeId = nid as NodeId;
-                        if is_vertical {
-                            Placement::new(node_id, 0.0, item.offset + child_offset, 0)
-                        } else {
-                            Placement::new(node_id, item.offset + child_offset, 0.0, 0)
-                        }
-                    },
-                )
-            })
-            .collect()
-    };
-
+    // Report size that respects BOTH min and max constraints.
+    // - If content < min: expand to min (e.g., fillMaxSize)
+    // - If content > max: clamp to max (enables scrolling)
+    // - Otherwise: use content size (shrink-wrap)
     let width = if is_vertical {
         cross_axis_size
     } else {
-        result.total_content_size
+        result.total_content_size.clamp(constraints.min_width, constraints.max_width)
     };
     let height = if is_vertical {
-        result.total_content_size
+        result.total_content_size.clamp(constraints.min_height, constraints.max_height)
     } else {
         cross_axis_size
     };
@@ -445,33 +386,96 @@ fn get_spacing(arrangement: LinearArrangement) -> f32 {
     }
 }
 
-/// A vertically scrolling list that only composes visible items.
+/// Creates placements for measured lazy list items.
 ///
-/// Matches Jetpack Compose's `LazyColumn` API.
+/// This helper encapsulates the logic for:
+/// - Applying arrangement when all items fit (hasSpareSpace in JC)
+/// - Using sequential positioning during scrolling
+fn create_lazy_list_placements(
+    visible_items: &[LazyListMeasuredItem],
+    items_count: usize,
+    is_vertical: bool,
+    viewport_size: f32,
+    config: &LazyListMeasureConfig,
+) -> Vec<Placement> {
+    use compose_ui_layout::Arrangement;
+
+    let arrangement = if is_vertical {
+        config.vertical_arrangement.unwrap_or(LinearArrangement::Start)
+    } else {
+        config.horizontal_arrangement.unwrap_or(LinearArrangement::Start)
+    };
+
+    // Check if we should apply arrangement:
+    // 1. All items are visible (visible_items.len() == total items)
+    // 2. Content is smaller than viewport (hasSpareSpace)
+    // 3. Arrangement is not sequential (Start or SpacedBy)
+    let spacing = get_spacing(arrangement);
+    let total_item_size: f32 = visible_items.iter().map(|i| i.main_axis_size).sum::<f32>()
+        + (items_count.saturating_sub(1) as f32) * spacing;
+    // Account for content padding when checking spare space (JC pattern)
+    // Clamp to 0.0 to handle edge case where padding exceeds viewport
+    let available_main_axis =
+        (viewport_size - config.before_content_padding - config.after_content_padding).max(0.0);
+    let has_spare_space =
+        total_item_size < available_main_axis && visible_items.len() == items_count;
+    let should_apply_arrangement = has_spare_space
+        && !matches!(
+            arrangement,
+            LinearArrangement::Start | LinearArrangement::SpacedBy(_)
+        );
+
+    if should_apply_arrangement {
+        // Apply arrangement to compute final positions
+        // JC: density.arrange(mainAxisLayoutSize, sizes, offsets)
+        let content_offset = config.before_content_padding;
+
+        let sizes: Vec<f32> = visible_items.iter().map(|i| i.main_axis_size).collect();
+        let mut positions = vec![0.0; sizes.len()];
+        arrangement.arrange(available_main_axis, &sizes, &mut positions);
+
+        visible_items
+            .iter()
+            .zip(positions.iter())
+            .flat_map(|(item, &pos)| {
+                item.node_ids
+                    .iter()
+                    .zip(item.child_offsets.iter())
+                    .map(move |(&nid, &child_offset)| {
+                        let node_id: NodeId = nid as NodeId;
+                        if is_vertical {
+                            Placement::new(node_id, 0.0, content_offset + pos + child_offset, 0)
+                        } else {
+                            Placement::new(node_id, content_offset + pos + child_offset, 0.0, 0)
+                        }
+                    })
+            })
+            .collect()
+    } else {
+        // Use sequential offsets from measurement (scrolling case)
+        visible_items
+            .iter()
+            .flat_map(|item| {
+                item.node_ids
+                    .iter()
+                    .zip(item.child_offsets.iter())
+                    .map(move |(&nid, &child_offset)| {
+                        let node_id: NodeId = nid as NodeId;
+                        if is_vertical {
+                            Placement::new(node_id, 0.0, item.offset + child_offset, 0)
+                        } else {
+                            Placement::new(node_id, item.offset + child_offset, 0.0, 0)
+                        }
+                    })
+            })
+            .collect()
+    }
+}
+
+/// Internal implementation for LazyColumn that takes pre-built content.
 ///
-/// # Arguments
-/// * `modifier` - Layout modifiers
-/// * `state` - LazyListState for scroll position tracking (from compose-foundation)
-/// * `scroll_state` - ScrollState for gesture integration (from compose-ui)
-/// * `spec` - Layout configuration
-/// * `content` - Item content builder
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use compose_ui::scroll::ScrollState;
-/// use compose_foundation::lazy::{LazyListState, LazyListIntervalContent, LazyListScope};
-/// use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
-///
-/// let state = LazyListState::new();
-/// let scroll_state = ScrollState::new(0.0);
-/// let mut content = LazyListIntervalContent::new();
-/// content.items(100, None::<fn(usize)->u64>, None::<fn(usize)->u64>, |i| {
-///     // Compose your item content here
-/// });
-/// LazyColumn(Modifier::empty(), state, scroll_state, LazyColumnSpec::default(), content);
-/// ```
-pub fn LazyColumn(
+/// Users should prefer the DSL-based [`LazyColumn`] function instead.
+fn LazyColumnImpl(
     modifier: Modifier,
     state: LazyListState,
     spec: LazyColumnSpec,
@@ -488,7 +492,7 @@ pub fn LazyColumn(
     // Update the content on each recomposition
     *content_cell.borrow_mut() = content;
 
-    // Configure measurement
+    // Configure measurement - wrapped in rememberUpdatedState for stable reference
     let config = LazyListMeasureConfig {
         is_vertical: true,
         reverse_layout: false,
@@ -499,23 +503,24 @@ pub fn LazyColumn(
         vertical_arrangement: Some(spec.vertical_arrangement),
         horizontal_arrangement: None,
     };
+    let config_state = compose_core::rememberUpdatedState(config);
 
-    // Create measure policy that reads from the shared RefCell
-    let state_clone = state.clone();
+    // Create measure policy with stable identity using remember.
+    // The policy reads latest values via state references, so it can be memoized.
     let content_for_policy = content_cell.clone();
-    let policy = Rc::new(
-        move |scope: &mut SubcomposeMeasureScopeImpl<'_>, constraints: Constraints| {
-            let content_ref = content_for_policy.borrow();
-            measure_lazy_list_internal(
-                scope,
-                constraints,
-                true,
-                &content_ref,
-                &state_clone,
-                &config,
-            )
-        },
-    );
+    let policy = compose_core::remember(move || {
+        let cfg = config_state.clone();
+        let content_ref = content_for_policy.clone();
+        let state_ref = state.clone();
+        Rc::new(
+            move |scope: &mut SubcomposeMeasureScopeImpl<'_>, constraints: Constraints| {
+                let content = content_ref.borrow();
+                let config = cfg.value();
+                measure_lazy_list_internal(scope, constraints, true, &content, &state_ref, &config)
+            },
+        )
+    })
+    .with(|p| p.clone());
 
     // Apply clipping and scroll gesture handling to modifier
     let scroll_modifier = modifier.clip_to_bounds().lazy_vertical_scroll(state);
@@ -524,10 +529,10 @@ pub fn LazyColumn(
     compose_node(move || SubcomposeLayoutNode::with_content_type_policy(scroll_modifier, policy))
 }
 
-/// A horizontally scrolling list that only composes visible items.
+/// Internal implementation for LazyRow that takes pre-built content.
 ///
-/// Matches Jetpack Compose's `LazyRow` API.
-pub fn LazyRow(
+/// Users should prefer the DSL-based [`LazyRow`] function instead.
+fn LazyRowImpl(
     modifier: Modifier,
     state: LazyListState,
     spec: LazyRowSpec,
@@ -553,28 +558,105 @@ pub fn LazyRow(
         vertical_arrangement: None,
         horizontal_arrangement: Some(spec.horizontal_arrangement),
     };
+    let config_state = compose_core::rememberUpdatedState(config);
 
-    let state_clone = state.clone();
+    // Create measure policy with stable identity using remember.
     let content_for_policy = content_cell.clone();
-    let policy = Rc::new(
-        move |scope: &mut SubcomposeMeasureScopeImpl<'_>, constraints: Constraints| {
-            let content_ref = content_for_policy.borrow();
-            measure_lazy_list_internal(
-                scope,
-                constraints,
-                false,
-                &content_ref,
-                &state_clone,
-                &config,
-            )
-        },
-    );
+    let policy = compose_core::remember(move || {
+        let cfg = config_state.clone();
+        let content_ref = content_for_policy.clone();
+        let state_ref = state.clone();
+        Rc::new(
+            move |scope: &mut SubcomposeMeasureScopeImpl<'_>, constraints: Constraints| {
+                let content = content_ref.borrow();
+                let config = cfg.value();
+                measure_lazy_list_internal(scope, constraints, false, &content, &state_ref, &config)
+            },
+        )
+    })
+    .with(|p| p.clone());
 
     // Apply clipping and scroll gesture handling to modifier
     let scroll_modifier = modifier.clip_to_bounds().lazy_horizontal_scroll(state);
 
     // Create and register the subcompose layout node with the composer
     compose_node(move || SubcomposeLayoutNode::with_content_type_policy(scroll_modifier, policy))
+}
+
+/// A vertically scrolling list that only composes visible items.
+///
+/// Matches Jetpack Compose's `LazyColumn` API. The closure receives
+/// a [`LazyListIntervalContent`] which implements [`LazyListScope`] for defining items.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let state = remember_lazy_list_state();
+/// LazyColumn(Modifier::empty(), state, LazyColumnSpec::default(), |scope| {
+///     // Single header item
+///     scope.item(Some(0), None, || {
+///         Text("Header", Modifier::empty());
+///     });
+///
+///     // Multiple items from data
+///     scope.items(data.len(), Some(|i| data[i].id), None, |i| {
+///         Text(data[i].name.clone(), Modifier::empty());
+///     });
+/// });
+/// ```
+///
+/// For convenience with slices, use the [`LazyListScopeExt`] extension methods:
+///
+/// ```rust,ignore
+/// use compose_foundation::lazy::LazyListScopeExt;
+///
+/// LazyColumn(Modifier::empty(), state, LazyColumnSpec::default(), |scope| {
+///     scope.items_slice(&my_data, |item| {
+///         Text(item.name.clone(), Modifier::empty());
+///     });
+/// });
+/// ```
+pub fn LazyColumn<F>(
+    modifier: Modifier,
+    state: LazyListState,
+    spec: LazyColumnSpec,
+    content: F,
+) -> NodeId
+where
+    F: FnOnce(&mut LazyListIntervalContent),
+{
+    let mut interval_content = LazyListIntervalContent::new();
+    content(&mut interval_content);
+    LazyColumnImpl(modifier, state, spec, interval_content)
+}
+
+/// A horizontally scrolling list that only composes visible items.
+///
+/// Matches Jetpack Compose's `LazyRow` API. The closure receives
+/// a [`LazyListIntervalContent`] which implements [`LazyListScope`] for defining items.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let state = remember_lazy_list_state();
+/// LazyRow(Modifier::empty(), state, LazyRowSpec::default(), |scope| {
+///     scope.items(10, None::<fn(usize)->u64>, None::<fn(usize)->u64>, |i| {
+///         Text(format!("Item {}", i), Modifier::empty());
+///     });
+/// });
+/// ```
+pub fn LazyRow<F>(
+    modifier: Modifier,
+    state: LazyListState,
+    spec: LazyRowSpec,
+    content: F,
+) -> NodeId
+where
+    F: FnOnce(&mut LazyListIntervalContent),
+{
+    let mut interval_content = LazyListIntervalContent::new();
+    content(&mut interval_content);
+    LazyRowImpl(modifier, state, spec, interval_content)
 }
 
 #[cfg(test)]

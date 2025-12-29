@@ -395,6 +395,42 @@ pub fn remember<T: 'static>(init: impl FnOnce() -> T) -> Owned<T> {
     with_current_composer(|composer| composer.remember(init))
 }
 
+/// Returns a [`MutableState`] that always holds the latest value.
+///
+/// The state **reference** is stable across recompositions; only the **value** updates.
+/// This allows closures to capture a stable reference while reading fresh values.
+///
+/// # Use Case
+/// Use when a `remember`ed closure needs to read a value that changes each recomposition
+/// without recreating the closure itself.
+///
+/// # Example
+/// ```rust,ignore
+/// let config = build_config(); // Rebuilt each recomposition
+/// let config_state = rememberUpdatedState(config);
+///
+/// // This closure is created once, reads latest config via state
+/// let callback = remember(|| {
+///     let cfg = config_state.clone();
+///     Rc::new(move || do_something(&cfg.value()))
+/// }).with(|c| c.clone());
+/// ```
+///
+/// # JC Equivalent
+/// ```kotlin
+/// @Composable
+/// fun <T> rememberUpdatedState(newValue: T): State<T> =
+///     remember { mutableStateOf(newValue) }.apply { value = newValue }
+/// ```
+#[allow(non_snake_case)]
+pub fn rememberUpdatedState<T: Clone + 'static>(value: T) -> MutableState<T> {
+    let state = remember(|| mutableStateOf(value.clone()));
+    state.with(|s| {
+        s.set(value);
+        s.clone()
+    })
+}
+
 #[allow(non_snake_case)]
 pub fn withFrameNanos(callback: impl FnOnce(u64) + 'static) -> FrameCallbackRegistration {
     with_current_composer(|composer| {
