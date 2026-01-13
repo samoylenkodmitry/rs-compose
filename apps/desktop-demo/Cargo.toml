@@ -33,7 +33,7 @@ desktop = ["compose-app/desktop"]
 android = ["compose-app/android"]
 web = ["compose-app/web", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:wasm-logger"]
 # Enable real app robot testing
-robot-app = ["compose-testing/robot-app", "logging"]
+robot-app = ["compose-testing/robot-app", "logging", "compose-ui/test-helpers"]
 # Enable env_logger (adds ~600KB from regex)
 logging = ["dep:env_logger"]
 
