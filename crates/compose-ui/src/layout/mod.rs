@@ -538,18 +538,8 @@ pub fn measure_layout(
     };
 
     let epoch = if needs_remeasure {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[Epoch] INCREMENTING - root.needs_measure()=true, old cached_epoch={}",
-            cached_epoch
-        );
         NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed)
     } else if cached_epoch != 0 {
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[Epoch] REUSING cached epoch={} - root.needs_measure()=false",
-            cached_epoch
-        );
         cached_epoch
     } else {
         // Fallback when caller root isn't a LayoutNode (e.g. tests using Spacer directly).
@@ -575,13 +565,11 @@ pub fn measure_layout(
     // ---- Measurement -------------------------------------------------------
     // If measurement fails, the guard will restore slots from the shared handle
     // on drop - this is safe because the handle always contains valid slots.
-    #[cfg(debug_assertions)]
-    let measure_start = web_time::Instant::now();
+
 
     let measured = builder.measure_node(root, normalize_constraints(constraints))?;
 
-    #[cfg(debug_assertions)]
-    let after_measure = web_time::Instant::now();
+
 
     // ---- Metadata ----------------------------------------------------------
     let metadata = {
@@ -589,8 +577,7 @@ pub fn measure_layout(
         collect_runtime_metadata(&mut applier_ref, &measured)?
     };
 
-    #[cfg(debug_assertions)]
-    let after_metadata = web_time::Instant::now();
+
 
     // ---- Semantics snapshot ------------------------------------------------
     let semantics_snapshot = {
@@ -598,8 +585,7 @@ pub fn measure_layout(
         collect_semantics_snapshot(&mut applier_ref, &measured)?
     };
 
-    #[cfg(debug_assertions)]
-    let after_semantics = web_time::Instant::now();
+
 
     // Drop builder before guard - slots are already in the shared handle.
     // Guard's Drop will write them back to the applier.
@@ -613,22 +599,7 @@ pub fn measure_layout(
     let semantics = SemanticsTree::new(semantics_root);
     let layout_tree = build_layout_tree_from_metadata(&measured, &metadata);
 
-    #[cfg(debug_assertions)]
-    {
-        let after_tree = web_time::Instant::now();
-        let measure_ms = after_measure.duration_since(measure_start).as_secs_f64() * 1000.0;
-        let metadata_ms = after_metadata.duration_since(after_measure).as_secs_f64() * 1000.0;
-        let semantics_ms = after_semantics.duration_since(after_metadata).as_secs_f64() * 1000.0;
-        let tree_ms = after_tree.duration_since(after_semantics).as_secs_f64() * 1000.0;
-        let total_ms = after_tree.duration_since(measure_start).as_secs_f64() * 1000.0;
 
-        if total_ms > 5.0 {
-            eprintln!(
-                "[Layout] measure_layout: {:.1}ms (measure={:.1}, metadata={:.1}, semantics={:.1}, tree={:.1})",
-                total_ms, measure_ms, metadata_ms, semantics_ms, tree_ms
-            );
-        }
-    }
 
     Ok(LayoutMeasurements::new(measured, semantics, layout_tree))
 }
@@ -876,13 +847,8 @@ impl LayoutBuilderState {
             return Err(err);
         }
 
-        let node_ids: Vec<NodeId> = measure_result
-            .placements
-            .iter()
-            .map(|placement| placement.node_id)
-            .collect();
-
-        node_handle.set_active_children(node_ids.iter().copied());
+        // NOTE: Children are now managed by the composer via insert_child commands
+        // (from parent_stack initialization with root). set_active_children is no longer used.
 
         let mut width = measure_result.size.width + padding.horizontal_sum();
         let mut height = measure_result.size.height + padding.vertical_sum();
@@ -1102,16 +1068,7 @@ impl LayoutBuilderState {
         let layout_props = resolved_modifiers.layout_properties();
 
         if needs_measure {
-            // Node has needs_measure=true, log why
-            #[cfg(debug_assertions)]
-            {
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static MEASURE_NEEDED_COUNT: AtomicU64 = AtomicU64::new(0);
-                let count = MEASURE_NEEDED_COUNT.fetch_add(1, Ordering::Relaxed);
-                if count.is_multiple_of(100) {
-                    eprintln!("[Layout] nodes with needs_measure=true: {}", count + 1);
-                }
-            }
+            // Node has needs_measure=true
         }
 
         // Only check cache if not marked as needing measure.
@@ -1128,28 +1085,11 @@ impl LayoutBuilderState {
                     })
                 })
                 .ok();
-                #[cfg(debug_assertions)]
-                {
-                    use std::sync::atomic::{AtomicU64, Ordering};
-                    static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
-                    let count = CACHE_HITS.fetch_add(1, Ordering::Relaxed);
-                    if count.is_multiple_of(100) {
-                        eprintln!("[Layout] cache HITS (same constraints): {}", count + 1);
-                    }
-                }
                 return Ok(cached);
             }
         }
 
-        #[cfg(debug_assertions)]
-        {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
-            let count = CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
-            if count.is_multiple_of(100) {
-                eprintln!("[Layout] cache MISSES (full remeasure): {}", count + 1);
-            }
-        }
+
 
         let (runtime_handle, applier_host) = {
             let state = state_rc.borrow();

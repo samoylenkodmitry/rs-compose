@@ -352,6 +352,7 @@ pub enum NodeError {
     Missing { id: NodeId },
     TypeMismatch { id: NodeId, expected: &'static str },
     MissingContext { id: NodeId, reason: &'static str },
+    AlreadyExists { id: NodeId },
 }
 
 impl std::fmt::Display for NodeError {
@@ -363,6 +364,9 @@ impl std::fmt::Display for NodeError {
             }
             NodeError::MissingContext { id, reason } => {
                 write!(f, "missing context for node {id}: {reason}")
+            }
+            NodeError::AlreadyExists { id } => {
+                write!(f, "node {id} already exists")
             }
         }
     }
@@ -913,6 +917,16 @@ pub trait Node: Any {
     fn needs_semantics(&self) -> bool {
         false
     }
+    /// Set parent reference for dirty flag bubbling ONLY.
+    /// This is a minimal version of on_attached_to_parent that doesn't trigger
+    /// registry updates or other side effects. Used during measurement when we
+    /// need to establish parent connections for bubble_measure_dirty without
+    /// causing the full attachment lifecycle.
+    ///
+    /// Default: delegates to on_attached_to_parent for backward compatibility.
+    fn set_parent_for_bubbling(&mut self, parent: NodeId) {
+        self.on_attached_to_parent(parent);
+    }
 }
 
 /// Unified API for bubbling layout dirty flags from a node to the root (Applier context).
@@ -1043,18 +1057,9 @@ fn bubble_layout_dirty_applier(applier: &mut dyn Applier, mut node_id: NodeId) {
 
 /// Internal implementation for applier-based bubbling of measure dirtiness.
 fn bubble_measure_dirty_applier(applier: &mut dyn Applier, mut node_id: NodeId) {
-    #[cfg(debug_assertions)]
-    eprintln!("[bubble_measure_dirty] Starting from node_id={}", node_id);
-
     // First, mark the starting node as needing measure
     if let Ok(node) = applier.get_mut(node_id) {
         node.mark_needs_measure();
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[bubble_measure_dirty] Marked node_id={} needs_measure={}",
-            node_id,
-            node.needs_measure()
-        );
     }
 
     // Then bubble up to ancestors
@@ -1065,45 +1070,21 @@ fn bubble_measure_dirty_applier(applier: &mut dyn Applier, mut node_id: NodeId) 
             Err(_) => None,
         };
 
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[bubble_measure_dirty] node_id={} -> parent_id={:?}",
-            node_id, parent_id
-        );
-
         match parent_id {
             Some(pid) => {
                 // Mark parent as needing measure
                 if let Ok(parent) = applier.get_mut(pid) {
                     if !parent.needs_measure() {
                         parent.mark_needs_measure();
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "[bubble_measure_dirty] Marked parent_id={} needs_measure={}",
-                            pid,
-                            parent.needs_measure()
-                        );
                         node_id = pid; // Continue bubbling
                     } else {
-                        #[cfg(debug_assertions)]
-                        eprintln!(
-                            "[bubble_measure_dirty] Parent {} already dirty, stopping",
-                            pid
-                        );
                         break; // Already dirty, stop
                     }
                 } else {
-                    #[cfg(debug_assertions)]
-                    eprintln!("[bubble_measure_dirty] Failed to get parent {}", pid);
                     break;
                 }
             }
             None => {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "[bubble_measure_dirty] Node {} has no parent, stopping at root",
-                    node_id
-                );
                 break; // No parent, stop
             }
         }
@@ -1211,6 +1192,15 @@ pub trait Applier: Any {
     fn get_mut(&mut self, id: NodeId) -> Result<&mut dyn Node, NodeError>;
     fn remove(&mut self, id: NodeId) -> Result<(), NodeError>;
 
+    /// Inserts a node with a pre-assigned ID.
+    ///
+    /// This is used for virtual nodes whose IDs are allocated separately
+    /// (e.g., via allocate_virtual_node_id()). Unlike `create()` which assigns
+    /// a new ID, this method uses the provided ID.
+    ///
+    /// Returns Ok(()) if successful, or an error if the ID is already in use.
+    fn insert_with_id(&mut self, id: NodeId, node: Box<dyn Node>) -> Result<(), NodeError>;
+
     fn as_any(&self) -> &dyn Any
     where
         Self: Sized,
@@ -1231,6 +1221,9 @@ pub(crate) type Command = Box<dyn FnMut(&mut dyn Applier) -> Result<(), NodeErro
 #[derive(Default)]
 pub struct MemoryApplier {
     nodes: Vec<Option<Box<dyn Node>>>, // FUTURE(no_std): migrate to arena-backed node storage.
+    /// Storage for high-ID nodes (like virtual nodes with IDs starting at 0xFFFFFFFF00000000)
+    /// that can't be stored in the Vec without causing capacity overflow.
+    high_id_nodes: std::collections::HashMap<NodeId, Box<dyn Node>>,
     layout_runtime: Option<RuntimeHandle>,
     slots: SlotBackend,
 }
@@ -1239,6 +1232,7 @@ impl MemoryApplier {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
+            high_id_nodes: std::collections::HashMap::new(),
             layout_runtime: None,
             slots: SlotBackend::default(),
         }
@@ -1323,6 +1317,11 @@ impl Applier for MemoryApplier {
     }
 
     fn get_mut(&mut self, id: NodeId) -> Result<&mut dyn Node, NodeError> {
+        // Check HashMap first for high-ID nodes (virtual nodes)
+        if let Some(node) = self.high_id_nodes.get_mut(&id) {
+            return Ok(node.as_mut());
+        }
+        // Fall back to Vec for normal IDs
         let slot = self
             .nodes
             .get_mut(id)
@@ -1333,7 +1332,31 @@ impl Applier for MemoryApplier {
     }
 
     fn remove(&mut self, id: NodeId) -> Result<(), NodeError> {
-        // First, get the list of children before removing the node
+        // Check if this is a high-ID node
+        if self.high_id_nodes.contains_key(&id) {
+            // Get children before removing
+            let children = self
+                .high_id_nodes
+                .get(&id)
+                .map(|n| n.children())
+                .unwrap_or_default();
+
+            // Recursively remove children
+            for child_id in children {
+                let is_owned = self
+                    .get_mut(child_id)
+                    .map(|child| child.parent() == Some(id))
+                    .unwrap_or(false);
+                if is_owned {
+                    let _ = self.remove(child_id);
+                }
+            }
+
+            self.high_id_nodes.remove(&id);
+            return Ok(());
+        }
+
+        // Normal Vec-based removal for low IDs
         let children = {
             let slot = self.nodes.get(id).ok_or(NodeError::Missing { id })?;
             if let Some(node) = slot {
@@ -1344,24 +1367,46 @@ impl Applier for MemoryApplier {
         };
 
         // Recursively remove children, BUT ONLY if they are still owned by this node.
-        // If a child has been reused and reparented (parent != id), we must not remove it.
         for child_id in children {
-            let is_owned = if let Some(Some(child)) = self.nodes.get(child_id) {
-                child.parent() == Some(id)
-            } else {
-                false
-            };
+            let is_owned = self
+                .get_mut(child_id)
+                .map(|child| child.parent() == Some(id))
+                .unwrap_or(false);
 
             if is_owned {
-                // Ignore errors if child is already removed
                 let _ = self.remove(child_id);
             }
         }
 
-        // Finally, remove this node
         let slot = self.nodes.get_mut(id).ok_or(NodeError::Missing { id })?;
         slot.take();
         Ok(())
+    }
+
+    fn insert_with_id(&mut self, id: NodeId, node: Box<dyn Node>) -> Result<(), NodeError> {
+        // Use HashMap for high IDs (virtual nodes) to avoid Vec capacity overflow
+        // Virtual node IDs start at a very high value that can't fit in a Vec
+        const HIGH_ID_THRESHOLD: NodeId = 1_000_000_000; // 1 billion
+
+        if id >= HIGH_ID_THRESHOLD {
+            if self.high_id_nodes.contains_key(&id) {
+                return Err(NodeError::AlreadyExists { id });
+            }
+            self.high_id_nodes.insert(id, node);
+            Ok(())
+        } else {
+            // Normal Vec-based insertion for low IDs
+            if id >= self.nodes.len() {
+                self.nodes.resize_with(id + 1, || None);
+            }
+
+            if self.nodes[id].is_some() {
+                return Err(NodeError::AlreadyExists { id });
+            }
+
+            self.nodes[id] = Some(node);
+            Ok(())
+        }
     }
 }
 
@@ -1477,13 +1522,29 @@ impl ComposerCore {
         observer: SnapshotStateObserver,
         root: Option<NodeId>,
     ) -> Self {
+        // Initialize parent_stack with root if provided.
+        // This enables subcomposed nodes to be properly attached as children of the root
+        // during composition via normal insert_child commands from pop_parent.
+        // IMPORTANT: When using this, do NOT use set_active_children - let the composer
+        // manage children naturally to avoid conflicts.
+        let parent_stack = if let Some(root_id) = root {
+            vec![ParentFrame {
+                id: root_id,
+                remembered: Owned::new(ParentChildren::default()),
+                previous: Vec::new(),
+                new_children: Vec::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+
         Self {
             slots,
             slots_override: RefCell::new(Vec::new()),
             applier,
             runtime,
             observer,
-            parent_stack: RefCell::new(Vec::new()),
+            parent_stack: RefCell::new(parent_stack),
             subcompose_stack: RefCell::new(Vec::new()),
             root: Cell::new(root),
             commands: RefCell::new(Vec::new()),
@@ -1613,6 +1674,21 @@ impl Composer {
         self.core.applier.borrow_dyn()
     }
 
+    /// Registers a virtual node in the Applier.
+    ///
+    /// This is used by SubcomposeLayoutNode to register virtual container nodes
+    /// so that subsequent insert_child commands can find them and attach children.
+    /// Without this, virtual nodes would only exist in SubcomposeLayoutNodeInner.virtual_nodes
+    /// and applier.get_mut(virtual_node_id) would fail, breaking child attachment.
+    pub fn register_virtual_node(
+        &self,
+        node_id: NodeId,
+        node: Box<dyn Node>,
+    ) -> Result<(), NodeError> {
+        let mut applier = self.borrow_applier();
+        applier.insert_with_id(node_id, node)
+    }
+
     /// Checks if a node has no parent (is a root node).
     /// Used by SubcomposeMeasureScope to filter subcompose results.
     pub fn node_has_no_parent(&self, node_id: NodeId) -> bool {
@@ -1620,6 +1696,31 @@ impl Composer {
         match applier.get_mut(node_id) {
             Ok(node) => node.parent().is_none(),
             Err(_) => true, // If we can't find the node, treat it as root (conservative)
+        }
+    }
+
+    /// Gets the children of a node from the Applier.
+    ///
+    /// This is used by SubcomposeLayoutNode to get children of virtual nodes
+    /// directly from the Applier, where insert_child commands have been applied.
+    pub fn get_node_children(&self, node_id: NodeId) -> Vec<NodeId> {
+        let mut applier = self.borrow_applier();
+        match applier.get_mut(node_id) {
+            Ok(node) => node.children(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Clears all children of a node in the Applier.
+    ///
+    /// This is used by SubcomposeLayoutNode when reusing a virtual node for
+    /// different content. Without clearing, old children remain attached,
+    /// causing duplicate/interleaved items in lazy lists after scrolling.
+    pub fn clear_node_children(&self, node_id: NodeId) {
+        let mut applier = self.borrow_applier();
+        if let Ok(node) = applier.get_mut(node_id) {
+            // Use update_children with empty slice to clear all children
+            node.update_children(&[]);
         }
     }
 
@@ -1945,6 +2046,7 @@ impl Composer {
     pub fn subcompose_slot<R>(
         &self,
         slots: &Rc<SlotsHost>,
+        root: Option<NodeId>,
         f: impl FnOnce(&Composer) -> R,
     ) -> Result<R, NodeError> {
         let runtime_handle = self.runtime_handle();
@@ -1958,13 +2060,19 @@ impl Composer {
             Rc::clone(&self.core.applier),
             runtime_handle.clone(),
             self.observer(),
-            None, // No root - attaching to current context
+            root, // Root node for parent chain - enables dirty flag bubbling
         ));
         core.phase.set(phase);
         *core.local_stack.borrow_mut() = locals;
         let composer = Composer::from_core(core);
         let (result, mut commands, side_effects) = composer.install(|composer| {
             let output = f(composer);
+            // CRITICAL FIX: Pop the root parent frame to generate insert_child commands.
+            // Without this, the root frame's new_children list is populated but never
+            // processed, so children are never attached to the virtual node.
+            if root.is_some() {
+                composer.pop_parent();
+            }
             let commands = composer.take_commands();
             let side_effects = composer.take_side_effects();
             (output, commands, side_effects)
@@ -2069,6 +2177,15 @@ impl Composer {
     }
 
     fn recompose_group(&self, scope: &RecomposeScope) {
+        // CRITICAL FIX: Check if scope is still invalid before recomposing.
+        // When parent and child scopes are both invalidated, the child may be
+        // visited (and marked recomposed) during parent's recomposition.
+        // Without this check, we'd recompose the child again with wrong parent_stack,
+        // causing nodes to get attached to root instead of their actual parent.
+        if !scope.is_invalid() {
+            scope.mark_recomposed();
+            return;
+        }
         let started = self.with_slots_mut(|slots| slots.begin_recompose_at_scope(scope.id()));
         if started.is_some() {
             let previous_hint = self.core.recompose_parent_hint.replace(scope.parent_hint());
@@ -2249,7 +2366,41 @@ impl Composer {
         // should be added to the subcompose frame.
         let mut parent_stack = self.parent_stack();
         if let Some(frame) = parent_stack.last_mut() {
+            let parent_id = frame.id;
             frame.new_children.push(id);
+            drop(parent_stack);
+
+            // KEY FIX: Set parent link IMMEDIATELY, matching Jetpack Compose's
+            // LayoutNode.insertAt pattern where _foldedParent is set synchronously.
+            // This ensures that when bubble_measure_dirty runs (in commands),
+            // the parent chain is already established.
+            //
+            // IMPORTANT: Only set parent if node doesn't have one or if the new parent
+            // is not the root. This prevents double-recomposition scenarios where a
+            // child scope (invalidated by CompositionLocalProvider during parent's
+            // recomposition) gets processed again with parent_stack=[root], which would
+            // incorrectly reparent nodes to root.
+            {
+                let mut applier = self.borrow_applier();
+                if let Ok(child_node) = applier.get_mut(id) {
+                    let existing_parent = child_node.parent();
+                    // Only set parent if:
+                    // 1. Node has no parent, OR
+                    // 2. New parent is NOT the root (parent_id != 0 or != self.root)
+                    // This prevents root from stealing children that belong to intermediate nodes.
+                    let should_set = match existing_parent {
+                        None => true,
+                        Some(existing) => {
+                            // Don't let root steal children from proper parents
+                            let root_id = self.core.root.get();
+                            parent_id != root_id.unwrap_or(0) || existing == root_id.unwrap_or(0)
+                        }
+                    };
+                    if should_set {
+                        child_node.set_parent_for_bubbling(parent_id);
+                    }
+                }
+            }
             return;
         }
         drop(parent_stack);
@@ -2366,6 +2517,7 @@ impl Composer {
     }
 
     pub fn pop_parent(&self) {
+
         let frame_opt = {
             let mut stack = self.parent_stack();
             stack.pop()
@@ -2377,6 +2529,7 @@ impl Composer {
                 previous,
                 new_children,
             } = frame;
+
             #[cfg(not(target_arch = "wasm32"))]
             if std::env::var("COMPOSE_DEBUG").is_ok() {
                 eprintln!("pop_parent: node #{}", id);
@@ -2384,14 +2537,17 @@ impl Composer {
                 eprintln!("  new children: {:?}", new_children);
             }
             let children_changed = previous != new_children;
+
             if children_changed {
                 let mut current = previous.clone();
                 let target = new_children.clone();
                 let desired: HashSet<NodeId> = target.iter().copied().collect();
 
+
                 for index in (0..current.len()).rev() {
                     let child = current[index];
                     if !desired.contains(&child) {
+
                         current.remove(index);
                         self.commands_mut()
                             .push(Box::new(move |applier: &mut dyn Applier| {
@@ -2430,6 +2586,8 @@ impl Composer {
                             }));
                     }
                 }
+
+
 
                 for (target_index, &child) in target.iter().enumerate() {
                     if let Some(current_index) = current.iter().position(|&c| c == child) {
@@ -2501,6 +2659,7 @@ impl Composer {
                         }
                     }
                 }
+
             }
 
             let expected_children = new_children.clone();
@@ -2558,6 +2717,7 @@ impl Composer {
 
             remembered.update(|entry| entry.children = new_children);
         }
+
     }
 
     pub fn take_commands(&self) -> Vec<Command> {
@@ -3354,7 +3514,12 @@ impl<A: Applier + 'static> Composition<A> {
     pub fn process_invalid_scopes(&mut self) -> Result<bool, NodeError> {
         let runtime_handle = self.runtime_handle();
         let mut did_recompose = false;
+        let mut loop_count = 0;
         loop {
+            loop_count += 1;
+            if loop_count > 100 {
+                panic!("process_invalid_scopes looped too many times!");
+            }
             runtime_handle.drain_ui();
             let pending = runtime_handle.take_invalidated_scopes();
             if pending.is_empty() {

@@ -154,6 +154,7 @@ pub struct LayoutNode {
     modifier_capabilities: NodeCapabilities,
     modifier_child_capabilities: NodeCapabilities,
     pub measure_policy: Rc<dyn MeasurePolicy>,
+    /// The actual children of this node (folded view - includes virtual nodes as-is)
     pub children: IndexSet<NodeId>,
     cache: LayoutNodeCacheHandles,
     // Dirty flags for selective measure/layout/render
@@ -163,15 +164,40 @@ pub struct LayoutNode {
     needs_redraw: Cell<bool>,
     needs_pointer_pass: Cell<bool>,
     needs_focus_sync: Cell<bool>,
-    // Parent tracking for dirty flag bubbling (Jetpack Compose style)
+    /// Parent for dirty flag bubbling (skips virtual nodes)
     parent: Cell<Option<NodeId>>,
+    /// Direct parent in the tree (may be virtual)
+    folded_parent: Cell<Option<NodeId>>,
     // Node's own ID (set by applier after creation)
     id: Cell<Option<NodeId>>,
     debug_modifiers: Cell<bool>,
+    /// Virtual node flag - virtual nodes are transparent containers for subcomposition
+    /// Their children are flattened into the parent's children list for measurement
+    is_virtual: bool,
+    /// Count of virtual children (for lazy unfolded children computation)
+    virtual_children_count: Cell<usize>,
 }
 
 impl LayoutNode {
     pub fn new(modifier: Modifier, measure_policy: Rc<dyn MeasurePolicy>) -> Self {
+        Self::new_with_virtual(modifier, measure_policy, false)
+    }
+
+    /// Create a virtual LayoutNode for subcomposition slot containers.
+    /// Virtual nodes are transparent - their children are flattened into parent's children list.
+    pub fn new_virtual() -> Self {
+        Self::new_with_virtual(
+            Modifier::empty(),
+            Rc::new(crate::layout::policies::EmptyMeasurePolicy),
+            true,
+        )
+    }
+
+    fn new_with_virtual(
+        modifier: Modifier,
+        measure_policy: Rc<dyn MeasurePolicy>,
+        is_virtual: bool,
+    ) -> Self {
         let mut node = Self {
             modifier: Modifier::empty(),
             modifier_chain: ModifierChainHandle::new(),
@@ -187,11 +213,16 @@ impl LayoutNode {
             needs_redraw: Cell::new(true),  // First render should draw the node
             needs_pointer_pass: Cell::new(false),
             needs_focus_sync: Cell::new(false),
-            parent: Cell::new(None), // No parent initially
-            id: Cell::new(None),     // ID set by applier after creation
+            parent: Cell::new(None),        // Non-virtual parent for bubbling
+            folded_parent: Cell::new(None), // Direct parent (may be virtual)
+            id: Cell::new(None),            // ID set by applier after creation
             debug_modifiers: Cell::new(false),
+            is_virtual,
+            virtual_children_count: Cell::new(0),
         };
-        node.set_modifier(modifier);
+        if !is_virtual {
+            node.set_modifier(modifier);
+        }
         node
     }
 
@@ -205,18 +236,6 @@ impl LayoutNode {
         self.modifier = modifier;
         self.sync_modifier_chain();
         if modifier_changed {
-            #[cfg(debug_assertions)]
-            {
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static SET_MOD_CLEAR_COUNT: AtomicU64 = AtomicU64::new(0);
-                let count = SET_MOD_CLEAR_COUNT.fetch_add(1, Ordering::Relaxed);
-                if count.is_multiple_of(50) {
-                    eprintln!(
-                        "[LayoutNode] set_modifier cleared cache (modifier changed): count={}",
-                        count + 1
-                    );
-                }
-            }
             self.cache.clear();
             self.mark_needs_measure();
             self.request_semantics_update();
@@ -419,20 +438,35 @@ impl LayoutNode {
     }
 
     /// Set this node's parent (called when node is added as child).
+    /// Sets both folded_parent (direct) and parent (first non-virtual ancestor for bubbling).
     pub fn set_parent(&self, parent: NodeId) {
+        self.folded_parent.set(Some(parent));
+        // For now, parent = folded_parent. Virtual parent skipping requires applier access.
+        // The actual virtual-skipping happens in bubble_measure_dirty via applier traversal.
         self.parent.set(Some(parent));
         self.refresh_registry_state();
     }
 
     /// Clear this node's parent (called when node is removed from parent).
     pub fn clear_parent(&self) {
+        self.folded_parent.set(None);
         self.parent.set(None);
         self.refresh_registry_state();
     }
 
-    /// Get this node's parent.
+    /// Get this node's parent for dirty flag bubbling (may skip virtual nodes).
     pub fn parent(&self) -> Option<NodeId> {
         self.parent.get()
+    }
+
+    /// Get this node's direct parent (may be a virtual node).
+    pub fn folded_parent(&self) -> Option<NodeId> {
+        self.folded_parent.get()
+    }
+
+    /// Returns true if this is a virtual node (transparent container for subcomposition).
+    pub fn is_virtual(&self) -> bool {
+        self.is_virtual
     }
 
     pub(crate) fn cache_handles(&self) -> LayoutNodeCacheHandles {
@@ -544,8 +578,11 @@ impl Clone for LayoutNode {
             needs_pointer_pass: Cell::new(self.needs_pointer_pass.get()),
             needs_focus_sync: Cell::new(self.needs_focus_sync.get()),
             parent: Cell::new(self.parent.get()),
+            folded_parent: Cell::new(self.folded_parent.get()),
             id: Cell::new(None),
             debug_modifiers: Cell::new(self.debug_modifiers.get()),
+            is_virtual: self.is_virtual,
+            virtual_children_count: Cell::new(self.virtual_children_count.get()),
         };
         node.sync_modifier_chain();
         node
@@ -569,15 +606,26 @@ impl Node for LayoutNode {
     }
 
     fn insert_child(&mut self, child: NodeId) {
+        if is_virtual_node(child) {
+            let count = self.virtual_children_count.get();
+            self.virtual_children_count.set(count + 1);
+        }
         self.children.insert(child);
         self.cache.clear();
         self.mark_needs_measure();
     }
 
     fn remove_child(&mut self, child: NodeId) {
-        self.children.shift_remove(&child);
-        self.cache.clear();
-        self.mark_needs_measure();
+        if self.children.shift_remove(&child) {
+            if is_virtual_node(child) {
+                let count = self.virtual_children_count.get();
+                if count > 0 {
+                    self.virtual_children_count.set(count - 1);
+                }
+            }
+            self.cache.clear();
+            self.mark_needs_measure();
+        }
     }
 
     fn move_child(&mut self, from: usize, to: usize) {
@@ -646,6 +694,14 @@ impl Node for LayoutNode {
     fn needs_semantics(&self) -> bool {
         self.needs_semantics.get()
     }
+
+    /// Minimal parent setter for dirty flag bubbling.
+    /// Only sets the parent Cell without triggering registry updates.
+    /// This is used during SubcomposeLayout measurement where we need parent
+    /// pointers for bubble_measure_dirty but don't want full attachment side effects.
+    fn set_parent_for_bubbling(&mut self, parent: NodeId) {
+        self.parent.set(Some(parent));
+    }
 }
 
 impl Drop for LayoutNode {
@@ -659,15 +715,20 @@ impl Drop for LayoutNode {
 thread_local! {
     static LAYOUT_NODE_REGISTRY: RefCell<HashMap<NodeId, LayoutNodeRegistryEntry>> =
         RefCell::new(HashMap::new());
+    // Start at a high value to avoid conflicts with SlotTable IDs (which start low).
+    // We use a value compatible with 32-bit (WASM) usize to prevent truncation issues.
+    // 0xC0000000 is ~3.2 billion, leaving ~1 billion IDs before overflow.
+    static VIRTUAL_NODE_ID_COUNTER: std::sync::atomic::AtomicUsize = const { std::sync::atomic::AtomicUsize::new(0xC0000000) };
 }
 
 struct LayoutNodeRegistryEntry {
     parent: Option<NodeId>,
     modifier_child_capabilities: NodeCapabilities,
     modifier_locals: ModifierLocalsHandle,
+    is_virtual: bool,
 }
 
-fn register_layout_node(id: NodeId, node: &LayoutNode) {
+pub(crate) fn register_layout_node(id: NodeId, node: &LayoutNode) {
     LAYOUT_NODE_REGISTRY.with(|registry| {
         registry.borrow_mut().insert(
             id,
@@ -675,15 +736,35 @@ fn register_layout_node(id: NodeId, node: &LayoutNode) {
                 parent: node.parent(),
                 modifier_child_capabilities: node.modifier_child_capabilities(),
                 modifier_locals: node.modifier_locals_handle(),
+                is_virtual: node.is_virtual(),
             },
         );
     });
 }
 
-fn unregister_layout_node(id: NodeId) {
+pub(crate) fn unregister_layout_node(id: NodeId) {
     LAYOUT_NODE_REGISTRY.with(|registry| {
         registry.borrow_mut().remove(&id);
     });
+}
+
+pub(crate) fn is_virtual_node(id: NodeId) -> bool {
+    LAYOUT_NODE_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .get(&id)
+            .map(|entry| entry.is_virtual)
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn allocate_virtual_node_id() -> NodeId {
+    use std::sync::atomic::Ordering;
+    // Allocate IDs from a high range to avoid conflict with SlotTable IDs.
+    // Thread-local counter avoids cross-thread contention (WASM is single-threaded anyway).
+    VIRTUAL_NODE_ID_COUNTER.with(|counter| {
+        counter.fetch_add(1, Ordering::Relaxed)
+    })
 }
 
 fn resolve_modifier_local_from_parent_chain(

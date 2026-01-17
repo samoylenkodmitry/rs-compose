@@ -190,9 +190,15 @@ fn main() {
             println!("  Measured fling velocity: {:.1} px/sec", velocity);
 
             if velocity.abs() > 50.0 {
-                println!("  ✓ PASS: Velocity detected ({:.1} px/sec > 50 threshold)\n", velocity);
+                println!(
+                    "  ✓ PASS: Velocity detected ({:.1} px/sec > 50 threshold)\n",
+                    velocity
+                );
             } else {
-                println!("  ✗ FAIL: Velocity too low ({:.1} px/sec, expected > 50)\n", velocity);
+                println!(
+                    "  ✗ FAIL: Velocity too low ({:.1} px/sec, expected > 50)\n",
+                    velocity
+                );
                 all_passed = false;
             }
 

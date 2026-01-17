@@ -235,27 +235,20 @@ where
         self.runtime.drain_frame_callbacks(frame_time);
         self.runtime.runtime_handle().drain_ui();
         if self.composition.should_render() {
-            #[cfg(debug_assertions)]
-            eprintln!("[Update] should_render=true, calling process_invalid_scopes");
             match self.composition.process_invalid_scopes() {
                 Ok(changed) => {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "[Update] process_invalid_scopes returned changed={}",
-                        changed
-                    );
                     if changed {
                         fps_monitor::record_recomposition();
                         self.layout_dirty = true;
                         // Force root needs_measure since bubbling may fail for
                         // subcomposition nodes with broken parent chains (node 226 issue)
                         if let Some(root_id) = self.composition.root() {
-                            let _ = self
-                                .composition
-                                .applier_mut()
-                                .with_node::<LayoutNode, _>(root_id, |node| {
+                            let _ = self.composition.applier_mut().with_node::<LayoutNode, _>(
+                                root_id,
+                                |node| {
                                     node.mark_needs_measure();
-                                });
+                                },
+                            );
                         }
                         request_render_invalidation();
                     }
@@ -739,22 +732,7 @@ where
 
         self.run_render_phase();
 
-        #[cfg(debug_assertions)]
-        {
-            let after_render = Instant::now();
-            let layout_ms = after_layout.duration_since(frame_start).as_secs_f64() * 1000.0;
-            let dispatch_ms = after_dispatch.duration_since(after_layout).as_secs_f64() * 1000.0;
-            let render_ms = after_render.duration_since(after_dispatch).as_secs_f64() * 1000.0;
-            let total_ms = after_render.duration_since(frame_start).as_secs_f64() * 1000.0;
 
-            // Only log if frame took more than 8ms (120fps target)
-            if total_ms > 8.0 {
-                eprintln!(
-                    "[Frame] SLOW: total={:.1}ms (layout={:.1}ms, dispatch={:.1}ms, render={:.1}ms)",
-                    total_ms, layout_ms, dispatch_ms, render_ms
-                );
-            }
-        }
     }
 
     fn run_layout_phase(&mut self) {
@@ -767,15 +745,12 @@ where
         let repass_nodes = compose_ui::take_layout_repass_nodes();
         let had_repass_nodes = !repass_nodes.is_empty();
         #[cfg(debug_assertions)]
-        if had_repass_nodes {
-            eprintln!("[Layout] Processing {} repass nodes", repass_nodes.len());
-        }
+
         if had_repass_nodes {
             let root = self.composition.root();
             let mut applier = self.composition.applier_mut();
             for node_id in repass_nodes {
-                #[cfg(debug_assertions)]
-                eprintln!("[Layout REPASS] Processing node_id={}", node_id);
+
                 // Bubble measure dirty flags up to root so cache epoch increments.
                 // This uses the centralized function in compose-core.
                 compose_core::bubble_measure_dirty(
@@ -795,11 +770,7 @@ where
             if let Some(root) = root {
                 if let Ok(node) = applier.get_mut(root) {
                     node.mark_needs_measure();
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "[Layout REPASS] Also marked actual root {} needs_measure",
-                        root
-                    );
+
                 }
             }
 

@@ -556,6 +556,8 @@ impl SlotTable {
         }
     }
 
+
+
     pub fn start(&mut self, key: Key) -> usize {
         self.ensure_capacity();
 

@@ -6,8 +6,6 @@ use compose_animation::{FloatDecayAnimationSpec, SplineBasedDecaySpec};
 use compose_core::{FrameCallbackRegistration, FrameClock, RuntimeHandle};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-#[cfg(debug_assertions)]
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Minimum velocity (in px/sec) to trigger a fling animation.
 /// Below this, the scroll just stops immediately.
@@ -19,20 +17,8 @@ const DEFAULT_FLING_FRICTION: f32 = 0.015;
 /// Minimum unconsumed delta (in pixels) to consider a boundary hit.
 const BOUNDARY_EPSILON: f32 = 0.5;
 
-/// Global animation ID counter for debugging
-#[cfg(debug_assertions)]
-static NEXT_FLING_ID: AtomicU64 = AtomicU64::new(1);
-
-#[cfg(debug_assertions)]
-fn next_fling_id() -> u64 {
-    NEXT_FLING_ID.fetch_add(1, Ordering::Relaxed)
-}
-
 /// State for an active fling animation.
 struct FlingAnimationState {
-    /// Unique ID for debugging
-    #[cfg(debug_assertions)]
-    id: u64,
     /// Initial position when fling started (used as reference for decay calc).
     initial_value: f32,
     /// Last applied position (to calculate delta for next frame).
@@ -102,23 +88,9 @@ impl FlingAnimation {
         let calc = compose_animation::FlingCalculator::new(friction, density);
         let decay_spec = SplineBasedDecaySpec::with_calculator(calc);
 
-        #[cfg(debug_assertions)]
-        let fling_id = next_fling_id();
-        #[cfg(debug_assertions)]
-        let expected_distance = calc.fling_distance(velocity);
-        #[cfg(debug_assertions)]
-        let expected_duration = calc.fling_duration(velocity);
 
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[Fling#{}] START: initial={:.1}, velocity={:.1}px/s, expected_distance={:.1}px, expected_duration={:.0}ms",
-            fling_id, initial_value, velocity, expected_distance, expected_duration
-        );
 
-        // Create animation state
         let anim_state = FlingAnimationState {
-            #[cfg(debug_assertions)]
-            id: fling_id,
             initial_value,
             last_value: Cell::new(initial_value),
             initial_velocity: velocity,
@@ -135,16 +107,8 @@ impl FlingAnimation {
         self.schedule_frame(on_scroll, on_end);
     }
 
-    /// Cancels any running fling animation.
     pub fn cancel(&self) {
         if let Some(state) = self.state.borrow_mut().take() {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[Fling#{}] CANCEL: was_running={}, total_delta_applied={:.1}",
-                state.id,
-                state.is_running.get(),
-                state.total_delta.get()
-            );
             // Mark as not running to prevent callback from doing anything
             state.is_running.set(false);
             // Registration is dropped, cancelling the callback
@@ -173,22 +137,14 @@ impl FlingAnimation {
             let should_continue = {
                 let state_guard = state.borrow();
                 let Some(anim_state) = state_guard.as_ref() else {
-                    #[cfg(debug_assertions)]
-                    eprintln!("[Fling] Frame callback: state is None, exiting");
                     return;
                 };
 
                 if !anim_state.is_running.get() {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "[Fling#{}] Frame callback: is_running=false, exiting",
-                        anim_state.id
-                    );
                     return;
                 }
 
-                #[cfg(debug_assertions)]
-                let fling_id = anim_state.id;
+
 
                 let start_time = match anim_state.start_frame_time_nanos.get() {
                     Some(value) => value,
@@ -202,8 +158,7 @@ impl FlingAnimation {
 
                 // Calculate elapsed time from frame clock (deterministic).
                 let play_time_nanos = frame_time_nanos.saturating_sub(start_time) as i64;
-                #[cfg(debug_assertions)]
-                let play_time_ms = play_time_nanos / 1_000_000;
+
 
                 // Get current position from decay spec (relative to initial_value)
                 let new_value = anim_state.decay_spec.get_value_from_nanos(
@@ -237,14 +192,6 @@ impl FlingAnimation {
 
                 if is_finished {
                     anim_state.is_running.set(false);
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "[Fling#{}] FINISH at t={}ms: total_delta={:.1}, final_value={:.1}",
-                        fling_id,
-                        play_time_ms,
-                        anim_state.total_delta.get(),
-                        new_value
-                    );
                 }
 
                 // Apply the scroll DELTA (not absolute position)
@@ -259,11 +206,6 @@ impl FlingAnimation {
                 let hit_boundary = (delta - consumed).abs() > BOUNDARY_EPSILON;
                 if hit_boundary {
                     anim_state.is_running.set(false);
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "[Fling#{}] BOUNDARY at t={}ms: requested={:.1}, consumed={:.1}",
-                        fling_id, play_time_ms, delta, consumed
-                    );
                 }
 
                 !is_finished && !hit_boundary

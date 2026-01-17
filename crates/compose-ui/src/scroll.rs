@@ -55,11 +55,7 @@ impl ScrollState {
     /// Creates a new ScrollState with the given initial scroll position.
     pub fn new(initial: f32) -> Self {
         let id = NEXT_SCROLL_STATE_ID.fetch_add(1, Ordering::Relaxed);
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[ScrollState#{}] NEW created with initial={:.1}",
-            id, initial
-        );
+
         Self {
             inner: Rc::new(ScrollStateInner {
                 id,
@@ -114,11 +110,7 @@ impl ScrollState {
             if callbacks.is_empty() {
                 // Defer invalidation until a node registers a callback.
                 self.inner.pending_invalidation.set(true);
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "[ScrollState#{}] No callbacks - deferring invalidation",
-                    self.inner.id
-                );
+
             } else {
                 for callback in callbacks.values() {
                     callback();
@@ -138,22 +130,14 @@ impl ScrollState {
     pub fn scroll_to(&self, position: f32) {
         let max = self.max_value();
         let clamped = position.clamp(0.0, max);
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[ScrollState#{}] scroll_to({:.1}) -> clamped={:.1}, max={:.1}",
-            self.inner.id, position, clamped, max
-        );
+
         self.inner.value.set(clamped);
 
         // Trigger layout invalidation callbacks
         let callbacks = self.inner.invalidate_callbacks.borrow();
         if callbacks.is_empty() {
             self.inner.pending_invalidation.set(true);
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[ScrollState#{}] No callbacks - deferring invalidation",
-                self.inner.id
-            );
+
         } else {
             for callback in callbacks.values() {
                 callback();
@@ -309,11 +293,7 @@ impl ModifierNode for ScrollNode {
         self.node_id = node_id;
 
         if let Some(node_id) = node_id {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[ScrollNode] on_attach: registering callback for node {:?}",
-                node_id
-            );
+
 
             let callback_id = self.state.add_invalidate_callback(Box::new(move || {
                 // Schedule scoped layout repass for this node
@@ -321,8 +301,7 @@ impl ModifierNode for ScrollNode {
             }));
             self.invalidation_callback_id = Some(callback_id);
         } else {
-            #[cfg(debug_assertions)]
-            eprintln!("[ScrollNode] on_attach: WARNING - no node_id available!");
+
             // If we don't have a node ID, we can't register a scoped callback.
             // This suggests the modifier chain hasn't been properly initialized with an ID yet.
             // However, on_attach usually happens after node_id is available in LayoutNode.
@@ -397,12 +376,6 @@ impl LayoutModifierNode for ScrollNode {
         // Step 6: Read scroll value and calculate offset
         // IMPORTANT: Use value_non_reactive() during measure to avoid triggering recomposition
         let scroll = self.state.value_non_reactive().clamp(0.0, max_scroll);
-
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[ScrollNode] measure() - scroll={:.1}, max_scroll={:.1}",
-            scroll, max_scroll
-        );
 
         let abs_scroll = if self.reverse_scrolling {
             scroll - max_scroll

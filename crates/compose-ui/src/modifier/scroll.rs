@@ -35,7 +35,7 @@ use web_time::Instant;
 #[cfg(feature = "test-helpers")]
 mod test_velocity_tracking {
     use std::sync::atomic::{AtomicU32, Ordering};
-    
+
     /// Stores the last fling velocity calculated for test verification.
     ///
     /// Uses `AtomicU32` (not thread_local) because the test driver runs on a separate
@@ -181,27 +181,11 @@ trait ScrollTarget: Clone {
 impl ScrollTarget for ScrollState {
     fn apply_delta(&self, delta: f32) -> f32 {
         // Regular scroll uses negative delta (natural scrolling)
-        let consumed = self.dispatch_raw_delta(-delta);
-        #[cfg(debug_assertions)]
-        if delta.abs() > 0.1 {
-            eprintln!("[ScrollState] apply_delta({:.1}) -> dispatch_raw_delta({:.1}) -> consumed={:.1}, new_value={:.1}", 
-                delta, -delta, consumed, self.value());
-        }
-        consumed
+        self.dispatch_raw_delta(-delta)
     }
 
     fn apply_fling_delta(&self, delta: f32) -> f32 {
-        let consumed = self.dispatch_raw_delta(delta);
-        #[cfg(debug_assertions)]
-        if delta.abs() > 0.1 {
-            eprintln!(
-                "[ScrollState] apply_fling_delta({:.1}) -> consumed={:.1}, new_value={:.1}",
-                delta,
-                consumed,
-                self.value()
-            );
-        }
-        consumed
+        self.dispatch_raw_delta(delta)
     }
 
     fn invalidate(&self) {
@@ -284,21 +268,10 @@ impl<S: ScrollTarget + 'static> ScrollGestureDetector<S> {
     fn on_down(&self, position: Point) -> bool {
         let mut gs = self.gesture_state.borrow_mut();
 
-        #[cfg(debug_assertions)]
-        let had_fling = gs.fling_animation.is_some();
-
         // Cancel any running fling animation
         if let Some(fling) = gs.fling_animation.take() {
-            #[cfg(debug_assertions)]
-            eprintln!("[Scroll] on_down: cancelling existing fling");
             fling.cancel();
         }
-
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[Scroll] on_down: pos=({:.1}, {:.1}), had_fling={}",
-            position.x, position.y, had_fling
-        );
 
         gs.drag_down_position = Some(position);
         gs.last_position = Some(position);
@@ -424,16 +397,6 @@ impl<S: ScrollTarget + 'static> ScrollGestureDetector<S> {
                     .calculate_velocity_with_max(MAX_FLING_VELOCITY);
             }
 
-            #[cfg(debug_assertions)]
-            if allow_fling {
-                eprintln!(
-                    "[Fling] on_up: was_dragging={}, velocity={:.0}",
-                    was_dragging, velocity
-                );
-            } else {
-                eprintln!("[Scroll] on_cancel: was_dragging={}", was_dragging);
-            }
-
             let start_fling = allow_fling && was_dragging && velocity.abs() > MIN_FLING_VELOCITY;
             let existing_fling = if start_fling {
                 gs.fling_animation.take()
@@ -457,11 +420,6 @@ impl<S: ScrollTarget + 'static> ScrollGestureDetector<S> {
 
         // Start fling animation if velocity is significant
         if start_fling {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[Fling] Triggering fling with velocity: {:.1} px/sec",
-                velocity
-            );
 
             if let Some(old_fling) = existing_fling {
                 old_fling.cancel();
@@ -475,12 +433,6 @@ impl<S: ScrollTarget + 'static> ScrollGestureDetector<S> {
 
                 // Get current scroll position for fling start
                 let initial_value = scroll_target.current_offset();
-
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "[Fling] current_offset()={:.1} at fling start",
-                    initial_value
-                );
 
                 // Convert gesture velocity to scroll velocity.
                 let adjusted_velocity = if reverse { -velocity } else { velocity };
