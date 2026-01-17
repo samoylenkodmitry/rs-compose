@@ -10,6 +10,7 @@ compose-core = { path = "../compose-core" }
 compose-macros = { path = "../compose-macros" }
 compose-runtime-std = { path = "../compose-runtime-std" }
 compose-foundation = { path = "../compose-foundation" }
+compose-animation = { path = "../compose-animation" }
 compose-ui-layout = { path = "../compose-ui-layout" }
 compose-ui-graphics = { path = "../compose-ui-graphics" }
 indexmap = "=2.7.1"
@@ -21,6 +22,9 @@ log = "0.4"
 
 [features]
 default = []
+# Enable test helpers like last_fling_velocity() for robot test verification.
+# This adds global state for cross-thread test access, so only enable in test builds.
+test-helpers = []
 
 [dev-dependencies]
 criterion = "0.5"

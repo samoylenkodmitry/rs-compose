@@ -60,4 +60,14 @@ pub trait Renderer {
         layout_tree: &LayoutTree,
         viewport: Size,
     ) -> Result<(), Self::Error>;
+
+    /// Draw a development overlay (e.g., FPS counter) on top of the scene.
+    ///
+    /// This is called after rebuild_scene when dev options are enabled.
+    /// The text is drawn directly by the renderer without affecting composition.
+    ///
+    /// Default implementation does nothing.
+    fn draw_dev_overlay(&mut self, _text: &str, _viewport: Size) {
+        // Default: no-op
+    }
 }

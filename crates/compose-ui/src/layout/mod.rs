@@ -322,6 +322,10 @@ impl LayoutTree {
         &self.root
     }
 
+    pub fn root_mut(&mut self) -> &mut LayoutBox {
+        &mut self.root
+    }
+
     pub fn into_root(self) -> LayoutBox {
         self.root
     }
@@ -504,27 +508,36 @@ pub fn measure_layout(
         max_height: max_size.height,
     };
 
-    // Selective measure: only increment epoch if something needs measuring
+    // Selective measure: only increment epoch if something needs MEASURING (not just layout)
     // O(1) check - just look at root's dirty flag (bubbling ensures correctness)
-    let (needs_measure, _needs_semantics, cached_epoch) =
-        match applier.with_node::<LayoutNode, _>(root, |node| {
+    //
+    // CRITICAL: We check needs_MEASURE, not needs_LAYOUT!
+    // - needs_measure: size may change, caches must be invalidated
+    // - needs_layout: position may change but size is cached (e.g., scroll)
+    //
+    // Scroll operations bubble needs_layout to ancestors, but NOT needs_measure.
+    // Using needs_layout here would wipe ALL caches on every scroll frame, causing
+    // O(N) full remeasurement instead of O(changed nodes).
+    let (needs_remeasure, _needs_semantics, cached_epoch) = match applier
+        .with_node::<LayoutNode, _>(root, |node| {
             (
-                node.needs_layout(),
+                node.needs_measure(), // CORRECT: check needs_measure, not needs_layout
                 node.needs_semantics(),
                 node.cache_handles().epoch(),
             )
         }) {
-            Ok(tuple) => tuple,
-            Err(NodeError::TypeMismatch { .. }) => {
-                let node = applier.get_mut(root)?;
-                let layout_dirty = node.needs_layout();
-                let semantics_dirty = node.needs_semantics();
-                (layout_dirty, semantics_dirty, 0)
-            }
-            Err(err) => return Err(err),
-        };
+        Ok(tuple) => tuple,
+        Err(NodeError::TypeMismatch { .. }) => {
+            let node = applier.get_mut(root)?;
+            // For non-LayoutNode roots, check needs_layout as fallback
+            let measure_dirty = node.needs_layout();
+            let semantics_dirty = node.needs_semantics();
+            (measure_dirty, semantics_dirty, 0)
+        }
+        Err(err) => return Err(err),
+    };
 
-    let epoch = if needs_measure {
+    let epoch = if needs_remeasure {
         NEXT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed)
     } else if cached_epoch != 0 {
         cached_epoch
@@ -552,6 +565,7 @@ pub fn measure_layout(
     // ---- Measurement -------------------------------------------------------
     // If measurement fails, the guard will restore slots from the shared handle
     // on drop - this is safe because the handle always contains valid slots.
+
     let measured = builder.measure_node(root, normalize_constraints(constraints))?;
 
     // ---- Metadata ----------------------------------------------------------
@@ -824,13 +838,8 @@ impl LayoutBuilderState {
             return Err(err);
         }
 
-        let node_ids: Vec<NodeId> = measure_result
-            .placements
-            .iter()
-            .map(|placement| placement.node_id)
-            .collect();
-
-        node_handle.set_active_children(node_ids.iter().copied());
+        // NOTE: Children are now managed by the composer via insert_child commands
+        // (from parent_stack initialization with root). set_active_children is no longer used.
 
         let mut width = measure_result.size.width + padding.horizontal_sum();
         let mut height = measure_result.size.height + padding.vertical_sum();
@@ -1049,24 +1058,26 @@ impl LayoutBuilderState {
         cache.activate(cache_epoch);
         let layout_props = resolved_modifiers.layout_properties();
 
-        // Selective measure: if node doesn't need measure and we have a cached result, use it
-        if !needs_measure {
-            if let Some(cached) = cache.get_measurement(constraints) {
-                return Ok(cached);
-            }
+        if needs_measure {
+            // Node has needs_measure=true
         }
 
-        // Otherwise check cache normally (for different constraints)
-        if let Some(cached) = cache.get_measurement(constraints) {
-            // Clear dirty flag after successful measure
-            Self::with_applier_result(&state_rc, |applier| {
-                applier.with_node::<LayoutNode, _>(node_id, |node| {
-                    node.clear_needs_measure();
-                    node.clear_needs_layout();
+        // Only check cache if not marked as needing measure.
+        // When needs_measure=true, we MUST re-run measure() even if constraints match,
+        // because something else changed (e.g., scroll offset, modifier state).
+        if !needs_measure {
+            // Check cache for current constraints
+            if let Some(cached) = cache.get_measurement(constraints) {
+                // Clear dirty flag after successful cache hit
+                Self::with_applier_result(&state_rc, |applier| {
+                    applier.with_node::<LayoutNode, _>(node_id, |node| {
+                        node.clear_needs_measure();
+                        node.clear_needs_layout();
+                    })
                 })
-            })
-            .ok();
-            return Ok(cached);
+                .ok();
+                return Ok(cached);
+            }
         }
 
         let (runtime_handle, applier_host) = {

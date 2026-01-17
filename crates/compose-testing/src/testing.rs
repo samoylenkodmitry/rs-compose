@@ -57,23 +57,32 @@ impl ComposeTestRule {
     /// Drive the composition until there are no pending renders, invalidated
     /// scopes, or enqueued node mutations remaining.
     pub fn pump_until_idle(&mut self) -> Result<(), NodeError> {
+        let mut i = 0;
         loop {
             let mut progressed = false;
+            i += 1;
+            if i > 100 {
+                panic!("pump_until_idle looped too many times!");
+            }
 
             if self.composition.should_render() {
+                eprintln!("pump_until_idle: should_render() is true");
                 self.render()?;
                 progressed = true;
             }
 
             let handle = self.composition.runtime_handle();
             if handle.has_updates() {
+                eprintln!("pump_until_idle: has_updates() is true");
                 self.composition.flush_pending_node_updates()?;
                 progressed = true;
             }
 
             if handle.has_invalid_scopes() {
+                eprintln!("pump_until_idle: has_invalid_scopes() is true");
                 let changed = self.composition.process_invalid_scopes()?;
                 if changed {
+                    eprintln!("pump_until_idle: process_invalid_scopes returned true");
                     // Request render invalidation so tests can detect composition changes
                     request_render_invalidation();
                 }

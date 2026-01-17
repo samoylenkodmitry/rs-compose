@@ -15,7 +15,7 @@ use compose_foundation::{
 };
 use compose_ui_graphics::Size;
 use compose_ui_layout::LayoutModifierMeasureResult;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,7 +37,9 @@ pub struct ScrollState {
 pub(crate) struct ScrollStateInner {
     /// Unique ID for debugging
     id: u64,
-    /// Current scroll offset in pixels
+    /// Current scroll offset in pixels.
+    /// Uses MutableState<f32> for reactivity - Composables can observe this value.
+    /// Layout reads use get_non_reactive() to avoid triggering recomposition.
     value: MutableState<f32>,
     /// Maximum scroll value (content_size - viewport_size)
     /// Using RefCell instead of MutableState to avoid snapshot isolation issues
@@ -45,18 +47,22 @@ pub(crate) struct ScrollStateInner {
     /// Callbacks to invalidate layout when scroll value changes
     /// Using HashMap to allow multiple listeners (e.g. real node + clones)
     invalidate_callbacks: RefCell<std::collections::HashMap<u64, Box<dyn Fn()>>>,
+    /// Tracks whether we need to invalidate once a callback is registered.
+    pending_invalidation: Cell<bool>,
 }
 
 impl ScrollState {
     /// Creates a new ScrollState with the given initial scroll position.
     pub fn new(initial: f32) -> Self {
         let id = NEXT_SCROLL_STATE_ID.fetch_add(1, Ordering::Relaxed);
+
         Self {
             inner: Rc::new(ScrollStateInner {
                 id,
                 value: mutableStateOf(initial),
                 max_value: RefCell::new(0.0),
                 invalidate_callbacks: RefCell::new(std::collections::HashMap::new()),
+                pending_invalidation: Cell::new(false),
             }),
         }
     }
@@ -66,9 +72,20 @@ impl ScrollState {
         self.inner.id
     }
 
-    /// Gets the current scroll position in pixels.
+    /// Gets the current scroll position in pixels (reactive - triggers recomposition).
+    ///
+    /// Use this in Composable functions when you want UI to update on scroll.
+    /// Example: `Text("Scroll position: ${scrollState.value()}")`
     pub fn value(&self) -> f32 {
         self.inner.value.with(|v| *v)
+    }
+
+    /// Gets the current scroll position in pixels (non-reactive).
+    ///
+    /// Use this in layout/measure phase to avoid triggering recomposition.
+    /// This is called internally by ScrollNode::measure().
+    pub fn value_non_reactive(&self) -> f32 {
+        self.inner.value.get_non_reactive()
     }
 
     /// Gets the maximum scroll value.
@@ -85,11 +102,18 @@ impl ScrollState {
         let actual_delta = new_value - current;
 
         if actual_delta.abs() > 0.001 {
+            // Use MutableState::set which triggers snapshot observers for reactive updates
             self.inner.value.set(new_value);
 
             // Trigger layout invalidation callbacks
-            for callback in self.inner.invalidate_callbacks.borrow().values() {
-                callback();
+            let callbacks = self.inner.invalidate_callbacks.borrow();
+            if callbacks.is_empty() {
+                // Defer invalidation until a node registers a callback.
+                self.inner.pending_invalidation.set(true);
+            } else {
+                for callback in callbacks.values() {
+                    callback();
+                }
             }
         }
 
@@ -104,11 +128,18 @@ impl ScrollState {
     /// Scrolls to the given position immediately.
     pub fn scroll_to(&self, position: f32) {
         let max = self.max_value();
-        self.inner.value.set(position.clamp(0.0, max));
+        let clamped = position.clamp(0.0, max);
+
+        self.inner.value.set(clamped);
 
         // Trigger layout invalidation callbacks
-        for callback in self.inner.invalidate_callbacks.borrow().values() {
-            callback();
+        let callbacks = self.inner.invalidate_callbacks.borrow();
+        if callbacks.is_empty() {
+            self.inner.pending_invalidation.set(true);
+        } else {
+            for callback in callbacks.values() {
+                callback();
+            }
         }
     }
 
@@ -121,6 +152,11 @@ impl ScrollState {
             .invalidate_callbacks
             .borrow_mut()
             .insert(id, callback);
+        if self.inner.pending_invalidation.replace(false) {
+            if let Some(callback) = self.inner.invalidate_callbacks.borrow().get(&id) {
+                callback();
+            }
+        }
         id
     }
 
@@ -261,11 +297,7 @@ impl ModifierNode for ScrollNode {
             }));
             self.invalidation_callback_id = Some(callback_id);
         } else {
-            // If we don't have a node ID, we can't register a scoped callback.
-            // This suggests the modifier chain hasn't been properly initialized with an ID yet.
-            // However, on_attach usually happens after node_id is available in LayoutNode.
-            // We'll log a warning if debug logging is enabled, but for now we proceed safely.
-            // In future, we might want to panic here or handle it fundamentally.
+            log::error!("ScrollNode attached without a NodeId! Layout invalidation will fail.");
         }
 
         // Initial invalidation
@@ -333,8 +365,8 @@ impl LayoutModifierNode for ScrollNode {
         }
 
         // Step 6: Read scroll value and calculate offset
-        // IMPORTANT: Reading state.value() here during measure
-        let scroll = self.state.value().clamp(0.0, max_scroll);
+        // IMPORTANT: Use value_non_reactive() during measure to avoid triggering recomposition
+        let scroll = self.state.value_non_reactive().clamp(0.0, max_scroll);
 
         let abs_scroll = if self.reverse_scrolling {
             scroll - max_scroll

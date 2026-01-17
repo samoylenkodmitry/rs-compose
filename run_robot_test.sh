@@ -89,7 +89,12 @@ echo "============================================" | tee -a "$LOG_FILE"
 
 # Create temp directory for individual test results
 RESULTS_DIR=$(mktemp -d)
-trap "rm -rf $RESULTS_DIR" EXIT
+cleanup_results_dir() {
+    if [ -d "$RESULTS_DIR" ]; then
+        rm -r -- "$RESULTS_DIR"
+    fi
+}
+trap cleanup_results_dir EXIT
 
 # Function to run a single test
 run_test() {
@@ -99,9 +104,23 @@ run_test() {
     
     # Run with timeout, capture exit code and output
     local timeout_secs=60
-    if [ "$example" = "robot_text_input" ]; then
-        timeout_secs=120
-    fi
+    case "$example" in
+        robot_text_input)
+            timeout_secs=120
+            ;;
+        robot_content_type_reuse|robot_lazy_perf_validation)
+            timeout_secs=240
+            ;;
+        robot_fling_edge_cases)
+            timeout_secs=150
+            ;;
+        robot_no_fling_recording2)
+            timeout_secs=240
+            ;;
+        robot_double_click|robot_multiline_click|robot_multiline_nav)
+            timeout_secs=90
+            ;;
+    esac
 
     if command -v timeout >/dev/null 2>&1; then
         timeout "${timeout_secs}s" cargo run --package desktop-app --example "$example" --features robot-app > "$output_file" 2>&1
@@ -156,7 +175,7 @@ for example in "${EXAMPLES[@]}"; do
     output_file="$RESULTS_DIR/$example.output"
     
     # Wait for result file (in case of race condition)
-    local wait_count=0
+    wait_count=0
     while [ ! -f "$result_file" ] && [ $wait_count -lt 600 ]; do
         sleep 0.1
         ((wait_count++))

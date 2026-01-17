@@ -1,11 +1,13 @@
 use compose_core::NodeId;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 thread_local! {
     static LAYOUT_REPASS_MANAGER: RefCell<LayoutRepassManager> =
         RefCell::new(LayoutRepassManager::new());
+    static DRAW_REPASS_MANAGER: RefCell<DrawRepassManager> =
+        RefCell::new(DrawRepassManager::new());
 }
 
 /// Manages scoped layout invalidations for specific nodes.
@@ -17,6 +19,31 @@ struct LayoutRepassManager {
 }
 
 impl LayoutRepassManager {
+    fn new() -> Self {
+        Self {
+            dirty_nodes: HashSet::new(),
+        }
+    }
+
+    fn schedule_repass(&mut self, node_id: NodeId) {
+        self.dirty_nodes.insert(node_id);
+    }
+
+    fn has_pending_repass(&self) -> bool {
+        !self.dirty_nodes.is_empty()
+    }
+
+    fn take_dirty_nodes(&mut self) -> Vec<NodeId> {
+        self.dirty_nodes.drain().collect()
+    }
+}
+
+/// Tracks draw-only invalidations so render data can be refreshed without layout.
+struct DrawRepassManager {
+    dirty_nodes: HashSet<NodeId>,
+}
+
+impl DrawRepassManager {
     fn new() -> Self {
         Self {
             dirty_nodes: HashSet::new(),
@@ -62,6 +89,30 @@ pub fn schedule_layout_repass(node_id: NodeId) {
     // The app shell will check take_layout_repass_nodes() first (scoped path),
     // and only falls back to global invalidation if the flag is set without any repass nodes.
     LAYOUT_INVALIDATED.store(true, Ordering::Relaxed);
+    // Also request render invalidation so the frame is actually drawn.
+    // Without this, programmatic scrolls (e.g., scroll_to_item) wouldn't trigger a redraw
+    // until the next user interaction caused a frame request.
+    request_render_invalidation();
+}
+
+/// Schedules a draw-only repass for a specific node.
+///
+/// This ensures draw/pointer data stays in sync when modifier updates do not
+/// require a layout pass (e.g., draw-only modifier changes).
+pub fn schedule_draw_repass(node_id: NodeId) {
+    DRAW_REPASS_MANAGER.with(|manager| {
+        manager.borrow_mut().schedule_repass(node_id);
+    });
+}
+
+/// Returns true if any draw repasses are pending.
+pub fn has_pending_draw_repasses() -> bool {
+    DRAW_REPASS_MANAGER.with(|manager| manager.borrow().has_pending_repass())
+}
+
+/// Takes all pending draw repass node IDs.
+pub fn take_draw_repass_nodes() -> Vec<NodeId> {
+    DRAW_REPASS_MANAGER.with(|manager| manager.borrow_mut().take_dirty_nodes())
 }
 
 /// Returns true if any layout repasses are pending.
@@ -79,6 +130,29 @@ pub fn take_layout_repass_nodes() -> Vec<NodeId> {
 static RENDER_INVALIDATED: AtomicBool = AtomicBool::new(false);
 static POINTER_INVALIDATED: AtomicBool = AtomicBool::new(false);
 static FOCUS_INVALIDATED: AtomicBool = AtomicBool::new(false);
+static DENSITY_BITS: AtomicU32 = AtomicU32::new(f32::to_bits(1.0));
+
+/// Returns the current density scale factor (logical px per dp).
+pub fn current_density() -> f32 {
+    f32::from_bits(DENSITY_BITS.load(Ordering::Relaxed))
+}
+
+/// Updates the current density scale factor.
+///
+/// This triggers a global layout invalidation when the value changes because
+/// density impacts layout, text measurement, and input thresholds.
+pub fn set_density(density: f32) {
+    let normalized = if density.is_finite() && density > 0.0 {
+        density
+    } else {
+        1.0
+    };
+    let new_bits = normalized.to_bits();
+    let old_bits = DENSITY_BITS.swap(new_bits, Ordering::Relaxed);
+    if old_bits != new_bits {
+        request_layout_invalidation();
+    }
+}
 
 /// Requests that the renderer rebuild the current scene.
 pub fn request_render_invalidation() {

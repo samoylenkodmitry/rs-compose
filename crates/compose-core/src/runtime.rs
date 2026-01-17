@@ -538,9 +538,19 @@ impl RuntimeInner {
             }
         }
         drop(callbacks);
-        for callback in pending {
-            callback(frame_time_nanos);
+
+        // Wrap ALL frame callbacks in a single mutable snapshot so state changes
+        // are properly applied to the global snapshot and visible to subsequent reads.
+        // Using a single snapshot for all callbacks avoids stack exhaustion from
+        // repeated snapshot creation in long-running animation loops.
+        if !pending.is_empty() {
+            let _ = crate::run_in_mutable_snapshot(|| {
+                for callback in pending {
+                    callback(frame_time_nanos);
+                }
+            });
         }
+
         if !self.has_invalid_scopes()
             && !self.has_updates()
             && !self.has_frame_callbacks()
@@ -885,7 +895,11 @@ thread_local! {
     static LAST_RUNTIME: RefCell<Option<RuntimeHandle>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn current_runtime_handle() -> Option<RuntimeHandle> {
+/// Gets the current runtime handle from thread-local storage.
+///
+/// Returns the most recently pushed active runtime, or the last known runtime.
+/// Used by fling animation and other components that need access to the runtime.
+pub fn current_runtime_handle() -> Option<RuntimeHandle> {
     if let Some(handle) = ACTIVE_RUNTIMES.with(|stack| stack.borrow().last().cloned()) {
         return Some(handle);
     }

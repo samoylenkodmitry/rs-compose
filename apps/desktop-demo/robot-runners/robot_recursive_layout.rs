@@ -154,15 +154,18 @@ fn main() {
 
                 if let Some((x, y, w, h)) = find_text_in_semantics(&robot, "Select Showcase") {
                     println!("  Scrolling modifiers showcase content");
+                    let center_x = x + w / 2.0;
+                    let center_y = y + h / 2.0;
                     robot
-                        .drag(
-                            x + w / 2.0,
-                            y + h / 2.0 + 220.0,
-                            x + w / 2.0,
-                            y + h / 2.0 - 220.0,
-                        )
+                        .drag(center_x, center_y + 220.0, center_x, center_y - 220.0)
                         .ok();
                     std::thread::sleep(Duration::from_millis(200));
+
+                    // Scroll back so the tab row is visible for the next step.
+                    robot
+                        .drag(center_x, center_y - 100.0, center_x, center_y + 500.0)
+                        .ok();
+                    std::thread::sleep(Duration::from_millis(300));
                 }
             }
 

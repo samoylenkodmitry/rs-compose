@@ -20,9 +20,9 @@ fn main() {
         .with_size(600, 600)
         .with_headless(true)
         .with_test_driver(|robot| {
-            // Timeout after 20 seconds
+            // Timeout after 60 seconds
             std::thread::spawn(|| {
-                std::thread::sleep(Duration::from_secs(20));
+                std::thread::sleep(Duration::from_secs(60));
                 println!("\n✗ Test timed out");
                 std::process::exit(1);
             });

@@ -12,6 +12,7 @@ fn create_app() -> AppLauncher {
         .with_title("Compose Demo")
         .with_size(800, 600)
         .with_fonts(&DEMO_FONTS)
+        .with_fps_counter(true) // Show FPS overlay in corner
 }
 
 /// Shared entry point for desktop

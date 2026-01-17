@@ -7,6 +7,7 @@ pub use compose_macros::composable;
 mod cursor_animation;
 mod debug;
 mod draw;
+pub mod fling_animation;
 mod focus_dispatch;
 mod key_event;
 pub mod layout;
@@ -77,14 +78,19 @@ pub use primitives::{
 pub use compose_foundation::lazy::{LazyListItemInfo, LazyListLayoutInfo, LazyListState};
 pub use key_event::{KeyCode, KeyEvent, KeyEventType, Modifiers};
 pub use render_state::{
-    has_pending_layout_repasses, peek_focus_invalidation, peek_layout_invalidation,
-    peek_pointer_invalidation, peek_render_invalidation, request_focus_invalidation,
-    request_layout_invalidation, request_pointer_invalidation, request_render_invalidation,
-    schedule_layout_repass, take_focus_invalidation, take_layout_invalidation,
-    take_layout_repass_nodes, take_pointer_invalidation, take_render_invalidation,
+    current_density, has_pending_draw_repasses, has_pending_layout_repasses,
+    peek_focus_invalidation, peek_layout_invalidation, peek_pointer_invalidation,
+    peek_render_invalidation, request_focus_invalidation, request_layout_invalidation,
+    request_pointer_invalidation, request_render_invalidation, schedule_draw_repass,
+    schedule_layout_repass, set_density, take_draw_repass_nodes, take_focus_invalidation,
+    take_layout_invalidation, take_layout_repass_nodes, take_pointer_invalidation,
+    take_render_invalidation,
 };
 pub use renderer::{HeadlessRenderer, PaintLayer, RecordedRenderScene, RenderOp};
 pub use scroll::{ScrollElement, ScrollNode, ScrollState};
+// Test utilities for fling velocity verification (only with test-helpers feature)
+#[cfg(feature = "test-helpers")]
+pub use modifier::{last_fling_velocity, reset_last_fling_velocity};
 pub use subcompose_layout::{
     Constraints, MeasureResult, Placement, SubcomposeLayoutNode, SubcomposeLayoutScope,
     SubcomposeMeasureScope, SubcomposeMeasureScopeImpl,

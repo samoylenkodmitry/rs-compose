@@ -1,4 +1,5 @@
 use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use compose_core::{
@@ -7,6 +8,10 @@ use compose_core::{
 use indexmap::IndexSet;
 
 use crate::modifier::{Modifier, ModifierChainHandle, Point, ResolvedModifiers, Size};
+use crate::widgets::nodes::{
+    allocate_virtual_node_id, is_virtual_node, register_layout_node, LayoutNode,
+};
+
 use compose_foundation::{InvalidationKind, ModifierInvalidation, NodeCapabilities};
 
 pub use compose_ui_layout::{Constraints, MeasureResult, Placement};
@@ -140,6 +145,8 @@ pub struct SubcomposeMeasureScopeImpl<'a> {
     constraints: Constraints,
     measurer: Box<dyn FnMut(NodeId, Constraints) -> Size + 'a>,
     error: Rc<RefCell<Option<NodeError>>>,
+    parent_handle: SubcomposeLayoutNodeHandle,
+    root_id: NodeId,
 }
 
 impl<'a> SubcomposeMeasureScopeImpl<'a> {
@@ -149,6 +156,9 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
         constraints: Constraints,
         measurer: Box<dyn FnMut(NodeId, Constraints) -> Size + 'a>,
         error: Rc<RefCell<Option<NodeError>>>,
+
+        parent_handle: SubcomposeLayoutNodeHandle,
+        root_id: NodeId,
     ) -> Self {
         Self {
             composer,
@@ -156,14 +166,76 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
             constraints,
             measurer,
             error,
+            parent_handle,
+            root_id,
         }
     }
 
     fn record_error(&self, err: NodeError) {
         let mut slot = self.error.borrow_mut();
         if slot.is_none() {
+            eprintln!("[SubcomposeLayout] Error suppressed: {:?}", err);
             *slot = Some(err);
         }
+    }
+
+    fn perform_subcompose<Content>(&mut self, slot_id: SlotId, content: Content) -> Vec<NodeId>
+    where
+        Content: FnOnce(),
+    {
+        let mut inner = self.parent_handle.inner.borrow_mut();
+
+        // Reuse or create virtual node
+        let (virtual_node_id, is_reused) =
+            if let Some(node_id) = self.state.take_node_from_reusables(slot_id) {
+                (node_id, true)
+            } else {
+                let id = allocate_virtual_node_id();
+                let node = LayoutNode::new_virtual();
+                // CRITICAL FIX: Register virtual node in Applier so that insert_child commands
+                // can find it. Previously, virtual nodes were only stored in inner.virtual_nodes
+                // which caused applier.get_mut(virtual_node_id) to fail, breaking child attachment.
+                if let Err(e) = self
+                    .composer
+                    .register_virtual_node(id, Box::new(node.clone()))
+                {
+                    eprintln!(
+                        "[Subcompose] Failed to register virtual node {}: {:?}",
+                        id, e
+                    );
+                }
+                register_layout_node(id, &node);
+
+                inner.virtual_nodes.insert(id, Rc::new(node));
+                inner.children.insert(id);
+                (id, false)
+            };
+
+        // Manually link parent
+        if let Some(v_node) = inner.virtual_nodes.get(&virtual_node_id) {
+            v_node.set_parent(self.root_id);
+        }
+
+        drop(inner);
+
+        // CRITICAL FIX: Clear children of reused virtual nodes BEFORE subcomposing new content.
+        // Without this, old children remain attached when the node is reused for different items,
+        // causing items from different scroll positions to interleave (e.g., [1,16,31,2,17,32...]).
+        if is_reused {
+            self.composer.clear_node_children(virtual_node_id);
+        }
+
+        let slot_host = self.state.get_or_create_slots(slot_id);
+        let _ = self
+            .composer
+            .subcompose_slot(&slot_host, Some(virtual_node_id), |_| content());
+
+        self.state.register_active(slot_id, &[virtual_node_id], &[]);
+
+        // CRITICAL FIX: Read children from the Applier's copy of the virtual node,
+        // NOT from inner.virtual_nodes. The Applier's copy received insert_child calls
+        // during subcomposition, while inner.virtual_nodes is an out-of-sync clone.
+        self.composer.get_node_children(virtual_node_id)
     }
 }
 
@@ -178,14 +250,13 @@ impl<'a> SubcomposeMeasureScope for SubcomposeMeasureScopeImpl<'a> {
     where
         Content: FnOnce(),
     {
-        let (_, nodes) = self
-            .composer
-            .subcompose_measurement(self.state, slot_id, |_| content());
+        let nodes = self.perform_subcompose(slot_id, content);
         nodes.into_iter().map(SubcomposeChild::new).collect()
     }
 
     fn measure(&mut self, child: SubcomposeChild, constraints: Constraints) -> SubcomposePlaceable {
         if self.error.borrow().is_some() {
+            // Already in error state - return zero-size placeable
             return SubcomposePlaceable::new(child.node_id, Size::default());
         }
 
@@ -218,9 +289,7 @@ impl<'a> SubcomposeMeasureScopeImpl<'a> {
         Content: FnOnce(),
         F: Fn(usize) -> Size,
     {
-        let (_, nodes) = self
-            .composer
-            .subcompose_measurement(self.state, slot_id, |_| content());
+        let nodes = self.perform_subcompose(slot_id, content);
         nodes
             .into_iter()
             .enumerate()
@@ -290,6 +359,7 @@ pub struct SubcomposeLayoutNode {
     needs_redraw: Cell<bool>,
     needs_pointer_pass: Cell<bool>,
     needs_focus_sync: Cell<bool>,
+    virtual_children_count: Cell<usize>,
 }
 
 impl SubcomposeLayoutNode {
@@ -305,6 +375,7 @@ impl SubcomposeLayoutNode {
             needs_redraw: Cell::new(true),
             needs_pointer_pass: Cell::new(false),
             needs_focus_sync: Cell::new(false),
+            virtual_children_count: Cell::new(0),
         };
         // Set modifier and dispatch invalidations after borrow is released
         // Pass empty prev_caps since this is initial construction
@@ -334,6 +405,7 @@ impl SubcomposeLayoutNode {
             needs_redraw: Cell::new(true),
             needs_pointer_pass: Cell::new(false),
             needs_focus_sync: Cell::new(false),
+            virtual_children_count: Cell::new(0),
         };
         // Set modifier and dispatch invalidations after borrow is released
         // Pass empty prev_caps since this is initial construction
@@ -406,10 +478,11 @@ impl SubcomposeLayoutNode {
 
     /// Mark this node as needing redraw without forcing measure/layout.
     pub fn mark_needs_redraw(&self) {
-        let already_dirty = self.needs_redraw.replace(true);
-        if !already_dirty {
-            crate::request_render_invalidation();
+        self.needs_redraw.set(true);
+        if let Some(id) = self.id.get() {
+            crate::schedule_draw_repass(id);
         }
+        crate::request_render_invalidation();
     }
 
     /// Check if this node needs measure.
@@ -430,6 +503,10 @@ impl SubcomposeLayoutNode {
     /// Returns true when this node requested a redraw since the last render pass.
     pub fn needs_redraw(&self) -> bool {
         self.needs_redraw.get()
+    }
+
+    pub fn clear_needs_redraw(&self) {
+        self.needs_redraw.set(false);
     }
 
     /// Marks this node as needing a fresh pointer-input pass.
@@ -564,12 +641,36 @@ impl SubcomposeLayoutNode {
 }
 
 impl compose_core::Node for SubcomposeLayoutNode {
+    fn mount(&mut self) {
+        let mut inner = self.inner.borrow_mut();
+        let (chain, mut context) = inner.modifier_chain.chain_and_context_mut();
+        chain.repair_chain();
+        chain.attach_nodes(&mut *context);
+    }
+
+    fn unmount(&mut self) {
+        self.inner
+            .borrow_mut()
+            .modifier_chain
+            .chain_mut()
+            .detach_nodes();
+    }
+
     fn insert_child(&mut self, child: NodeId) {
+        if is_virtual_node(child) {
+            let count = self.virtual_children_count.get();
+            self.virtual_children_count.set(count + 1);
+        }
         self.inner.borrow_mut().children.insert(child);
     }
 
     fn remove_child(&mut self, child: NodeId) {
-        self.inner.borrow_mut().children.shift_remove(&child);
+        if self.inner.borrow_mut().children.shift_remove(&child) && is_virtual_node(child) {
+            let count = self.virtual_children_count.get();
+            if count > 0 {
+                self.virtual_children_count.set(count - 1);
+            }
+        }
     }
 
     fn move_child(&mut self, from: usize, to: usize) {
@@ -596,11 +697,19 @@ impl compose_core::Node for SubcomposeLayoutNode {
     }
 
     fn children(&self) -> Vec<NodeId> {
-        self.inner.borrow().children.iter().copied().collect()
+        let inner = self.inner.borrow();
+        // Return placement children if available (they represent the actually rendered nodes)
+        // Otherwise fall back to structural children
+        if !inner.last_placements.is_empty() {
+            inner.last_placements.clone()
+        } else {
+            inner.children.iter().copied().collect()
+        }
     }
 
     fn set_node_id(&mut self, id: NodeId) {
         self.id.set(Some(id));
+        self.inner.borrow_mut().modifier_chain.set_node_id(Some(id));
     }
 
     fn on_attached_to_parent(&mut self, parent: NodeId) {
@@ -623,12 +732,26 @@ impl compose_core::Node for SubcomposeLayoutNode {
         self.needs_layout.get()
     }
 
+    fn mark_needs_measure(&self) {
+        self.needs_measure.set(true);
+        self.needs_layout.set(true); // Measure implies layout
+    }
+
+    fn needs_measure(&self) -> bool {
+        self.needs_measure.get()
+    }
+
     fn mark_needs_semantics(&self) {
         self.needs_semantics.set(true);
     }
 
     fn needs_semantics(&self) -> bool {
         self.needs_semantics.get()
+    }
+
+    /// Minimal parent setter for dirty flag bubbling.
+    fn set_parent_for_bubbling(&mut self, parent: NodeId) {
+        self.parent.set(Some(parent));
     }
 }
 
@@ -690,7 +813,7 @@ impl SubcomposeLayoutNodeHandle {
     pub fn measure<'a>(
         &self,
         composer: &Composer,
-        _node_id: NodeId,
+        node_id: NodeId,
         constraints: Constraints,
         measurer: Box<dyn FnMut(NodeId, Constraints) -> Size + 'a>,
         error: Rc<RefCell<Option<NodeError>>>,
@@ -711,17 +834,23 @@ impl SubcomposeLayoutNodeHandle {
 
         let slots_host = Rc::new(SlotsHost::new(slots));
         let constraints_copy = constraints;
-        // Use subcompose_slot instead of subcompose_in to preserve slot table across
-        // measurement passes. This prevents lazy list item groups from being wiped and
-        // recreated on every scroll, which caused thrashing.
-        // TODO: validate this architecture with JC kotlin codebase
-        let result = composer.subcompose_slot(&slots_host, |inner_composer| {
+        // Architecture Note: Using subcompose_slot (not subcompose_in) to preserve the
+        // SlotTable across measurement passes. This matches JC's SubcomposeLayout behavior
+        // where `subcompose()` is called during measure and the slot table persists between
+        // frames. Without this, lazy list item groups would be wiped and recreated on every
+        // scroll frame, causing O(visible_items) recomposition overhead ("thrashing").
+        //
+        // Reference: LazyLayoutMeasureScope.subcompose() in JC reuses existing slots by key,
+        // and SubcomposeLayoutState holds `slotIdToNode` map across measurements.
+        let result = composer.subcompose_slot(&slots_host, Some(node_id), |inner_composer| {
             let mut scope = SubcomposeMeasureScopeImpl::new(
                 inner_composer.clone(),
                 &mut state,
                 constraints_copy,
                 measurer,
                 Rc::clone(&error),
+                self.clone(), // Pass handle
+                node_id,      // Pass root_id
             );
             (policy)(&mut scope, constraints_copy)
         })?;
@@ -736,6 +865,12 @@ impl SubcomposeLayoutNodeHandle {
             let mut inner = self.inner.borrow_mut();
             inner.slots = slots_host.take();
             inner.state = state;
+
+            // Store placement children for children() traversal.
+            // This avoids clearing/rebuilding the structural children set on every measure,
+            // eliminating O(n) allocator churn. The structural children (virtual nodes) are
+            // tracked via insert_child/remove_child, while last_placements tracks rendered nodes.
+            inner.last_placements = result.placements.iter().map(|p| p.node_id).collect();
         }
 
         Ok(result)
@@ -763,6 +898,11 @@ struct SubcomposeLayoutNodeInner {
     children: IndexSet<NodeId>,
     slots: SlotBackend,
     debug_modifiers: bool,
+    // Owns virtual nodes created during subcomposition
+    virtual_nodes: HashMap<NodeId, Rc<LayoutNode>>,
+    // Cached placement children from the last measure pass.
+    // Used by children() for semantic/render traversal without clearing structural children.
+    last_placements: Vec<NodeId>,
 }
 
 impl SubcomposeLayoutNodeInner {
@@ -777,6 +917,8 @@ impl SubcomposeLayoutNodeInner {
             children: IndexSet::new(),
             slots: SlotBackend::default(),
             debug_modifiers: false,
+            virtual_nodes: HashMap::new(),
+            last_placements: Vec::new(),
         }
     }
 

@@ -3,7 +3,11 @@ use compose_core::{
     __launched_effect_async_impl as launched_effect_async_impl, location_key, useState,
 };
 use compose_macros::composable;
-use compose_ui::{Column, ColumnSpec, Modifier, Row, RowSpec, Text};
+use compose_ui::{
+    Box, BoxSpec, Brush, Color, Column, ColumnSpec, HeadlessRenderer, Modifier, Rect, RenderOp,
+    Row, RowSpec, Size, Text,
+};
+use compose_ui_graphics::DrawPrimitive;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -57,6 +61,35 @@ impl Renderer for TestRenderer {
         _layout_tree: &LayoutTree,
         _viewport: Size,
     ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RecordingRenderer {
+    scene: TestScene,
+    last_scene: Option<compose_ui::RecordedRenderScene>,
+}
+
+impl Renderer for RecordingRenderer {
+    type Scene = TestScene;
+    type Error = ();
+
+    fn scene(&self) -> &Self::Scene {
+        &self.scene
+    }
+
+    fn scene_mut(&mut self) -> &mut Self::Scene {
+        &mut self.scene
+    }
+
+    fn rebuild_scene(
+        &mut self,
+        layout_tree: &LayoutTree,
+        _viewport: Size,
+    ) -> Result<(), Self::Error> {
+        let renderer = HeadlessRenderer::new();
+        self.last_scene = Some(renderer.render(layout_tree));
         Ok(())
     }
 }
@@ -137,6 +170,33 @@ fn tabbed_progress_content() {
 #[composable]
 fn empty_content() {}
 
+#[composable]
+fn draw_width_app(width_state: compose_core::MutableState<f32>) {
+    Box(
+        Modifier::empty()
+            .size(Size {
+                width: 200.0,
+                height: 40.0,
+            })
+            .draw_behind({
+                let width = width_state.get();
+                move |scope| {
+                    scope.draw_rect_at(
+                        Rect {
+                            x: 0.0,
+                            y: 0.0,
+                            width,
+                            height: 10.0,
+                        },
+                        Brush::solid(Color(0.9, 0.1, 0.1, 1.0)),
+                    );
+                }
+            }),
+        BoxSpec::default(),
+        || {},
+    );
+}
+
 struct DeleteSurroundingHandler {
     last_delete: Cell<Option<(usize, usize)>>,
 }
@@ -196,4 +256,69 @@ fn ime_delete_surrounding_marks_dirty() {
     assert_eq!(handler.last_delete.get(), Some((2, 1)));
     assert!(shell.needs_redraw());
     compose_ui::text_field_focus::clear_focus();
+}
+
+#[test]
+fn draw_repass_updates_render_data_without_layout() {
+    let root_key = location_key(file!(), line!(), column!());
+    let state_holder: Rc<RefCell<Option<compose_core::MutableState<f32>>>> =
+        Rc::new(RefCell::new(None));
+    let state_holder_for_app = Rc::clone(&state_holder);
+
+    let mut shell = AppShell::new(RecordingRenderer::default(), root_key, move || {
+        let width_state = useState(|| 24.0f32);
+        *state_holder_for_app.borrow_mut() = Some(width_state);
+        draw_width_app(width_state);
+    });
+
+    shell.update();
+    let initial_scene = shell
+        .renderer
+        .last_scene
+        .as_ref()
+        .expect("expected initial render scene");
+    let initial_width = find_rect_width(initial_scene, Color(0.9, 0.1, 0.1, 1.0))
+        .expect("expected initial draw rect");
+
+    let width_state = state_holder
+        .borrow()
+        .as_ref()
+        .copied()
+        .expect("width state should be captured");
+    width_state.set(120.0);
+
+    shell
+        .composition
+        .process_invalid_scopes()
+        .expect("recompose after width change");
+    shell.run_render_phase();
+
+    let updated_scene = shell
+        .renderer
+        .last_scene
+        .as_ref()
+        .expect("expected updated render scene");
+    let updated_width = find_rect_width(updated_scene, Color(0.9, 0.1, 0.1, 1.0))
+        .expect("expected updated draw rect");
+
+    assert_ne!(initial_width, updated_width, "draw width should update");
+    assert!(
+        (updated_width - 120.0).abs() < 0.1,
+        "updated width should reflect latest state"
+    );
+}
+
+fn find_rect_width(scene: &compose_ui::RecordedRenderScene, color: Color) -> Option<f32> {
+    for op in scene.operations() {
+        if let RenderOp::Primitive {
+            primitive: DrawPrimitive::Rect { rect, brush },
+            ..
+        } = op
+        {
+            if *brush == Brush::solid(color) {
+                return Some(rect.width);
+            }
+        }
+    }
+    None
 }

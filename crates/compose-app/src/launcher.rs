@@ -3,6 +3,9 @@
 //! This module provides the `AppLauncher` API that allows apps to configure
 //! and launch on multiple platforms without knowing platform-specific details.
 
+#[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+use std::path::PathBuf;
+
 /// Configuration for application settings.
 pub struct AppSettings {
     /// Window title (desktop) / app name (mobile)
@@ -21,9 +24,15 @@ pub struct AppSettings {
     /// robot tests to run in parallel without cluttering the screen
     /// and enables CI environments without a display server.
     pub headless: bool,
+    /// Development options for debugging and performance monitoring
+    #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+    pub dev_options: compose_app_shell::DevOptions,
     /// Optional test driver to control the application (robot testing)
     #[cfg(all(feature = "desktop", feature = "renderer-wgpu", feature = "robot"))]
     pub test_driver: Option<Box<dyn FnOnce(crate::desktop::Robot) + Send + 'static>>,
+    /// Optional path to record input events to (for generating robot tests)
+    #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+    pub record_to: Option<PathBuf>,
 }
 
 impl Default for AppSettings {
@@ -35,8 +44,12 @@ impl Default for AppSettings {
             fonts: None,
             android_use_system_fonts: false,
             headless: false,
+            #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+            dev_options: compose_app_shell::DevOptions::default(),
             #[cfg(all(feature = "desktop", feature = "renderer-wgpu", feature = "robot"))]
             test_driver: None,
+            #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+            record_to: None,
         }
     }
 }
@@ -149,6 +162,79 @@ impl AppLauncher {
     /// ```
     pub fn with_headless(mut self, headless: bool) -> Self {
         self.settings.headless = headless;
+        self
+    }
+
+    /// Enable FPS counter overlay (desktop only).
+    ///
+    /// When enabled, displays a real-time FPS counter in the top-right corner.
+    /// This is rendered directly by the renderer (not via composition) so it
+    /// doesn't affect performance measurements.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use compose_app::AppLauncher;
+    ///
+    /// AppLauncher::new()
+    ///     .with_title("My App")
+    ///     .with_fps_counter(true)
+    ///     .run(|| {
+    ///         // Your composable UI here
+    ///     });
+    /// ```
+    #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+    pub fn with_fps_counter(mut self, enabled: bool) -> Self {
+        self.settings.dev_options.fps_counter = enabled;
+        self
+    }
+
+    /// Enable FPS counter overlay (desktop only).
+    ///
+    /// When enabled, displays a real-time FPS counter in the top-right corner.
+    /// This is rendered directly by the renderer (not via composition) so it
+    /// doesn't affect performance measurements.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use compose_app::AppLauncher;
+    ///
+    /// AppLauncher::new()
+    ///     .with_title("My App")
+    ///     .with_fps_counter(true)
+    ///     .run(|| {
+    ///         // Your composable UI here
+    ///     });
+    /// ```
+    #[cfg(not(all(feature = "desktop", feature = "renderer-wgpu")))]
+    pub fn with_fps_counter(self, enabled: bool) -> Self {
+        let _ = enabled;
+        self
+    }
+
+    /// Enable input recording mode.
+    ///
+    /// When enabled, all mouse and keyboard events are recorded with precise
+    /// timestamps. On app exit, a robot test file is generated that can replay
+    /// the exact interaction sequence.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use compose_app::AppLauncher;
+    ///
+    /// AppLauncher::new()
+    ///     .with_title("My App")
+    ///     .with_recording("/tmp/my_test.rs")
+    ///     .run(|| {
+    ///         // Interact with the app, then close
+    ///         // Recording is saved automatically
+    ///     });
+    /// ```
+    #[cfg(all(feature = "desktop", feature = "renderer-wgpu"))]
+    pub fn with_recording(mut self, path: impl Into<PathBuf>) -> Self {
+        self.settings.record_to = Some(path.into());
         self
     }
 

@@ -509,14 +509,17 @@ impl SubcomposeState {
     /// 3. Fallback to untyped pool with policy compatibility check
     pub fn take_node_from_reusables(&mut self, slot_id: SlotId) -> Option<NodeId> {
         // First, try to find an exact slot match in mapping
+        // CRITICAL FIX: Return active nodes directly without requiring them to be in
+        // reusable pools. During multi-pass measurement, nodes registered via register_active
+        // are in the mapping but NOT in reusable pools (pools only get populated in finish_pass).
+        // Without this fix, new virtual nodes are created each measure pass, losing children.
         if let Some(nodes) = self.mapping.get_nodes(&slot_id) {
             let first_node = nodes.first().copied();
             if let Some(node_id) = first_node {
-                // Check if this node is in the reusable pools
-                if self.remove_from_reusable_pools(node_id) {
-                    self.update_reusable_count();
-                    return Some(node_id);
-                }
+                // Try to remove from reusable pools if present (for nodes that were deactivated)
+                let _ = self.remove_from_reusable_pools(node_id);
+                self.update_reusable_count();
+                return Some(node_id);
             }
         }
 

@@ -332,6 +332,52 @@ impl Renderer for WgpuRenderer {
         pipeline::render_layout_tree(layout_tree.root(), &mut self.scene);
         Ok(())
     }
+
+    fn draw_dev_overlay(&mut self, text: &str, viewport: Size) {
+        use compose_ui_graphics::{Brush, Color, Rect, RoundedCornerShape};
+
+        // Draw FPS text in top-right corner with semi-transparent background
+        // Position: 8px from right edge, 8px from top
+        let padding = 8.0;
+        let font_size = 14.0;
+
+        // Measure text width (approximate: ~7px per character at 14px font)
+        let char_width = 7.0;
+        let text_width = text.len() as f32 * char_width;
+        let text_height = font_size * 1.4;
+
+        let x = viewport.width - text_width - padding * 2.0;
+        let y = padding;
+
+        // Add background rectangle (dark semi-transparent)
+        let bg_rect = Rect {
+            x,
+            y,
+            width: text_width + padding,
+            height: text_height + padding / 2.0,
+        };
+        self.scene.push_shape(
+            bg_rect,
+            Brush::Solid(Color(0.0, 0.0, 0.0, 0.7)),
+            Some(RoundedCornerShape::uniform(4.0)),
+            None,
+        );
+
+        // Add text (green color for visibility)
+        let text_rect = Rect {
+            x: x + padding / 2.0,
+            y: y + padding / 4.0,
+            width: text_width,
+            height: text_height,
+        };
+        self.scene.push_text(
+            text_rect,
+            text.to_string(),
+            Color(0.0, 1.0, 0.0, 1.0),  // Green
+            font_size / BASE_FONT_SIZE, // Scale relative to base
+            None,
+        );
+    }
 }
 
 // Text measurer implementation for WGPU

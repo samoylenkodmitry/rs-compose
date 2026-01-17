@@ -23,3 +23,10 @@
 /// - Is small enough to feel responsive for intentional drags
 /// - Matches common platform conventions (Android uses ~8dp for ViewConfiguration.TOUCH_SLOP)
 pub const DRAG_THRESHOLD: f32 = 8.0;
+
+/// Maximum fling velocity in logical pixels per second.
+///
+/// Matches Android's default maximum fling velocity (ViewConfiguration) on a
+/// baseline density. This will be replaced by a platform-driven configuration
+/// when ViewConfiguration is plumbed through.
+pub const MAX_FLING_VELOCITY: f32 = 8_000.0;

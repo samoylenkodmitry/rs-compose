@@ -97,7 +97,7 @@ fn local_holder() -> CompositionLocal<Holder> {
         if opt.is_none() {
             *opt = Some(compositionLocalOf(|| Holder { count: 0 }));
         }
-        opt.as_ref().unwrap().clone()
+        opt.as_ref().expect("Local holder not initialized").clone()
     })
 }
 
@@ -1231,10 +1231,6 @@ fn counter_app() {
                                         .await_pointer_event_scope(|await_scope| async move {
                                             loop {
                                                 let event = await_scope.await_pointer_event().await;
-                                                println!(
-                                                    "Pointer event: kind={:?} pos=({:.1}, {:.1})",
-                                                    event.kind, event.position.x, event.position.y
-                                                );
                                                 match event.kind {
                                                     PointerEventKind::Down => {
                                                         pointer_down_state.set(true)

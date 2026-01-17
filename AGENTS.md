@@ -4,6 +4,7 @@
 - cargo test > 1.tmp 2>& # then read and fix all
 - cargo clippy > 2.tmp 2>& # then read and fix all
 - cargo fmt
+- KISS, DRY, SOLID. don't copy-paste lazily
 - Use `cargo add <crate>` to add dependencies.
 - Use `cargo upgrade` to upgrade dependencies.
 - Use `anyhow` for error handling in application code; use `thiserror` for library code.
@@ -24,6 +25,7 @@
 - (+robot tests)
 - instead of accepting the shortcut always choose to fix the underlying architecture issue
 - do not avoid and do not defer the big architecture refactoring when necessary
+- if there is a bug start with writing a failing test that will catch it so we never regress to it again in the future
 - do a code review; look for any shortcuts, lazyness, taking the easy path instead of doing the hard necessary work, poor architectural choices, everything that will shoot in the foot, poorly written code like it was a deadline 1 minute before end of the work day; but not invent the problems if there arent any- don't fear the significant arch change; everything is still pre-alpha; this is the right time for a big change
 - do not ever git reset, always stash if needed
 - do not ever rm -rf, prefer mv to some _old name
