@@ -1,0 +1,9 @@
+[package]
+name = "cranpose-platform-android"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Android platform adapter for Cranpose"
+
+[dependencies]
+cranpose-ui-graphics = { path = "../../cranpose-ui-graphics" }

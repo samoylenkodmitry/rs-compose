@@ -10,8 +10,8 @@
 
 mod robot_test_utils;
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button_in_semantics, find_in_semantics, find_text_exact};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button_in_semantics, find_in_semantics, find_text_exact};
 use desktop_app::app;
 use robot_test_utils::find_element_by_text_exact;
 use std::time::Duration;

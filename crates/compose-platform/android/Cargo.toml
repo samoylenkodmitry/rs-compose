@@ -1,9 +1,0 @@
-[package]
-name = "compose-platform-android"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
-description = "Android platform adapter for Compose-RS"
-
-[dependencies]
-compose-ui-graphics = { path = "../../compose-ui-graphics" }

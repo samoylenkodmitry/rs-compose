@@ -3,7 +3,7 @@
 //! This module provides common helpers for semantics tree navigation
 //! and debugging that are used across multiple robot tests.
 
-use compose_app::SemanticElement;
+use cranpose_app::SemanticElement;
 use std::collections::HashMap;
 
 /// Finds an element in the semantics tree by exact text match.

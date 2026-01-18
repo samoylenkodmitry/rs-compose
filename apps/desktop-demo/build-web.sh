@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "Building RS-Compose Demo for Web..."
+echo "Building Cranpose Demo for Web..."
 echo ""
 
 # Check if wasm-pack is installed (check common locations)

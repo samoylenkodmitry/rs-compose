@@ -5,8 +5,8 @@
 //! cargo run --package desktop-app --example robot_drag_selection --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -102,7 +102,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(50));
 
                 // Check focus - note: has_focused_field() may not work in robot context
-                let focused = compose_ui::has_focused_field();
+                let focused = cranpose_ui::has_focused_field();
                 println!("  • Field focused (has_focused_field): {}", focused);
                 if !focused {
                     println!("    (Note: has_focused_field() may return false in robot tests due to thread-local storage)");
@@ -122,7 +122,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(100));
 
                 // Verify still focused - note: has_focused_field() may not work in robot context
-                let still_focused = compose_ui::has_focused_field();
+                let still_focused = cranpose_ui::has_focused_field();
                 println!("  • Still focused after drag (has_focused_field): {}", still_focused);
                 if !still_focused {
                     println!("    (Note: has_focused_field() may return false in robot tests due to thread-local storage)");

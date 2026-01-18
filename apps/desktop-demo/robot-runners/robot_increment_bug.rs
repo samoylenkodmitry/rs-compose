@@ -12,8 +12,8 @@
 //! cargo run --package desktop-app --example robot_increment_bug --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::find_button_in_semantics;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_button_in_semantics;
 use desktop_app::app;
 use std::time::Duration;
 
@@ -36,17 +36,17 @@ fn main() {
             }
 
             // Helper to find button center
-            let find_button_center = |robot: &compose_app::Robot,
+            let find_button_center = |robot: &cranpose_app::Robot,
                                       name: &str|
              -> Option<(f32, f32)> {
                 find_button_in_semantics(robot, name).map(|(x, y, w, h)| (x + w / 2.0, y + h / 2.0))
             };
 
             // Helper to get counter value
-            let get_counter = |robot: &compose_app::Robot| -> Option<i32> {
+            let get_counter = |robot: &cranpose_app::Robot| -> Option<i32> {
                 if let Ok(semantics) = robot.get_semantics() {
                     for elem in &semantics {
-                        fn find_counter(elem: &compose_app::SemanticElement) -> Option<i32> {
+                        fn find_counter(elem: &cranpose_app::SemanticElement) -> Option<i32> {
                             if let Some(ref text) = elem.text {
                                 if text.starts_with("Counter:") {
                                     return text

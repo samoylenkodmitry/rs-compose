@@ -10,13 +10,13 @@
 //!    Structure becomes `Column -> Row -> Text("Persistent")`.
 //! 3. Verify `Text("Persistent")` is still visible and has valid bounds.
 
-use compose_core::useState;
-use compose_ui::{
+use cranpose_core::useState;
+use cranpose_ui::{
     composable, Box, BoxSpec, Button, Column, ColumnSpec, Modifier, Row, RowSpec, Text,
 };
 // use desktop_app::app;
-use compose_app::AppLauncher;
-use compose_testing::find_text_in_semantics;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_text_in_semantics;
 use std::time::Duration;
 
 #[composable]
@@ -69,7 +69,7 @@ fn main() {
             // Toggle to trigger parent change
             // Find toggle button
             let (tx, ty, tw, th) =
-                compose_testing::find_button_in_semantics(&robot, "Toggle Parent")
+                cranpose_testing::find_button_in_semantics(&robot, "Toggle Parent")
                     .expect("Toggle button not found");
 
             println!("Clicking toggle...");

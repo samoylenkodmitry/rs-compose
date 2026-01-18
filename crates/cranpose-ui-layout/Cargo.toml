@@ -1,0 +1,13 @@
+[package]
+name = "cranpose-ui-layout"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Layout contracts & policies for Cranpose"
+
+[dependencies]
+cranpose-ui-graphics = { path = "../cranpose-ui-graphics" }
+cranpose-core = { path = "../cranpose-core" }
+
+[features]
+default = []

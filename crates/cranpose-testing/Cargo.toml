@@ -1,0 +1,26 @@
+[package]
+name = "cranpose-testing"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Testing utilities and harness for Cranpose"
+
+[dependencies]
+cranpose-core = { path = "../cranpose-core" }
+cranpose-foundation = { path = "../cranpose-foundation" }
+cranpose-ui = { path = "../cranpose-ui" }
+cranpose-app-shell = { path = "../cranpose-app-shell" }
+cranpose-render-common = { path = "../cranpose-render/common" }
+cranpose-ui-graphics = { path = "../cranpose-ui-graphics" }
+
+# Optional dependencies for real app testing
+cranpose-app = { path = "../cranpose-app", features = ["robot"], optional = true }
+
+[dev-dependencies]
+cranpose-macros = { path = "../cranpose-macros" }
+
+[features]
+default = []
+# Enable real app testing with actual rendering (requires display/window system)
+# This uses the REAL desktop app runner from cranpose-app
+robot-app = ["cranpose-app"]

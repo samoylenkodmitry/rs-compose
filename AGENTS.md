@@ -1,4 +1,4 @@
-# Agent Notes for compose-rs-proposal
+# Agent Notes for cranpose
 
 - no unsafe
 - cargo test > 1.tmp 2>& # then read and fix all

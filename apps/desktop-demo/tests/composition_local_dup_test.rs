@@ -1,5 +1,5 @@
-use compose_core::MutableState;
-use compose_testing::ComposeTestRule;
+use cranpose_core::MutableState;
+use cranpose_testing::ComposeTestRule;
 use desktop_app::app::{
     combined_app, DemoTab, TEST_ACTIVE_TAB_STATE, TEST_COMPOSITION_LOCAL_COUNTER,
 };

@@ -8,8 +8,8 @@
 //! cargo run --package desktop-app --example robot_lazy_extreme_nav --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::find_text_in_semantics;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_text_in_semantics;
 use std::time::Duration;
 
 fn main() {
@@ -81,12 +81,12 @@ fn main() {
             // Use the stats display to help verify - check if we can find item text
             // containing very large numbers (near 18446744073709551614)
             if let Some((_, _, _, _, text)) =
-                compose_testing::find_text_by_prefix_in_semantics(&robot, "Item #184")
+                cranpose_testing::find_text_by_prefix_in_semantics(&robot, "Item #184")
             {
                 println!("  ✓ Found item near end: {}", text);
                 println!("\n✓ Jump to End SUCCESS!");
             } else if let Some((_, _, _, _, text)) =
-                compose_testing::find_text_by_prefix_in_semantics(&robot, "Item #922")
+                cranpose_testing::find_text_by_prefix_in_semantics(&robot, "Item #922")
             {
                 // If we're still at middle, this is the bug!
                 println!("  ✗ Found item near middle: {}", text);

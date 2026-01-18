@@ -5,8 +5,8 @@
 //! cargo run --package desktop-app --example robot_positioned_boxes_after_lazy_list --features robot-app
 //! ```
 
-use compose_app::{AppLauncher, SemanticElement};
-use compose_testing::find_button_in_semantics;
+use cranpose_app::{AppLauncher, SemanticElement};
+use cranpose_testing::find_button_in_semantics;
 use desktop_app::app;
 use std::time::Duration;
 

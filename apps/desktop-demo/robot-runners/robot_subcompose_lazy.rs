@@ -11,17 +11,17 @@
 //! cargo run --package desktop-app --example robot_subcompose_lazy --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
-use compose_testing::find_text_in_semantics;
-use compose_ui::widgets::*;
-use compose_ui::Modifier;
+use cranpose_app::AppLauncher;
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
+use cranpose_testing::find_text_in_semantics;
+use cranpose_ui::widgets::*;
+use cranpose_ui::Modifier;
 use std::time::Duration;
 
 /// Minimal test UI focused on SubcomposeLayout and LazyColumn behavior
 fn test_app() {
-    use compose_ui::Color;
-    use compose_ui::LinearArrangement;
+    use cranpose_ui::Color;
+    use cranpose_ui::LinearArrangement;
 
     // Create LazyListState for scroll control (Copy - no clone needed!)
     let list_state = remember_lazy_list_state();

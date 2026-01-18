@@ -5,11 +5,11 @@ pub mod fonts;
 mod tests;
 
 use crate::fonts::DEMO_FONTS;
-use compose_app::AppLauncher;
+use cranpose_app::AppLauncher;
 
 fn create_app() -> AppLauncher {
     AppLauncher::new()
-        .with_title("Compose Demo")
+        .with_title("Cranpose Demo")
         .with_size(800, 600)
         .with_fonts(&DEMO_FONTS)
         .with_fps_counter(true) // Show FPS overlay in corner
@@ -40,13 +40,13 @@ pub fn web_init() {
     // Set up logging
     wasm_logger::init(wasm_logger::Config::default());
     console_error_panic_hook::set_once();
-    log::info!("🚀 BUILD-ID-XYZ123-2047 🚀 Compose demo starting in browser...");
+    log::info!("🚀 BUILD-ID-XYZ123-2047 🚀 Cranpose demo starting in browser...");
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 #[wasm_bindgen]
 pub async fn run_app() -> Result<(), JsValue> {
-    log::info!("Initializing Compose app...");
+    log::info!("Initializing Cranpose app...");
 
     create_app()
         .run_web("compose-canvas", app::combined_app)

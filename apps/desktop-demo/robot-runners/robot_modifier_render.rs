@@ -1,8 +1,8 @@
 //! Robot test to reproduce modifier showcase rendering issue
 //! Tests that clicking "Positioned Boxes" in modifier tab shows content
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app::combined_app;
 use desktop_app::fonts::DEMO_FONTS;
 use std::time::Duration;

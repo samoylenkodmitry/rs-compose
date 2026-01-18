@@ -8,8 +8,8 @@
 //! cargo run --package desktop-app --example robot_lazy_max_demo --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{
+use cranpose_app::AppLauncher;
+use cranpose_testing::{
     find_button_in_semantics, find_text_by_prefix_in_semantics, find_text_in_semantics,
 };
 use std::time::Duration;

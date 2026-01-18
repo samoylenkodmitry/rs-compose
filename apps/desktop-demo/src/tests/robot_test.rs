@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod robot_tests {
     use crate::app;
-    use compose_testing::robot::create_headless_robot_test;
+    use cranpose_testing::robot::create_headless_robot_test;
 
     /// Test the real counter app with robot interactions
     #[test]

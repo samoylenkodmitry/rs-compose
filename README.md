@@ -1,17 +1,17 @@
-https://codewiki.google/github.com/samoylenkodmitry/rs-compose
+https://codewiki.google/github.com/samoylenkodmitry/cranpose
 
 [WIP.webm](https://github.com/user-attachments/assets/00533605-aa9c-4555-896c-c939195e3dce)
 
 
-# RS-Compose
+# Cranpose
 
-Compose-RS is a Jetpack Compose–inspired declarative UI framework. The repository accompanies the architectural proposal documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and provides crate scaffolding for the core runtime, procedural macros, UI primitives, and example applications.
+Cranpose is a Jetpack Compose–inspired declarative UI framework. The repository accompanies the architectural proposal documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and provides crate scaffolding for the core runtime, procedural macros, UI primitives, and example applications.
 
 ## 🌐 Live Demo
 
-**[Try it in your browser!](https://samoylenkodmitry.github.io/rs-compose/)**
+**[Try it in your browser!](https://samoylenkodmitry.github.io/cranpose/)**
 
-The demo showcases the full RS-Compose framework running in the browser via WebAssembly and WebGL2.
+The demo showcases the full Cranpose framework running in the browser via WebAssembly and WebGL2.
 
 ## Examples
 
@@ -72,12 +72,12 @@ For detailed web build instructions, see [`apps/desktop-demo/README.md`](apps/de
 ### Desktop
 
 ```rust
-use compose_app::AppLauncher;
+use cranpose_app::AppLauncher;
 
 fn main() {
     let _ = env_logger::try_init();
     AppLauncher::new()
-        .with_title("My Compose App")
+        .with_title("My Cranpose App")
         .with_size(800, 600)
         .run(my_app);
 }
@@ -85,38 +85,38 @@ fn main() {
 
 #[composable]
 fn my_app() {
-    Text("Hello, Compose!");
+    Text("Hello, Cranpose!");
 }
 ```
 
 ### Android
 
 ```rust
-use compose_app::AppLauncher;
+use cranpose_app::AppLauncher;
 
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
     AppLauncher::new()
-        .with_title("My Compose App")
+        .with_title("My Cranpose App")
         .run(app, my_app);
 }
 
 #[composable]
 fn my_app() {
-    Text("Hello, Compose!");
+    Text("Hello, Cranpose!");
 }
 ```
 
 ### Web
 
 ```rust
-use compose_app::AppLauncher;
+use cranpose_app::AppLauncher;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub async fn run_app() -> Result<(), JsValue> {
     AppLauncher::new()
-        .with_title("My Compose App")
+        .with_title("My Cranpose App")
         .with_size(800, 600)
         .run_web("canvas-id", my_app)
         .await
@@ -124,7 +124,7 @@ pub async fn run_app() -> Result<(), JsValue> {
 
 #[composable]
 fn my_app() {
-    Text("Hello, Compose!");
+    Text("Hello, Cranpose!");
 }
 ```
 

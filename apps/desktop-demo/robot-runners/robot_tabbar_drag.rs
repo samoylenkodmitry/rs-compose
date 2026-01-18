@@ -3,8 +3,8 @@
 //! This test catches regressions where horizontal_scroll using ScrollState
 //! doesn't update visually when dragged.
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics};
 use desktop_app::app;
 use std::time::Duration;
 

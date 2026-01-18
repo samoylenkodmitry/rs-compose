@@ -1,7 +1,7 @@
 /// Integration tests for modifier showcases that validate actual layout positions and sizes.
 /// These tests verify that modifiers produce correct measurements and coordinates.
-use compose_core::{location_key, Composition, MemoryApplier};
-use compose_ui::{
+use cranpose_core::{location_key, Composition, MemoryApplier};
+use cranpose_ui::{
     composable, Box as ComposeBox, BoxSpec, Color, Column, ColumnSpec, LinearArrangement, Modifier,
     Row, RowSpec, Size, Spacer, Text,
 };
@@ -242,7 +242,7 @@ fn dynamic_modifiers_showcase(frame: i32) {
 #[allow(dead_code)]
 fn count_children(applier: &mut MemoryApplier, node_id: usize) -> Option<usize> {
     applier
-        .with_node(node_id, |node: &mut compose_ui::LayoutNode| {
+        .with_node(node_id, |node: &mut cranpose_ui::LayoutNode| {
             node.children.len()
         })
         .ok()
@@ -251,7 +251,7 @@ fn count_children(applier: &mut MemoryApplier, node_id: usize) -> Option<usize> 
 /// Helper to collect all descendant nodes
 fn collect_all_nodes(applier: &mut MemoryApplier, node_id: usize) -> Vec<usize> {
     let mut nodes = vec![node_id];
-    if let Ok(children) = applier.with_node(node_id, |node: &mut compose_ui::LayoutNode| {
+    if let Ok(children) = applier.with_node(node_id, |node: &mut cranpose_ui::LayoutNode| {
         node.children.iter().copied().collect::<Vec<_>>()
     }) {
         for child_id in children {

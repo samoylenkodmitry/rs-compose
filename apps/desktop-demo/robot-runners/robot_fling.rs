@@ -12,9 +12,9 @@
 //! cargo run --package desktop-app --example robot_fling --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
-use compose_ui::{last_fling_velocity, reset_last_fling_velocity};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_ui::{last_fling_velocity, reset_last_fling_velocity};
 use desktop_app::app;
 use std::time::Duration;
 

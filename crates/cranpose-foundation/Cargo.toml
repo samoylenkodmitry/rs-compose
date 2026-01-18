@@ -1,0 +1,18 @@
+[package]
+name = "cranpose-foundation"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Modifiers, nodes, and foundation elements for Cranpose"
+
+[dependencies]
+cranpose-core = { path = "../cranpose-core" }
+cranpose-macros = { path = "../cranpose-macros" }
+cranpose-ui-graphics = { path = "../cranpose-ui-graphics" }
+cranpose-ui-layout = { path = "../cranpose-ui-layout" }
+smallvec = "1.13"
+web-time = "1.1"
+log = "0.4"
+
+[features]
+default = []

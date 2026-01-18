@@ -1,12 +1,12 @@
 #[cfg(target_arch = "wasm32")]
-use compose_core::LaunchedEffectAsync;
-use compose_ui::{
+use cranpose_core::LaunchedEffectAsync;
+use cranpose_ui::{
     composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement, Modifier,
     Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use compose_core::LaunchedEffect;
+use cranpose_core::LaunchedEffect;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FetchStatus {
@@ -22,7 +22,7 @@ fn do_fetch_blocking() -> Result<String, String> {
     use reqwest::blocking::Client;
 
     let client = Client::builder()
-        .user_agent("compose-rs-desktop-demo/0.1")
+        .user_agent("cranpose-desktop-demo/0.1")
         .build()
         .map_err(|e| format!("Failed to build client: {}", e))?;
 
@@ -114,8 +114,8 @@ async fn do_fetch_async() -> Result<String, String> {
 
 #[composable]
 pub(crate) fn web_fetch_example() {
-    let fetch_status = compose_core::useState(|| FetchStatus::Idle);
-    let request_counter = compose_core::useState(|| 0u64);
+    let fetch_status = cranpose_core::useState(|| FetchStatus::Idle);
+    let request_counter = cranpose_core::useState(|| 0u64);
 
     // Native implementation using blocking worker
     #[cfg(not(target_arch = "wasm32"))]

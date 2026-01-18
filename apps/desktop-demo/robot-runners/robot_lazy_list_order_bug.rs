@@ -15,8 +15,8 @@
 //! cargo run --package desktop-app --example robot_lazy_list_order_bug --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -49,11 +49,11 @@ fn main() {
             let mut all_passed = true;
 
             // Helper to extract visible item numbers from semantics
-            let get_visible_items = |robot: &compose_app::Robot| -> Vec<i32> {
+            let get_visible_items = |robot: &cranpose_app::Robot| -> Vec<i32> {
                 let mut items = Vec::new();
                 if let Ok(semantics) = robot.get_semantics() {
                     fn find_items(
-                        elem: &compose_app::SemanticElement,
+                        elem: &cranpose_app::SemanticElement,
                         items: &mut Vec<(i32, f32)>,
                     ) {
                         if let Some(ref text) = elem.text {

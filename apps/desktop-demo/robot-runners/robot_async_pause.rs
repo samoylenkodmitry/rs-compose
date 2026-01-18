@@ -6,8 +6,8 @@
 //! 2. Clicks the "Pause Animation" button
 //! 3. Verifies the button text changed to "Resume Animation"
 
-use compose_app::AppLauncher;
-use compose_testing::find_text_center;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_text_center;
 use desktop_app::app;
 use std::time::Duration;
 
@@ -135,7 +135,7 @@ fn main() {
         .run(app::combined_app);
 }
 
-fn print_all_texts(element: &compose_app::SemanticElement, depth: usize) {
+fn print_all_texts(element: &cranpose_app::SemanticElement, depth: usize) {
     let indent = "  ".repeat(depth);
     if let Some(text) = &element.text {
         println!("{}Text: '{}'", indent, text);

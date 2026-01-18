@@ -13,8 +13,8 @@
 //! cargo run --package desktop-app --example robot_tab_selection --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button_in_semantics, find_text_in_semantics};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button_in_semantics, find_text_in_semantics};
 use desktop_app::app;
 use desktop_app::app::DemoTab;
 use std::time::Duration;
@@ -42,16 +42,16 @@ fn main() {
             }
 
             // Helper to find tab button by text and return center coordinates
-            let find_tab_center = |robot: &compose_app::Robot, name: &str| -> Option<(f32, f32)> {
+            let find_tab_center = |robot: &cranpose_app::Robot, name: &str| -> Option<(f32, f32)> {
                 find_button_in_semantics(robot, name).map(|(x, y, w, h)| (x + w / 2.0, y + h / 2.0))
             };
 
             // Helper to check if content text exists
-            let content_exists = |robot: &compose_app::Robot, text: &str| -> bool {
+            let content_exists = |robot: &cranpose_app::Robot, text: &str| -> bool {
                 find_text_in_semantics(robot, text).is_some()
             };
 
-            let wait_for_text = |robot: &compose_app::Robot, text: &str| -> bool {
+            let wait_for_text = |robot: &cranpose_app::Robot, text: &str| -> bool {
                 for _ in 0..20 {
                     if content_exists(robot, text) {
                         return true;
@@ -112,7 +112,7 @@ fn main() {
                 }
 
                 if let Ok(semantics) = robot.get_semantics() {
-                    compose_app::Robot::print_semantics(&semantics, 0);
+                    cranpose_app::Robot::print_semantics(&semantics, 0);
                 }
             }
 
@@ -147,7 +147,7 @@ fn main() {
             } else {
                 println!("  ✗ FAIL: Modifiers Showcase content NOT visible");
                 if let Ok(semantics) = robot.get_semantics() {
-                    compose_app::Robot::print_semantics(&semantics, 0);
+                    cranpose_app::Robot::print_semantics(&semantics, 0);
                 }
             }
 
@@ -176,7 +176,7 @@ fn main() {
             } else {
                 println!("  ✗ FAIL: Counter App content NOT visible after switching back");
                 if let Ok(semantics) = robot.get_semantics() {
-                    compose_app::Robot::print_semantics(&semantics, 0);
+                    cranpose_app::Robot::print_semantics(&semantics, 0);
                 }
             }
 

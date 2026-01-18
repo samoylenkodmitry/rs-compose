@@ -1,0 +1,12 @@
+[package]
+name = "cranpose-render-common"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Common rendering contracts for Cranpose"
+
+[dependencies]
+cranpose-foundation = { path = "../../cranpose-foundation" }
+cranpose-ui-graphics = { path = "../../cranpose-ui-graphics" }
+cranpose-ui = { path = "../../cranpose-ui" }
+cranpose-core = { path = "../../cranpose-core" }

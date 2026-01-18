@@ -10,8 +10,8 @@
 //! cargo run --package desktop-app --example robot_tabs_scroll --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::find_clickables_in_range;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_clickables_in_range;
 use desktop_app::app;
 use std::time::Duration;
 
@@ -43,7 +43,7 @@ fn main() {
             println!("\n--- Semantic Tree Dump ---");
             match robot.get_semantics() {
                 Ok(semantics) => {
-                    fn print_element(elem: &compose_app::SemanticElement, depth: usize) {
+                    fn print_element(elem: &cranpose_app::SemanticElement, depth: usize) {
                         let indent = "  ".repeat(depth);
                         println!("{}Role: {}, Bounds: ({:.1}, {:.1}, {:.1}x{:.1}), Text: {:?}, Clickable: {}",
                             indent, elem.role, elem.bounds.x, elem.bounds.y, elem.bounds.width, elem.bounds.height,
@@ -62,7 +62,7 @@ fn main() {
             println!("--- End Semantic Tree ---\n");
 
             // Get initial tab button positions using shared helper
-            let get_tab_positions = |robot: &compose_app::Robot| -> Vec<(String, f32, f32)> {
+            let get_tab_positions = |robot: &cranpose_app::Robot| -> Vec<(String, f32, f32)> {
                 match robot.get_semantics() {
                     Ok(semantics) => {
                         find_clickables_in_range(&semantics, 20.0, 120.0)

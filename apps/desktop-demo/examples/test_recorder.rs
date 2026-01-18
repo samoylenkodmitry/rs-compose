@@ -8,7 +8,7 @@
 //! cargo run --package desktop-app --example test_recorder
 //! ```
 
-use compose_app::AppLauncher;
+use cranpose_app::AppLauncher;
 use desktop_app::app;
 use std::path::PathBuf;
 

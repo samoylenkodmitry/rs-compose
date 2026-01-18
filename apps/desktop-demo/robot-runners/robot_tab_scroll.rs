@@ -9,8 +9,8 @@
 //! cargo run --package desktop-app --example robot_tab_scroll --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics};
 use desktop_app::app;
 use std::time::Duration;
 

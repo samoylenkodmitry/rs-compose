@@ -6,8 +6,8 @@
 //! cargo run --package desktop-app --example robot_multiline_click --features robot-app
 //! ```
 
-use compose_app::{AppLauncher, Robot};
-use compose_testing::{find_button, find_in_semantics, find_text_exact};
+use cranpose_app::{AppLauncher, Robot};
+use cranpose_testing::{find_button, find_in_semantics, find_text_exact};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -213,7 +213,7 @@ fn main() {
 
 fn print_all_texts(robot: &Robot) {
     find_in_semantics(robot, |elem| {
-        fn search(elem: &compose_app::SemanticElement) {
+        fn search(elem: &cranpose_app::SemanticElement) {
             if let Some(ref t) = elem.text {
                 if !t.is_empty() {
                     println!("    Text: '{}'", t.replace('\n', "\\n"));
@@ -232,7 +232,7 @@ fn find_multiline_text(robot: &Robot) -> Option<String> {
     let result: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     find_in_semantics(robot, |elem| {
         fn search(
-            elem: &compose_app::SemanticElement,
+            elem: &cranpose_app::SemanticElement,
             result: &std::cell::RefCell<Option<String>>,
         ) {
             if let Some(ref t) = elem.text {

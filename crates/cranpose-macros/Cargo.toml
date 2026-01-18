@@ -1,0 +1,17 @@
+[package]
+name = "cranpose-macros"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Procedural macros for Cranpose"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[dependencies.cranpose-core]
+path = "../cranpose-core"

@@ -1,0 +1,35 @@
+[package]
+name = "cranpose-ui"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "UI primitives for Cranpose"
+
+[dependencies]
+cranpose-core = { path = "../cranpose-core" }
+cranpose-macros = { path = "../cranpose-macros" }
+cranpose-runtime-std = { path = "../cranpose-runtime-std" }
+cranpose-foundation = { path = "../cranpose-foundation" }
+cranpose-animation = { path = "../cranpose-animation" }
+cranpose-ui-layout = { path = "../cranpose-ui-layout" }
+cranpose-ui-graphics = { path = "../cranpose-ui-graphics" }
+indexmap = "=2.7.1"
+smallvec = "1.13"
+futures-task = "0.3"
+# WASM-compatible time - web-time is what winit uses internally
+web-time = "1.1"
+log = "0.4"
+
+[features]
+default = []
+# Enable test helpers like last_fling_velocity() for robot test verification.
+# This adds global state for cross-thread test access, so only enable in test builds.
+test-helpers = []
+
+[dev-dependencies]
+criterion = "0.5"
+cranpose-testing = { path = "../cranpose-testing" }
+
+[[bench]]
+name = "pipeline"
+harness = false

@@ -7,12 +7,12 @@
 //! cargo run --package desktop-app --example robot_lazy_items_rc --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScopeExt, LazyListState};
-use compose_macros::composable;
-use compose_testing::find_text_in_semantics;
-use compose_ui::widgets::*;
-use compose_ui::{Color, ColumnSpec, LinearArrangement, Modifier, RowSpec, VerticalAlignment};
+use cranpose_app::AppLauncher;
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScopeExt, LazyListState};
+use cranpose_macros::composable;
+use cranpose_testing::find_text_in_semantics;
+use cranpose_ui::widgets::*;
+use cranpose_ui::{Color, ColumnSpec, LinearArrangement, Modifier, RowSpec, VerticalAlignment};
 use std::rc::Rc;
 use std::time::Duration;
 

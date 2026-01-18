@@ -2,7 +2,7 @@
 
 Last Updated: 2026-01-05
 
-Virtualized lazy layouts for Compose-RS with 1:1 API and architecture parity with Jetpack Compose (JC). This document tracks current alignment gaps, refactor tasks, and verification steps.
+Virtualized lazy layouts for Cranpose with 1:1 API and architecture parity with Jetpack Compose (JC). This document tracks current alignment gaps, refactor tasks, and verification steps.
 
 ---
 
@@ -65,7 +65,7 @@ Virtualized lazy layouts for Compose-RS with 1:1 API and architecture parity wit
 2.  **Architectural Choices (The Good & The Risky)**:
     *   **Key Separation (Good)**: `LazyLayoutKey` enum (User vs Index) is a solid choice to prevent ID collisions, a common "shoot in the foot" problem in list frameworks.
     *   **Binary Search (Good)**: `find_interval` uses `partition_point` (O(log n)), fixing a previous O(n) bottleneck.
-    *   **Subcompose Bridge (Acceptable Risk)**: The `RefCell` bridge in `LazyColumn` widget (`content_cell`) to pass updated closures to the measure policy is a standard Compose-RS pattern. It allows stable policy pointers but relies on imperative updates.
+    *   **Subcompose Bridge (Acceptable Risk)**: The `RefCell` bridge in `LazyColumn` widget (`content_cell`) to pass updated closures to the measure policy is a standard Cranpose pattern. It allows stable policy pointers but relies on imperative updates.
 
 3.  **"Shoot in the Foot" Potential**:
     *   **Average Size Estimation**: `measure_lazy_list` relies on `state.average_item_size()` when scrolling to random locations. If item sizes vary significantly, this heuristic will cause the scrollbar to jump or position to be inaccurate. This is a known trade-off but undocumented in the API surface.

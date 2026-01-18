@@ -112,7 +112,7 @@ optimize_rust_code() {
 
 # Generate the compact markdown file
 {
-    echo "# Compose-RS Code Structure (Compact)"
+    echo "# Cranpose Code Structure (Compact)"
     echo ""
 
     # Generate directory tree showing only .rs files (excluding target, tests, benches)

@@ -15,8 +15,8 @@
 //! cargo run --package desktop-app --example robot_advance_frame_bug --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -49,9 +49,9 @@ fn main() {
             let mut all_passed = true;
 
             // Helper to find frame counter value
-            let get_frame_value = |robot: &compose_app::Robot| -> Option<i32> {
+            let get_frame_value = |robot: &cranpose_app::Robot| -> Option<i32> {
                 if let Ok(semantics) = robot.get_semantics() {
-                    fn find_frame(elem: &compose_app::SemanticElement) -> Option<i32> {
+                    fn find_frame(elem: &cranpose_app::SemanticElement) -> Option<i32> {
                         if let Some(ref text) = elem.text {
                             // Look for "Frame: N" or just a number that represents frame
                             if text.contains("Frame:") || text.contains("frame:") {
@@ -136,7 +136,7 @@ fn main() {
                 println!("  Could not find Frame value in semantics");
                 // Try to find any text containing 'frame' or number patterns
                 if let Ok(semantics) = robot.get_semantics() {
-                    fn dump_texts(elem: &compose_app::SemanticElement, prefix: &str) {
+                    fn dump_texts(elem: &cranpose_app::SemanticElement, prefix: &str) {
                         if let Some(ref text) = elem.text {
                             println!("  {}Text: '{}'", prefix, text);
                         }

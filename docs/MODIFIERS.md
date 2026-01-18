@@ -1,6 +1,6 @@
 # Modifier System Internals
 
-This document provides comprehensive technical documentation of the modifier system implementation in rs-compose, which achieves 1:1 parity with Jetpack Compose's Modifier.Node architecture.
+This document provides comprehensive technical documentation of the modifier system implementation in cranpose, which achieves 1:1 parity with Jetpack Compose's Modifier.Node architecture.
 
 ## Table of Contents
 
@@ -1225,7 +1225,7 @@ let modifier = Modifier::empty()
 
 ## Summary
 
-The rs-compose modifier system achieves **complete parity with Jetpack Compose's Modifier.Node architecture** while adapting to Rust's ownership model. Key achievements:
+The cranpose modifier system achieves **complete parity with Jetpack Compose's Modifier.Node architecture** while adapting to Rust's ownership model. Key achievements:
 
 ✅ **Zero-allocation node reuse** across recompositions
 ✅ **Capability-driven dispatch** for optimal performance

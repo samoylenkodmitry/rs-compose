@@ -1,0 +1,9 @@
+[package]
+name = "cranpose-runtime-std"
+version = "0.1.0"
+edition = "2021"
+description = "Standard library backed runtime services for Cranpose"
+license = "Apache-2.0"
+
+[dependencies]
+cranpose-core = { path = "../cranpose-core" }

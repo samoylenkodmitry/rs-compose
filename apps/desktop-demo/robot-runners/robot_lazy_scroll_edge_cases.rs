@@ -12,13 +12,13 @@
 
 mod robot_test_utils;
 
-use compose_app::AppLauncher;
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
-use compose_testing::{find_button_in_semantics, find_text_in_semantics};
-use compose_ui::widgets::{
+use cranpose_app::AppLauncher;
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
+use cranpose_testing::{find_button_in_semantics, find_text_in_semantics};
+use cranpose_ui::widgets::{
     Box, BoxSpec, Button, Column, ColumnSpec, LazyColumn, LazyColumnSpec, Row, RowSpec, Text,
 };
-use compose_ui::{Alignment, Color, LinearArrangement, Modifier, Size};
+use cranpose_ui::{Alignment, Color, LinearArrangement, Modifier, Size};
 use std::time::Duration;
 
 fn main() {

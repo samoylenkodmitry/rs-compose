@@ -2,8 +2,8 @@
 //! Generated at: timestamp
 //! Events: 164
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics};
 use std::time::Duration;
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
             std::thread::sleep(Duration::from_millis(500));
             let _ = robot.wait_for_idle();
 
-            fn tab_x(robot: &compose_app::Robot, label: &str) -> Option<f32> {
+            fn tab_x(robot: &cranpose_app::Robot, label: &str) -> Option<f32> {
                 find_in_semantics(robot, |elem| find_button(elem, label)).map(|(x, _, _, _)| x)
             }
 

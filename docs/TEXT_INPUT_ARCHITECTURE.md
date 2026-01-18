@@ -1,6 +1,6 @@
 # Text Input System Architecture
 
-> **Definitive Guide** to the Compose-RS text input subsystem.
+> **Definitive Guide** to the Cranpose text input subsystem.
 > This document describes the *current state* of the architecture, data flows, and specific implementation quirks.
 >
 > **Last Updated**: 2025-12-20 (post code review + remedy fixes)

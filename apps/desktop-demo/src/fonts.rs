@@ -1,4 +1,4 @@
-//! Demo fonts for the Compose application.
+//! Demo fonts for the Cranpose application.
 //!
 //! These fonts are embedded at compile time and used for text rendering
 //! across both desktop and Android platforms.

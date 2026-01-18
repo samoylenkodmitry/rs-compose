@@ -1,0 +1,12 @@
+[package]
+name = "cranpose-animation"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Animation system for Cranpose"
+
+[dependencies]
+cranpose-core = { path = "../cranpose-core" }
+
+[features]
+default = []

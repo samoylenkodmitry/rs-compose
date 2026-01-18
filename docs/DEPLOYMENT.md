@@ -2,7 +2,7 @@
 
 ## GitHub Pages Deployment
 
-The RS-Compose web demo can be automatically deployed to GitHub Pages when you create a new release tag.
+The Cranpose web demo can be automatically deployed to GitHub Pages when you create a new release tag.
 
 ### Setup Instructions
 
@@ -40,7 +40,7 @@ Or create a release through GitHub UI:
 
 For this repository:
 ```
-https://samoylenkodmitry.github.io/rs-compose/
+https://samoylenkodmitry.github.io/cranpose/
 ```
 
 ### Manual Deployment

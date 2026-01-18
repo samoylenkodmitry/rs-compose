@@ -10,8 +10,8 @@
 //! cargo run --package desktop-app --example robot_content_type_reuse --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::find_text_in_semantics;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_text_in_semantics;
 use std::time::Duration;
 
 fn main() {
@@ -27,7 +27,7 @@ fn main() {
             std::thread::sleep(Duration::from_millis(200));
 
             let read_stats = || -> Option<(usize, usize, usize)> {
-                if let Some((_, _, _, _, text)) = compose_testing::find_text_by_prefix_in_semantics(
+                if let Some((_, _, _, _, text)) = cranpose_testing::find_text_by_prefix_in_semantics(
                     &robot,
                     "Lifecycle totals: C=",
                 ) {

@@ -2,11 +2,11 @@
 //!
 //! This module contains the lazy list demonstration for the desktop-demo app.
 
-use compose_core::{DisposableEffect, DisposableEffectResult, MutableState};
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
-use compose_foundation::SemanticsConfiguration;
-use compose_ui::widgets::{LazyColumn, LazyColumnSpec};
-use compose_ui::{
+use cranpose_core::{DisposableEffect, DisposableEffectResult, MutableState};
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
+use cranpose_foundation::SemanticsConfiguration;
+use cranpose_ui::widgets::{LazyColumn, LazyColumnSpec};
+use cranpose_ui::{
     composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement, Modifier,
     Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };
@@ -51,12 +51,12 @@ fn LifecycleStatsDisplay(stats: MutableState<LifecycleStats>) {
 /// The reactive read happens INSIDE this function, not at the call site.
 #[allow(non_snake_case)]
 #[composable]
-fn LazyListStatsDisplay(list_state: compose_foundation::lazy::LazyListState) {
+fn LazyListStatsDisplay(list_state: cranpose_foundation::lazy::LazyListState) {
     // Reactive read happens here - isolated from parent scope
     let stats = list_state.stats();
     let visible = stats.items_in_use;
     let cached = stats.items_in_pool;
-    println!("Compose stats text, visible={visible}");
+    println!("Cranpose stats text, visible={visible}");
 
     Row(
         Modifier::empty(),
@@ -86,10 +86,10 @@ fn LazyListStatsDisplay(list_state: compose_foundation::lazy::LazyListState) {
 /// The reactive read happens INSIDE this function, not at the call site.
 #[allow(non_snake_case)]
 #[composable]
-fn FirstVisibleIndexDisplay(list_state: compose_foundation::lazy::LazyListState) {
+fn FirstVisibleIndexDisplay(list_state: cranpose_foundation::lazy::LazyListState) {
     // Reactive read happens here - isolated from parent scope
     let first_index = list_state.first_visible_item_index();
-    println!("Compose ISOLATED FirstIndex text: {}", first_index);
+    println!("Cranpose ISOLATED FirstIndex text: {}", first_index);
     Text(
         format!("FirstIndex: {}", first_index),
         Modifier::empty()
@@ -102,9 +102,9 @@ fn FirstVisibleIndexDisplay(list_state: compose_foundation::lazy::LazyListState)
 #[allow(non_snake_case)]
 #[composable]
 fn LifecycleListItem(index: usize, stats: MutableState<LifecycleStats>) {
-    println!("Compose item id={index}");
+    println!("Cranpose item id={index}");
     let stats_for_compose = stats;
-    compose_core::remember(move || {
+    cranpose_core::remember(move || {
         stats_for_compose.update(|current| current.total_composes += 1);
     })
     .with(|_| ());
@@ -185,8 +185,8 @@ fn LifecycleListItem(index: usize, stats: MutableState<LifecycleStats>) {
 #[composable]
 pub fn lazy_list_example() {
     let list_state = remember_lazy_list_state();
-    let item_count = compose_core::useState(|| 100usize);
-    let lifecycle_stats = compose_core::useState(LifecycleStats::default);
+    let item_count = cranpose_core::useState(|| 100usize);
+    let lifecycle_stats = cranpose_core::useState(LifecycleStats::default);
 
     Column(
         Modifier::empty()

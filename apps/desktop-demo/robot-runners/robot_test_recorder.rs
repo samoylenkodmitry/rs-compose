@@ -7,7 +7,7 @@
 //! cargo run --package desktop-app --example robot_test_recorder --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
+use cranpose_app::AppLauncher;
 use desktop_app::app;
 use std::path::PathBuf;
 use std::time::Duration;

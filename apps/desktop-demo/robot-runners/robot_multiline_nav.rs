@@ -6,8 +6,8 @@
 //! cargo run --package desktop-app --example robot_multiline_nav --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text_exact};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text_exact};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -135,7 +135,7 @@ fn main() {
             println!("  Scanning semantics for text content...");
             let found_text: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
             find_in_semantics(&robot, |elem| {
-                fn search_text(elem: &compose_app::SemanticElement, texts: &mut Vec<String>) {
+                fn search_text(elem: &cranpose_app::SemanticElement, texts: &mut Vec<String>) {
                     if let Some(ref t) = elem.text {
                         texts.push(t.clone());
                     }

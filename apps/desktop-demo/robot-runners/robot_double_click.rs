@@ -5,8 +5,8 @@
 //! cargo run --package desktop-app --example robot_double_click --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -111,7 +111,7 @@ fn main() {
             std::thread::sleep(Duration::from_millis(50));
 
             // Check focus after first click
-            let focused_after_click = compose_ui::has_focused_field();
+            let focused_after_click = cranpose_ui::has_focused_field();
             println!("  • Focused after single click: {}", focused_after_click);
 
             // Second click (double-click - within 500ms)
@@ -123,7 +123,7 @@ fn main() {
             println!("  • Double-click performed");
 
             // Verify field is still focused
-            let focused_after_double = compose_ui::has_focused_field();
+            let focused_after_double = cranpose_ui::has_focused_field();
             println!("  • Focused after double-click: {}", focused_after_double);
 
             // Note: has_focused_field() may not work reliably in robot test context
@@ -160,7 +160,7 @@ fn main() {
             println!("  • Triple-click performed");
 
             // Verify field is still focused
-            let focused_after_triple = compose_ui::has_focused_field();
+            let focused_after_triple = cranpose_ui::has_focused_field();
             println!("  • Focused after triple-click: {}", focused_after_triple);
 
             // Note: has_focused_field() may not work reliably in robot test context

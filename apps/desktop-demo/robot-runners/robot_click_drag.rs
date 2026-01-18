@@ -9,8 +9,8 @@
 //! cargo run --package desktop-app --example robot_click_drag --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 

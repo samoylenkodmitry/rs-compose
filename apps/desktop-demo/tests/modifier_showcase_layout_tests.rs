@@ -1,6 +1,6 @@
-use compose_core::MutableState;
-use compose_testing::ComposeTestRule;
-use compose_ui::{HeadlessRenderer, LayoutBox, LayoutEngine, LayoutTree, RenderOp, Size};
+use cranpose_core::MutableState;
+use cranpose_testing::ComposeTestRule;
+use cranpose_ui::{HeadlessRenderer, LayoutBox, LayoutEngine, LayoutTree, RenderOp, Size};
 
 // Import the showcase functions
 use desktop_app::app::{
@@ -13,7 +13,7 @@ fn compute_layout_from_rule(
     rule: &mut ComposeTestRule,
     max_width: f32,
     max_height: f32,
-) -> Result<LayoutTree, compose_core::NodeError> {
+) -> Result<LayoutTree, cranpose_core::NodeError> {
     let root = rule.root_id().expect("should have root");
     let handle = rule.runtime_handle();
 
@@ -500,7 +500,7 @@ fn test_dynamic_modifiers_frame_advancement() {
 
 // Helper function that takes frame as parameter for testing
 fn dynamic_modifiers_showcase_with_frame(frame: MutableState<i32>) {
-    use compose_ui::*;
+    use cranpose_ui::*;
 
     Column(Modifier::empty(), ColumnSpec::default(), move || {
         Text(
@@ -521,14 +521,14 @@ fn dynamic_modifiers_showcase_with_frame(frame: MutableState<i32>) {
         let y = 50.0;
 
         // Wrap moving box in a container with explicit size to prevent overflow
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .size_points(250.0, 150.0)
                 .then(Modifier::empty().background(Color(0.05, 0.05, 0.15, 0.5)))
                 .then(Modifier::empty().rounded_corners(8.0)),
             BoxSpec::default(),
             move || {
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .size(Size {
                             width: 50.0,

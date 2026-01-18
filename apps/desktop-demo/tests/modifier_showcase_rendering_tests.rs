@@ -1,9 +1,9 @@
 /// Integration tests that validate modifier showcases render correctly using dump_tree()
 /// These tests verify the actual rendering output, not just structure.
-use compose_core::MutableState;
-use compose_macros::composable;
-use compose_testing::ComposeTestRule;
-use compose_ui::*;
+use cranpose_core::MutableState;
+use cranpose_macros::composable;
+use cranpose_testing::ComposeTestRule;
+use cranpose_ui::*;
 
 // Import showcase composables from app
 // For testing purposes, we recreate them here to avoid module visibility issues
@@ -24,7 +24,7 @@ fn simple_card_showcase() {
             height: 16.0,
         });
 
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .padding(16.0)
                 .then(Modifier::empty().size(Size {
@@ -73,7 +73,7 @@ fn positioned_boxes_showcase() {
             height: 16.0,
         });
 
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .size_points(100.0, 100.0)
                 .then(Modifier::empty().offset(50.0, 100.0))
@@ -86,7 +86,7 @@ fn positioned_boxes_showcase() {
             },
         );
 
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .size_points(100.0, 100.0)
                 .then(Modifier::empty().offset(200.0, 100.0))
@@ -120,7 +120,7 @@ fn dynamic_modifiers_showcase(frame: i32) {
         let x = (frame as f32 * 10.0) % 200.0;
         let y = 50.0;
 
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .size(Size {
                     width: 50.0,
@@ -165,7 +165,7 @@ fn test_simple_card_renders_correctly() {
 
     // Validate structure exists
     assert!(
-        tree.contains("dyn compose_core::Node"),
+        tree.contains("dyn cranpose_core::Node"),
         "Should contain Node"
     );
 
@@ -188,7 +188,7 @@ fn test_positioned_boxes_renders_correctly() {
 
     // Validate structure
     assert!(
-        tree.contains("dyn compose_core::Node"),
+        tree.contains("dyn cranpose_core::Node"),
         "Should contain Node"
     );
 
@@ -302,7 +302,7 @@ fn test_complex_modifier_chain_ordering() {
     let mut rule = ComposeTestRule::new();
 
     rule.set_content(|| {
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .padding(10.0)
                 .then(Modifier::empty().size_points(200.0, 100.0))
@@ -416,7 +416,7 @@ fn test_modifier_showcase_recomposition_stability() {
             let showcase_index_inner = showcase_index;
             Column(Modifier::empty(), ColumnSpec::default(), move || {
                 let current_index = showcase_index_inner.get();
-                compose_core::with_key(&current_index, || match current_index {
+                cranpose_core::with_key(&current_index, || match current_index {
                     0 => simple_card_showcase(),
                     1 => positioned_boxes_showcase(),
                     2 => dynamic_modifiers_showcase(0),

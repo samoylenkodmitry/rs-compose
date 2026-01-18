@@ -7,8 +7,8 @@
 
 mod robot_test_utils;
 
-use compose_app::AppLauncher;
-use compose_testing::find_button_in_semantics;
+use cranpose_app::AppLauncher;
+use cranpose_testing::find_button_in_semantics;
 use desktop_app::app;
 use robot_test_utils::{
     count_text_in_tree, find_element_by_text_exact, print_semantics_with_bounds,

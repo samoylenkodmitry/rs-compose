@@ -1,6 +1,6 @@
 # Snapshots and Slot Table System: Internals Documentation
 
-This document provides comprehensive documentation of the internals of the Snapshots and Slot Table system in rs-compose, which forms the foundation of the composition runtime.
+This document provides comprehensive documentation of the internals of the Snapshots and Slot Table system in cranpose, which forms the foundation of the composition runtime.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ This document provides comprehensive documentation of the internals of the Snaps
 
 ## Overview
 
-The rs-compose runtime is built on two fundamental subsystems:
+The cranpose runtime is built on two fundamental subsystems:
 
 - **Snapshot System**: Provides Multi-Version Concurrency Control (MVCC) for state isolation, conflict detection, and optimistic merging
 - **Slot Table System**: Manages the composition tree structure, enabling efficient recomposition and structural preservation
@@ -1898,7 +1898,7 @@ fn debug_print_groups(table: &SlotTable) {
 
 ## Summary
 
-The Snapshots and Slot Table system provides a sophisticated foundation for rs-compose:
+The Snapshots and Slot Table system provides a sophisticated foundation for cranpose:
 
 **Snapshots** deliver:
 - Isolated state views via MVCC

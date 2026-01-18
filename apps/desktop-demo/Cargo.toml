@@ -2,8 +2,8 @@
 name = "desktop-app"
 version = "0.1.0"
 edition = "2021"
-description = "RS-Compose desktop demo application."
-repository = "https://github.com/samoylenkodmitry/rs-compose"
+description = "Cranpose desktop demo application."
+repository = "https://github.com/samoylenkodmitry/cranpose"
 license = "Apache-2.0"
 
 [package.metadata.wasm-pack.profile.release]
@@ -27,22 +27,22 @@ required-features = ["desktop"]
 
 [features]
 default = ["renderer-wgpu", "desktop"]
-renderer-pixels = ["compose-app/renderer-pixels"]
-renderer-wgpu = ["compose-app/renderer-wgpu"]
-desktop = ["compose-app/desktop"]
-android = ["compose-app/android"]
-web = ["compose-app/web", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:wasm-logger"]
+renderer-pixels = ["cranpose-app/renderer-pixels"]
+renderer-wgpu = ["cranpose-app/renderer-wgpu"]
+desktop = ["cranpose-app/desktop"]
+android = ["cranpose-app/android"]
+web = ["cranpose-app/web", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:wasm-logger"]
 # Enable real app robot testing
-robot-app = ["compose-testing/robot-app", "logging", "compose-ui/test-helpers"]
+robot-app = ["cranpose-testing/robot-app", "logging", "cranpose-ui/test-helpers"]
 # Enable env_logger (adds ~600KB from regex)
 logging = ["dep:env_logger"]
 
 [dependencies]
-compose-app = { path = "../../crates/compose-app", default-features = false }
-compose-animation = { path = "../../crates/compose-animation" }
-compose-core = { path = "../../crates/compose-core" }
-compose-ui = { path = "../../crates/compose-ui" }
-compose-foundation = { path = "../../crates/compose-foundation" }
+cranpose-app = { path = "../../crates/cranpose-app", default-features = false }
+cranpose-animation = { path = "../../crates/cranpose-animation" }
+cranpose-core = { path = "../../crates/cranpose-core" }
+cranpose-ui = { path = "../../crates/cranpose-ui" }
+cranpose-foundation = { path = "../../crates/cranpose-foundation" }
 log = "0.4"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 wasm-bindgen = { version = "0.2", optional = true }
@@ -74,8 +74,8 @@ web-sys = { version = "0.3", features = [
 ] }
 
 [dev-dependencies]
-compose-macros = { path = "../../crates/compose-macros" }
-compose-testing = { path = "../../crates/compose-testing", features = ["robot-app"] }
+cranpose-macros = { path = "../../crates/cranpose-macros" }
+cranpose-testing = { path = "../../crates/cranpose-testing", features = ["robot-app"] }
 
 # Robot test runners
 [[example]]

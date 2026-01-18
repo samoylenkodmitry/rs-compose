@@ -5,8 +5,8 @@
 //! 2. Move cursor over the pointer-reactive area.
 //! 3. Ensure the "Pointer:" coordinates update after moves.
 
-use compose_app::{AppLauncher, Robot};
-use compose_testing::{find_button_in_semantics, find_text_by_prefix_in_semantics};
+use cranpose_app::{AppLauncher, Robot};
+use cranpose_testing::{find_button_in_semantics, find_text_by_prefix_in_semantics};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -34,7 +34,7 @@ fn fail(robot: &Robot, message: &str) -> ! {
 fn dump_semantics(robot: &Robot, label: &str) {
     if let Ok(semantics) = robot.get_semantics() {
         println!("--- Semantics dump ({}) ---", label);
-        compose_app::Robot::print_semantics(&semantics, 0);
+        cranpose_app::Robot::print_semantics(&semantics, 0);
     }
 }
 
@@ -83,7 +83,7 @@ fn main() {
             click_tab(&robot, "Counter App");
             if wait_for_prefix(
                 &robot,
-                "Compose-RS Playground",
+                "Cranpose Playground",
                 20,
                 Duration::from_millis(100),
             )

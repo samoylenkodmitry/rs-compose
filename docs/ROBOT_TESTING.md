@@ -1,6 +1,6 @@
 # Robot Testing
 
-Robot testing provides automated UI testing capabilities for Compose-RS applications. The robot can interact with your app programmatically, find elements by semantic properties, and validate UI state.
+Robot testing provides automated UI testing capabilities for Cranpose applications. The robot can interact with your app programmatically, find elements by semantic properties, and validate UI state.
 
 ## Quick Start
 

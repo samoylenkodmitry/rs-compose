@@ -1,0 +1,20 @@
+[package]
+name = "cranpose-render-wgpu"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "WGPU renderer backend for Cranpose"
+
+[dependencies]
+cranpose-render-common = { path = "../common" }
+cranpose-ui-graphics = { path = "../../cranpose-ui-graphics" }
+cranpose-foundation = { path = "../../cranpose-foundation" }
+cranpose-ui = { path = "../../cranpose-ui" }
+cranpose-core = { path = "../../cranpose-core" }
+# webgl feature enables WebGL backend for WASM builds
+# Default features include platform-appropriate backends (Vulkan/Metal/DX12/GLES)
+wgpu = { version = "25.0", features = ["webgl"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+glyphon = "0.9"
+log = "0.4"
+lru = "0.12"

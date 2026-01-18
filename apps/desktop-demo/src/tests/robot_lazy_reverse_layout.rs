@@ -1,7 +1,7 @@
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
-use compose_testing::robot::create_headless_robot_test;
-use compose_ui::widgets::{LazyColumn, LazyColumnSpec, Text};
-use compose_ui::Modifier;
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
+use cranpose_testing::robot::create_headless_robot_test;
+use cranpose_ui::widgets::{LazyColumn, LazyColumnSpec, Text};
+use cranpose_ui::Modifier;
 
 #[test]
 fn test_lazy_column_reverse_layout() {

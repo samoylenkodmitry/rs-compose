@@ -1,0 +1,57 @@
+[package]
+name = "cranpose-app"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["desktop", "renderer-wgpu"]
+desktop = ["cranpose-platform-desktop-winit", "dep:winit"]
+android = ["cranpose-platform-android", "dep:android-activity", "dep:android_logger", "dep:raw-window-handle"]
+web = ["cranpose-platform-web", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-sys"]
+renderer-pixels = ["cranpose-render-pixels", "dep:pixels"]
+renderer-wgpu = ["cranpose-render-wgpu", "dep:wgpu", "dep:pollster"]
+robot = [] # Enable robot testing support (cranpose-ui now always included)
+
+[dependencies]
+cranpose-app-shell = { path = "../cranpose-app-shell" }
+cranpose-ui = { path = "../cranpose-ui" }
+cranpose-platform-desktop-winit = { path = "../cranpose-platform/desktop-winit", optional = true }
+cranpose-platform-android = { path = "../cranpose-platform/android", optional = true }
+cranpose-platform-web = { path = "../cranpose-platform/web", optional = true }
+cranpose-render-pixels = { path = "../cranpose-render/pixels", optional = true }
+cranpose-render-wgpu = { path = "../cranpose-render/wgpu", optional = true }
+pixels = { version = "0.15", optional = true }
+wgpu = { version = "25.0", optional = true }
+pollster = { version = "0.4", optional = true }
+winit = { version = "0.31.0-beta.2", optional = true }
+android-activity = { workspace = true, optional = true }
+android_logger = { version = "0.14", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "Performance",
+    "MouseEvent",
+    "Touch",
+    "TouchList",
+    "TouchEvent",
+    "PointerEvent",
+    "WheelEvent",
+    "KeyboardEvent",
+    "CssStyleDeclaration",
+    # Clipboard support
+    "Navigator",
+    "Clipboard",
+    "ClipboardEvent",
+    "DataTransfer",
+] }
+log = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"

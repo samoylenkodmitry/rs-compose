@@ -1,5 +1,5 @@
-use compose_core::useState;
-use compose_ui::{
+use cranpose_core::useState;
+use cranpose_ui::{
     composable, Brush, Button, Color, Column, ColumnSpec, CornerRadii, LinearArrangement, Modifier,
     Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
 };

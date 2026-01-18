@@ -9,13 +9,13 @@
 //! cargo run --package desktop-app --example robot_lazy_varheight_lifecycle --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_core::{DisposableEffect, DisposableEffectResult, MutableState};
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope, LazyListState};
-use compose_macros::composable;
-use compose_testing::find_text_in_semantics;
-use compose_ui::widgets::*;
-use compose_ui::{Color, ColumnSpec, LinearArrangement, Modifier, RowSpec, VerticalAlignment};
+use cranpose_app::AppLauncher;
+use cranpose_core::{DisposableEffect, DisposableEffectResult, MutableState};
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope, LazyListState};
+use cranpose_macros::composable;
+use cranpose_testing::find_text_in_semantics;
+use cranpose_ui::widgets::*;
+use cranpose_ui::{Color, ColumnSpec, LinearArrangement, Modifier, RowSpec, VerticalAlignment};
 use std::time::Duration;
 
 /// Lifecycle stats stored in compose state
@@ -75,7 +75,7 @@ fn variable_height_lazy_list(state: LazyListState, stats: MutableState<Lifecycle
 
 #[composable]
 fn varheight_test_app() {
-    let stats: MutableState<LifecycleStats> = compose_core::useState(LifecycleStats::default);
+    let stats: MutableState<LifecycleStats> = cranpose_core::useState(LifecycleStats::default);
     let state = remember_lazy_list_state();
 
     Column(
@@ -111,7 +111,7 @@ fn variable_height_item(index: usize, stats: MutableState<LifecycleStats>) {
     println!("  [COMPOSE] Item {} (h={})", index, height);
 
     // Track FIRST composition
-    compose_core::remember(|| {
+    cranpose_core::remember(|| {
         stats.update(|s| s.total_composes += 1);
         println!("  [COMPOSE] Item {} first composition", index);
     })
@@ -180,7 +180,7 @@ fn main() {
 
             let read_stats = || -> Option<(usize, usize, usize)> {
                 if let Some((_, _, _, _, text)) =
-                    compose_testing::find_text_by_prefix_in_semantics(&robot, "Stats: C=")
+                    cranpose_testing::find_text_by_prefix_in_semantics(&robot, "Stats: C=")
                 {
                     let parts: Vec<&str> = text.split_whitespace().collect();
                     if parts.len() >= 4 {

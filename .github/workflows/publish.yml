@@ -1,0 +1,106 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish cranpose-core
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-core --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-macros
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-macros --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-runtime-std
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-runtime-std --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-ui-graphics
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-ui-graphics --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-ui-layout
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-ui-layout --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-animation
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-animation --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-foundation
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-foundation --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-ui
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-ui --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-assets
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-assets --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-app-shell
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-app-shell --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-app
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-app --token "$CRATES_IO_TOKEN" || true
+
+      # Publish platform crates
+      - name: Publish cranpose-platform-web
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-platform-web --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-platform-android
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-platform-android --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-platform-desktop-winit
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-platform-desktop-winit --token "$CRATES_IO_TOKEN" || true
+
+      # Publish render crates
+      - name: Publish cranpose-render-common
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-render-common --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-render-pixels
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-render-pixels --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-render-wgpu
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-render-wgpu --token "$CRATES_IO_TOKEN" || true
+
+      - name: Publish cranpose-testing
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish -p cranpose-testing --token "$CRATES_IO_TOKEN" || true

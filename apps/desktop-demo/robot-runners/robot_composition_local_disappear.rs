@@ -16,8 +16,8 @@
 //! cargo run --package desktop-app --example robot_composition_local_disappear --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -51,7 +51,7 @@ fn main() {
 
             // Helper to find "READING" text (the green box content)
             // Uses find_text which recursively searches children
-            let find_reading_box = |robot: &compose_app::Robot| -> Option<(f32, f32, f32, f32)> {
+            let find_reading_box = |robot: &cranpose_app::Robot| -> Option<(f32, f32, f32, f32)> {
                 find_in_semantics(robot, |elem| find_text(elem, "READING"))
             };
 
@@ -91,7 +91,7 @@ fn main() {
                 // Try to find what IS visible
                 println!("  Looking for any text containing 'READING' or 'Local'...");
                 if let Ok(semantics) = robot.get_semantics() {
-                    fn dump(elem: &compose_app::SemanticElement, depth: usize) {
+                    fn dump(elem: &cranpose_app::SemanticElement, depth: usize) {
                         if let Some(ref text) = elem.text {
                             if text.contains("Local")
                                 || text.contains("READING")
@@ -185,7 +185,7 @@ fn main() {
                 // Dump what IS visible now
                 println!("  Current semantics:");
                 if let Ok(semantics) = robot.get_semantics() {
-                    fn dump(elem: &compose_app::SemanticElement, depth: usize) {
+                    fn dump(elem: &cranpose_app::SemanticElement, depth: usize) {
                         let indent = "  ".repeat(depth);
                         if let Some(ref text) = elem.text {
                             println!("  {}role={} text='{}'", indent, elem.role, text);

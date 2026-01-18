@@ -1,11 +1,11 @@
-use compose_core::{self};
-use compose_ui::{composable, Column, ColumnSpec, Modifier, Text};
+use cranpose_core::{self};
+use cranpose_ui::{composable, Column, ColumnSpec, Modifier, Text};
 
 #[composable]
-fn conditional_text_with_external_state(counter_state: compose_core::MutableState<i32>) {
+fn conditional_text_with_external_state(counter_state: cranpose_core::MutableState<i32>) {
     // Mimic the exact pattern from counter_app - with_key BEFORE the Column
     let is_even = counter_state.get() % 2 == 0;
-    compose_core::with_key(&is_even, || {
+    cranpose_core::with_key(&is_even, || {
         if is_even {
             Text("if counter % 2 == 0", Modifier::empty());
         } else {
@@ -23,8 +23,8 @@ fn conditional_text_with_external_state(counter_state: compose_core::MutableStat
 
 #[test]
 fn test_conditional_text_reactivity() {
-    use compose_core::{MutableState, NodeError};
-    use compose_ui::run_test_composition;
+    use cranpose_core::{MutableState, NodeError};
+    use cranpose_ui::run_test_composition;
     use std::cell::RefCell;
 
     thread_local! {
@@ -32,7 +32,7 @@ fn test_conditional_text_reactivity() {
     }
 
     // Helper function to drain recompositions
-    fn drain_all(composition: &mut compose_ui::TestComposition) -> Result<(), NodeError> {
+    fn drain_all(composition: &mut cranpose_ui::TestComposition) -> Result<(), NodeError> {
         loop {
             if !composition.process_invalid_scopes()? {
                 break;
@@ -43,7 +43,7 @@ fn test_conditional_text_reactivity() {
 
     // Initial composition - counter is 0 (even)
     let mut composition = run_test_composition(|| {
-        let counter = compose_core::useState(|| 0);
+        let counter = cranpose_core::useState(|| 0);
         TEST_COUNTER.with(|cell| {
             *cell.borrow_mut() = Some(counter);
         });

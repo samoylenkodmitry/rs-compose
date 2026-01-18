@@ -1,0 +1,11 @@
+[package]
+name = "cranpose-platform-desktop-winit"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Desktop winit platform adapter for Cranpose"
+
+[dependencies]
+winit = "0.31.0-beta.2"
+cranpose-foundation = { path = "../../cranpose-foundation" }
+cranpose-ui-graphics = { path = "../../cranpose-ui-graphics" }

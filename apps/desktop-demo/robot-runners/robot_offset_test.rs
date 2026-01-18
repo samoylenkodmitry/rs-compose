@@ -8,8 +8,8 @@
 //! cargo run --package desktop-app --example robot_offset_test --features robot-app
 //! ```
 
-use compose_app::{AppLauncher, SemanticElement};
-use compose_testing::{find_by_text_recursive, find_text_exact};
+use cranpose_app::{AppLauncher, SemanticElement};
+use cranpose_testing::{find_by_text_recursive, find_text_exact};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -67,7 +67,7 @@ fn main() {
             let semantics = robot.get_semantics().expect("Failed to get semantics");
             if find_exact_text(&semantics, "=== Positioned Boxes ===").is_none() {
                 println!("   ✗ Positioned Boxes header not found (still showing old content?)");
-                compose_app::Robot::print_semantics(&semantics, 0);
+                cranpose_app::Robot::print_semantics(&semantics, 0);
                 robot.exit().ok();
                 std::process::exit(1);
             }
@@ -161,7 +161,7 @@ fn main() {
             let semantics = robot.get_semantics().expect("Failed to get semantics");
             if find_exact_text(&semantics, "=== Dynamic Modifiers ===").is_none() {
                 println!("   ✗ Dynamic Modifiers header not found (selection stuck?)");
-                compose_app::Robot::print_semantics(&semantics, 0);
+                cranpose_app::Robot::print_semantics(&semantics, 0);
                 robot.exit().ok();
                 std::process::exit(1);
             }

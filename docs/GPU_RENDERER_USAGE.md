@@ -2,7 +2,7 @@
 
 ## Overview
 
-The rs-compose framework now supports **GPU-accelerated rendering** using WGPU, providing significant performance improvements over the CPU-based pixels renderer.
+The cranpose framework now supports **GPU-accelerated rendering** using WGPU, providing significant performance improvements over the CPU-based pixels renderer.
 
 ## Building with GPU Renderer
 
@@ -200,7 +200,7 @@ If GPU renderer is slower than expected:
 
 - [WGPU Documentation](https://wgpu.rs/)
 - [Glyphon Text Rendering](https://github.com/grovesNL/glyphon)
-- [rs-compose GPU Renderer README](crates/compose-render/wgpu/README.md)
+- [cranpose GPU Renderer README](crates/compose-render/wgpu/README.md)
 
 ---
 

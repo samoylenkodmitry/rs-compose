@@ -2,7 +2,7 @@
 
 ## Rendering Backend
 
-The RS-Compose web demo uses **WebGL2** as the rendering backend via wgpu's GL backend. This provides excellent compatibility with all modern browsers while maintaining the same rendering code used on desktop platforms.
+The Cranpose web demo uses **WebGL2** as the rendering backend via wgpu's GL backend. This provides excellent compatibility with all modern browsers while maintaining the same rendering code used on desktop platforms.
 
 ## Why WebGL Instead of WebGPU?
 

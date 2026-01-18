@@ -8,13 +8,13 @@
 //! cargo run --package desktop-app --example robot_lazy_lifecycle --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_core::{DisposableEffect, DisposableEffectResult, MutableState};
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope, LazyListState};
-use compose_macros::composable;
-use compose_testing::find_text_in_semantics;
-use compose_ui::widgets::*;
-use compose_ui::{Color, ColumnSpec, LinearArrangement, Modifier, RowSpec, VerticalAlignment};
+use cranpose_app::AppLauncher;
+use cranpose_core::{DisposableEffect, DisposableEffectResult, MutableState};
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope, LazyListState};
+use cranpose_macros::composable;
+use cranpose_testing::find_text_in_semantics;
+use cranpose_ui::widgets::*;
+use cranpose_ui::{Color, ColumnSpec, LinearArrangement, Modifier, RowSpec, VerticalAlignment};
 use std::time::Duration;
 
 /// Lifecycle stats stored in compose state
@@ -68,7 +68,7 @@ fn lifecycle_lazy_list(state: LazyListState, stats: MutableState<LifecycleStats>
 
 #[composable]
 fn lifecycle_test_app() {
-    let stats: MutableState<LifecycleStats> = compose_core::useState(LifecycleStats::default);
+    let stats: MutableState<LifecycleStats> = cranpose_core::useState(LifecycleStats::default);
     let state = remember_lazy_list_state();
 
     Column(
@@ -104,10 +104,10 @@ fn lifecycle_test_app() {
 fn lifecycle_item(index: usize, stats: MutableState<LifecycleStats>) {
     println!("  [COMPOSE] Item {} composition", index);
     // Track FIRST composition - remember only runs initializer once per slot
-    let item_compose_count: MutableState<usize> = compose_core::remember(|| {
+    let item_cranpose_count: MutableState<usize> = cranpose_core::remember(|| {
         stats.update(|s| s.total_composes += 1);
         println!("  [COMPOSE] Item {} first composition", index);
-        compose_core::mutableStateOf(1usize)
+        cranpose_core::mutableStateOf(1usize)
     })
     .with(|s| *s);
 
@@ -139,7 +139,7 @@ fn lifecycle_item(index: usize, stats: MutableState<LifecycleStats>) {
         move || {
             Text(format!("Item #{}", index), Modifier::empty().padding(4.0));
             Text(
-                format!("C:{}", item_compose_count.get()),
+                format!("C:{}", item_cranpose_count.get()),
                 Modifier::empty()
                     .padding(4.0)
                     .background(Color(0.0, 0.3, 0.0, 0.5))
@@ -175,7 +175,7 @@ fn main() {
             let read_stats = || -> Option<(usize, usize, usize)> {
                 // Find any text starting with "Stats: C=" and parse the values
                 if let Some((_, _, _, _, text)) =
-                    compose_testing::find_text_by_prefix_in_semantics(&robot, "Stats: C=")
+                    cranpose_testing::find_text_by_prefix_in_semantics(&robot, "Stats: C=")
                 {
                     // Parse "Stats: C=X E=Y D=Z"
                     let parts: Vec<&str> = text.split_whitespace().collect();

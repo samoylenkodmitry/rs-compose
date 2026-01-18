@@ -480,215 +480,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "compose-animation"
-version = "0.1.0"
-dependencies = [
- "compose-core",
-]
-
-[[package]]
-name = "compose-app"
-version = "0.1.0"
-dependencies = [
- "android-activity",
- "android_logger",
- "compose-app-shell",
- "compose-platform-android",
- "compose-platform-desktop-winit",
- "compose-platform-web",
- "compose-render-pixels",
- "compose-render-wgpu",
- "compose-ui",
- "console_error_panic_hook",
- "log",
- "pixels",
- "pollster 0.4.0",
- "raw-window-handle",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu 25.0.2",
- "winit",
-]
-
-[[package]]
-name = "compose-app-shell"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "compose-core",
- "compose-foundation",
- "compose-macros",
- "compose-render-common",
- "compose-runtime-std",
- "compose-ui",
- "compose-ui-graphics",
- "log",
- "web-time",
-]
-
-[[package]]
-name = "compose-assets"
-version = "0.1.0"
-
-[[package]]
-name = "compose-core"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "compose-macros",
- "compose-testing",
- "compose-ui",
- "futures-task",
- "log",
- "rustc-hash 2.1.1",
- "smallvec",
-]
-
-[[package]]
-name = "compose-foundation"
-version = "0.1.0"
-dependencies = [
- "compose-core",
- "compose-macros",
- "compose-ui-graphics",
- "compose-ui-layout",
- "log",
- "smallvec",
- "web-time",
-]
-
-[[package]]
-name = "compose-macros"
-version = "0.1.0"
-dependencies = [
- "compose-core",
- "proc-macro2",
- "quote",
- "syn 2.0.111",
-]
-
-[[package]]
-name = "compose-platform-android"
-version = "0.1.0"
-dependencies = [
- "compose-ui-graphics",
-]
-
-[[package]]
-name = "compose-platform-desktop-winit"
-version = "0.1.0"
-dependencies = [
- "compose-foundation",
- "compose-ui-graphics",
- "winit",
-]
-
-[[package]]
-name = "compose-platform-web"
-version = "0.1.0"
-dependencies = [
- "compose-foundation",
- "compose-ui-graphics",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "compose-render-common"
-version = "0.1.0"
-dependencies = [
- "compose-core",
- "compose-foundation",
- "compose-ui",
- "compose-ui-graphics",
-]
-
-[[package]]
-name = "compose-render-pixels"
-version = "0.1.0"
-dependencies = [
- "compose-core",
- "compose-foundation",
- "compose-render-common",
- "compose-ui",
- "compose-ui-graphics",
- "log",
- "lru",
- "once_cell",
- "rusttype",
-]
-
-[[package]]
-name = "compose-render-wgpu"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "compose-core",
- "compose-foundation",
- "compose-render-common",
- "compose-ui",
- "compose-ui-graphics",
- "glyphon",
- "log",
- "lru",
- "wgpu 25.0.2",
-]
-
-[[package]]
-name = "compose-runtime-std"
-version = "0.1.0"
-dependencies = [
- "compose-core",
-]
-
-[[package]]
-name = "compose-testing"
-version = "0.1.0"
-dependencies = [
- "compose-app",
- "compose-app-shell",
- "compose-core",
- "compose-foundation",
- "compose-macros",
- "compose-render-common",
- "compose-ui",
- "compose-ui-graphics",
-]
-
-[[package]]
-name = "compose-ui"
-version = "0.1.0"
-dependencies = [
- "compose-animation",
- "compose-core",
- "compose-foundation",
- "compose-macros",
- "compose-runtime-std",
- "compose-testing",
- "compose-ui-graphics",
- "compose-ui-layout",
- "criterion",
- "futures-task",
- "indexmap",
- "log",
- "smallvec",
- "web-time",
-]
-
-[[package]]
-name = "compose-ui-graphics"
-version = "0.1.0"
-
-[[package]]
-name = "compose-ui-layout"
-version = "0.1.0"
-dependencies = [
- "compose-core",
- "compose-ui-graphics",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -755,6 +546,215 @@ dependencies = [
  "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "cranpose-animation"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+]
+
+[[package]]
+name = "cranpose-app"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "android_logger",
+ "console_error_panic_hook",
+ "cranpose-app-shell",
+ "cranpose-platform-android",
+ "cranpose-platform-desktop-winit",
+ "cranpose-platform-web",
+ "cranpose-render-pixels",
+ "cranpose-render-wgpu",
+ "cranpose-ui",
+ "log",
+ "pixels",
+ "pollster 0.4.0",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu 25.0.2",
+ "winit",
+]
+
+[[package]]
+name = "cranpose-app-shell"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-macros",
+ "cranpose-render-common",
+ "cranpose-runtime-std",
+ "cranpose-ui",
+ "cranpose-ui-graphics",
+ "log",
+ "web-time",
+]
+
+[[package]]
+name = "cranpose-assets"
+version = "0.1.0"
+
+[[package]]
+name = "cranpose-core"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "cranpose-macros",
+ "cranpose-testing",
+ "cranpose-ui",
+ "futures-task",
+ "log",
+ "rustc-hash 2.1.1",
+ "smallvec",
+]
+
+[[package]]
+name = "cranpose-foundation"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+ "cranpose-macros",
+ "cranpose-ui-graphics",
+ "cranpose-ui-layout",
+ "log",
+ "smallvec",
+ "web-time",
+]
+
+[[package]]
+name = "cranpose-macros"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+]
+
+[[package]]
+name = "cranpose-platform-android"
+version = "0.1.0"
+dependencies = [
+ "cranpose-ui-graphics",
+]
+
+[[package]]
+name = "cranpose-platform-desktop-winit"
+version = "0.1.0"
+dependencies = [
+ "cranpose-foundation",
+ "cranpose-ui-graphics",
+ "winit",
+]
+
+[[package]]
+name = "cranpose-platform-web"
+version = "0.1.0"
+dependencies = [
+ "cranpose-foundation",
+ "cranpose-ui-graphics",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "cranpose-render-common"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-ui",
+ "cranpose-ui-graphics",
+]
+
+[[package]]
+name = "cranpose-render-pixels"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-render-common",
+ "cranpose-ui",
+ "cranpose-ui-graphics",
+ "log",
+ "lru",
+ "once_cell",
+ "rusttype",
+]
+
+[[package]]
+name = "cranpose-render-wgpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-render-common",
+ "cranpose-ui",
+ "cranpose-ui-graphics",
+ "glyphon",
+ "log",
+ "lru",
+ "wgpu 25.0.2",
+]
+
+[[package]]
+name = "cranpose-runtime-std"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+]
+
+[[package]]
+name = "cranpose-testing"
+version = "0.1.0"
+dependencies = [
+ "cranpose-app",
+ "cranpose-app-shell",
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-macros",
+ "cranpose-render-common",
+ "cranpose-ui",
+ "cranpose-ui-graphics",
+]
+
+[[package]]
+name = "cranpose-ui"
+version = "0.1.0"
+dependencies = [
+ "cranpose-animation",
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-macros",
+ "cranpose-runtime-std",
+ "cranpose-testing",
+ "cranpose-ui-graphics",
+ "cranpose-ui-layout",
+ "criterion",
+ "futures-task",
+ "indexmap",
+ "log",
+ "smallvec",
+ "web-time",
+]
+
+[[package]]
+name = "cranpose-ui-graphics"
+version = "0.1.0"
+
+[[package]]
+name = "cranpose-ui-layout"
+version = "0.1.0"
+dependencies = [
+ "cranpose-core",
+ "cranpose-ui-graphics",
 ]
 
 [[package]]
@@ -847,14 +847,14 @@ version = "0.1.0"
 dependencies = [
  "android-activity",
  "anyhow",
- "compose-animation",
- "compose-app",
- "compose-core",
- "compose-foundation",
- "compose-macros",
- "compose-testing",
- "compose-ui",
  "console_error_panic_hook",
+ "cranpose-animation",
+ "cranpose-app",
+ "cranpose-core",
+ "cranpose-foundation",
+ "cranpose-macros",
+ "cranpose-testing",
+ "cranpose-ui",
  "env_logger",
  "getrandom 0.3.4",
  "instant",

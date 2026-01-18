@@ -1,6 +1,6 @@
-# RS-Compose Demo
+# Cranpose Demo
 
-This is a comprehensive demo application showcasing RS-Compose running on multiple platforms: **Desktop**, **Android**, and **Web**.
+This is a comprehensive demo application showcasing Cranpose running on multiple platforms: **Desktop**, **Android**, and **Web**.
 
 ## Features Demonstrated
 
@@ -65,7 +65,7 @@ The demo runs in any modern browser using WebGL2 (Chrome, Firefox, Edge, Safari)
 
 ## Architecture
 
-This application demonstrates the cross-platform nature of RS-Compose:
+This application demonstrates the cross-platform nature of Cranpose:
 
 - **Single codebase** for all platforms
 - **Platform-specific entry points** (main.rs for desktop, lib.rs exports for Android/Web)

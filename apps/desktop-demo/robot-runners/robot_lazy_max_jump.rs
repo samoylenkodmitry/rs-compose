@@ -7,13 +7,13 @@
 //!
 //! Height pattern: index % 5 -> 0=48, 1=56, 2=64, 3=72, 4=80
 
-use compose_app::AppLauncher;
-use compose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
-use compose_testing::{find_button_in_semantics, find_text_in_semantics};
-use compose_ui::widgets::{
+use cranpose_app::AppLauncher;
+use cranpose_foundation::lazy::{remember_lazy_list_state, LazyListScope};
+use cranpose_testing::{find_button_in_semantics, find_text_in_semantics};
+use cranpose_ui::widgets::{
     Box, BoxSpec, Button, Column, ColumnSpec, LazyColumn, LazyColumnSpec, Row, RowSpec, Text,
 };
-use compose_ui::{Alignment, Color, Modifier, Size};
+use cranpose_ui::{Alignment, Color, Modifier, Size};
 use std::time::Duration;
 
 fn main() {
@@ -130,7 +130,7 @@ fn main() {
         })
         .run(|| {
             let state = remember_lazy_list_state();
-            let item_count = compose_core::useState(|| 100usize);
+            let item_count = cranpose_core::useState(|| 100usize);
 
             Column(
                 Modifier::default().fill_max_size(),

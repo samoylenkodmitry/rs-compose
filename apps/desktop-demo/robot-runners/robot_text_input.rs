@@ -12,8 +12,8 @@
 //! cargo run --package desktop-app --example robot_text_input --features robot-app
 //! ```
 
-use compose_app::AppLauncher;
-use compose_testing::{find_button, find_in_semantics, find_text};
+use cranpose_app::AppLauncher;
+use cranpose_testing::{find_button, find_in_semantics, find_text};
 use desktop_app::app;
 use std::time::Duration;
 
@@ -468,7 +468,7 @@ fn main() {
                 println!("  Focused text field for blink test");
 
                 // Check if has_focused_field returns true
-                let has_focus = compose_ui::has_focused_field();
+                let has_focus = cranpose_ui::has_focused_field();
                 println!("  has_focused_field() = {}", has_focus);
 
                 if has_focus {
@@ -487,7 +487,7 @@ fn main() {
                     }
 
                     // Check if focus is still active
-                    let still_focused = compose_ui::has_focused_field();
+                    let still_focused = cranpose_ui::has_focused_field();
                     println!("  After wait: has_focused_field() = {}", still_focused);
                     println!("  Polled {} times over 1.5s", render_count);
 
@@ -557,7 +557,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(100));
 
                 // Check selection state before drag
-                let sel_before = compose_ui::has_focused_field();
+                let sel_before = cranpose_ui::has_focused_field();
                 println!("  has_focused_field() after mouse down: {}", sel_before);
 
                 // Drag across the text field (multiple move events)
@@ -573,7 +573,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(100));
 
                 // Check text field state during drag (before release)
-                println!("  has_focused_field() during drag: {}", compose_ui::has_focused_field());
+                println!("  has_focused_field() during drag: {}", cranpose_ui::has_focused_field());
 
                 // Mouse up at end position
                 println!("  Mouse UP at end position");
@@ -581,7 +581,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(200));
 
                 // Check final state
-                let focused_after = compose_ui::has_focused_field();
+                let focused_after = cranpose_ui::has_focused_field();
                 println!("  has_focused_field() after drag: {}", focused_after);
 
                 // Try to find any selection indicator

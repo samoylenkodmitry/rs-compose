@@ -5,8 +5,8 @@
 //! cargo run --package desktop-app --example robot_recursive_layout --features robot-app
 //! ```
 
-use compose_app::{AppLauncher, SemanticElement};
-use compose_testing::{
+use cranpose_app::{AppLauncher, SemanticElement};
+use cranpose_testing::{
     find_button_in_semantics, find_text_by_prefix_in_semantics, find_text_in_semantics,
 };
 use desktop_app::app;

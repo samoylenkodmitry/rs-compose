@@ -1,11 +1,11 @@
-use compose_animation::animateFloatAsState;
-use compose_core::{
+use cranpose_animation::animateFloatAsState;
+use cranpose_core::{
     self, compositionLocalOf, CompositionLocal, CompositionLocalProvider, DisposableEffect,
     DisposableEffectResult, LaunchedEffect, LaunchedEffectAsync, MutableState,
 };
-use compose_foundation::text::TextFieldState;
-use compose_foundation::PointerEventKind;
-use compose_ui::{
+use cranpose_foundation::text::TextFieldState;
+use cranpose_foundation::PointerEventKind;
+use cranpose_ui::{
     composable, BasicTextField, BoxSpec, Brush, Button, Color, Column, ColumnSpec, CornerRadii,
     GraphicsLayer, IntrinsicSize, LinearArrangement, Modifier, Point, PointerInputScope,
     RoundedCornerShape, Row, RowSpec, Size, Spacer, Text, VerticalAlignment,
@@ -123,7 +123,7 @@ fn random() -> i32 {
 
 #[composable]
 pub fn combined_app() {
-    let active_tab = compose_core::useState(|| {
+    let active_tab = cranpose_core::useState(|| {
         // Default to Counter for now
         // DemoTab::Counter
         // DemoTab::AsyncRuntime
@@ -135,9 +135,9 @@ pub fn combined_app() {
 
     // Create scroll state for tabs row
     let tabs_scroll_state =
-        compose_core::remember(|| compose_ui::ScrollState::new(0.0)).with(|state| state.clone());
+        cranpose_core::remember(|| cranpose_ui::ScrollState::new(0.0)).with(|state| state.clone());
     let column_scroll_state =
-        compose_core::remember(|| compose_ui::ScrollState::new(0.0)).with(|state| state.clone());
+        cranpose_core::remember(|| cranpose_ui::ScrollState::new(0.0)).with(|state| state.clone());
 
     Column(
         Modifier::empty()
@@ -214,7 +214,7 @@ pub fn combined_app() {
             });
 
             let active = tab_state_for_content.get();
-            compose_core::with_key(&active, || match active {
+            cranpose_core::with_key(&active, || match active {
                 DemoTab::Counter => counter_app(),
                 DemoTab::CompositionLocal => composition_local_example(),
                 DemoTab::Async => async_runtime_example(),
@@ -232,11 +232,11 @@ pub fn combined_app() {
 /// Text Input Demo Tab - showcases BasicTextField functionality
 #[composable]
 fn text_input_example() {
-    // Create text field states using compose_core::remember
+    // Create text field states using cranpose_core::remember
     let text_state1 =
-        compose_core::remember(|| TextFieldState::new("Type here...")).with(|state| state.clone());
+        cranpose_core::remember(|| TextFieldState::new("Type here...")).with(|state| state.clone());
     let text_state2 =
-        compose_core::remember(|| TextFieldState::new("")).with(|state| state.clone());
+        cranpose_core::remember(|| TextFieldState::new("")).with(|state| state.clone());
 
     Column(
         Modifier::empty()
@@ -424,7 +424,7 @@ fn text_input_example() {
 
 #[composable]
 fn recursive_layout_example() {
-    let depth_state = compose_core::useState(|| 3usize);
+    let depth_state = cranpose_core::useState(|| 3usize);
 
     Column(
         Modifier::empty()
@@ -598,7 +598,7 @@ fn recursive_layout_node(depth: usize, horizontal: bool, index: usize) {
 
 #[composable]
 pub fn composition_local_example() {
-    let counter = compose_core::useState(|| 0);
+    let counter = cranpose_core::useState(|| 0);
 
     TEST_COMPOSITION_LOCAL_COUNTER.with(|cell| {
         *cell.borrow_mut() = Some(counter);
@@ -720,10 +720,10 @@ fn composition_local_content_inner() {
 
 #[composable]
 fn async_runtime_example() {
-    let animation = compose_core::useState(AnimationState::default);
-    let stats = compose_core::useState(FrameStats::default);
-    let is_running = compose_core::useState(|| true);
-    let reset_signal = compose_core::useState(|| 0u64);
+    let animation = cranpose_core::useState(AnimationState::default);
+    let stats = cranpose_core::useState(FrameStats::default);
+    let is_running = cranpose_core::useState(|| true);
+    let reset_signal = cranpose_core::useState(|| 0u64);
 
     {
         let animation_state = animation;
@@ -861,7 +861,7 @@ fn async_runtime_example() {
                                         // WORKAROUND: Use with_key to prevent slot truncation from destroying
                                         // sibling component scopes when conditional rendering changes structure.
                                         // TODO: Remove once proper "gaps" support is implemented in compose-core
-                                        compose_core::with_key(&(progress_width > 0.0), || {
+                                        cranpose_core::with_key(&(progress_width > 0.0), || {
                                             if progress_width > 0.0 {
                                                 Row(
                                                     Modifier::empty()
@@ -996,12 +996,12 @@ fn async_runtime_example() {
 
 #[composable]
 fn counter_app() {
-    let counter = compose_core::useState(|| 0);
-    let pointer_position = compose_core::useState(|| Point { x: 0.0, y: 0.0 });
-    let pointer_down = compose_core::useState(|| false);
+    let counter = cranpose_core::useState(|| 0);
+    let pointer_position = cranpose_core::useState(|| Point { x: 0.0, y: 0.0 });
+    let pointer_down = cranpose_core::useState(|| false);
     let async_message =
-        compose_core::useState(|| "Tap \"Fetch async value\" to run background work".to_string());
-    let fetch_request = compose_core::useState(|| 0u64);
+        cranpose_core::useState(|| "Tap \"Fetch async value\" to run background work".to_string());
+    let fetch_request = cranpose_core::useState(|| 0u64);
     let pointer = pointer_position.get();
     let pointer_wave = (pointer.x / 360.0).clamp(0.0, 1.0);
     let target_wave = if pointer_down.get() {
@@ -1057,7 +1057,7 @@ fn counter_app() {
     let is_even = counter.get() % 2 == 0;
 
     Column(Modifier::empty(), ColumnSpec::default(), move || {
-        compose_core::with_key(&is_even, move || {
+        cranpose_core::with_key(&is_even, move || {
             if is_even {
                 Text(
                     "if counter % 2 == 0",
@@ -1096,7 +1096,7 @@ fn counter_app() {
         });
     });
 
-    compose_ui::Box(Modifier::empty(), BoxSpec::default(), move || {
+    cranpose_ui::Box(Modifier::empty(), BoxSpec::default(), move || {
         Column(
             Modifier::empty()
                 .padding(32.0)
@@ -1126,7 +1126,7 @@ fn counter_app() {
                     let pointer_down = pointer_down_main;
                     let wave = wave_main;
                     Text(
-                        "Compose-RS Playground",
+                        "Cranpose Playground",
                         Modifier::empty()
                             .padding(12.0)
                             .then(
@@ -1462,7 +1462,7 @@ fn counter_app() {
 
 #[composable]
 fn composition_local_observer() {
-    let state = compose_core::useState(|| 0);
+    let state = cranpose_core::useState(|| 0);
     DisposableEffect!((), move |_| {
         state.set(state.get() + 1);
         DisposableEffectResult::default()
@@ -1494,7 +1494,7 @@ impl ShowcaseType {
 
 #[composable]
 fn modifier_showcase_tab() {
-    let selected_showcase = compose_core::useState(|| ShowcaseType::SimpleCard);
+    let selected_showcase = cranpose_core::useState(|| ShowcaseType::SimpleCard);
 
     Row(
         Modifier::empty().fill_max_width().padding(8.0),
@@ -1584,7 +1584,7 @@ fn modifier_showcase_tab() {
                     let selected_showcase_inner = selected_showcase;
                     move || {
                         let showcase_to_render = selected_showcase_inner.get();
-                        compose_core::with_key(&showcase_to_render, || match showcase_to_render {
+                        cranpose_core::with_key(&showcase_to_render, || match showcase_to_render {
                             ShowcaseType::SimpleCard => simple_card_showcase(),
                             ShowcaseType::PositionedBoxes => positioned_boxes_showcase(),
                             ShowcaseType::ItemList => item_list_showcase(),
@@ -1616,14 +1616,14 @@ pub fn simple_card_showcase() {
         });
 
         // Card with border effect (outer box creates border)
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .padding(3.0)
                 .background(Color(0.4, 0.6, 0.9, 0.8))
                 .rounded_corners(18.0),
             BoxSpec::default(),
             || {
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .padding(16.0)
                         .size(Size {
@@ -1711,7 +1711,7 @@ pub fn positioned_boxes_showcase() {
 
         // Wrap positioned boxes in a container with explicit size
         // This allows overlapping boxes with offset positioning
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .size_points(360.0, 280.0)
                 .background(Color(0.05, 0.05, 0.15, 0.5))
@@ -1719,7 +1719,7 @@ pub fn positioned_boxes_showcase() {
             BoxSpec::default(),
             || {
                 // Box A - Purple, top-left
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .size_points(100.0, 100.0)
                         .offset(20.0, 20.0)
@@ -1733,7 +1733,7 @@ pub fn positioned_boxes_showcase() {
                 );
 
                 // Box B - Green, bottom-right
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .size_points(100.0, 100.0)
                         .offset(220.0, 160.0)
@@ -1747,7 +1747,7 @@ pub fn positioned_boxes_showcase() {
                 );
 
                 // Box C - Orange, center-top (smaller)
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .size_points(80.0, 60.0)
                         .offset(140.0, 30.0)
@@ -1761,7 +1761,7 @@ pub fn positioned_boxes_showcase() {
                 );
 
                 // Box D - Blue, center-left (larger)
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .size_points(120.0, 80.0)
                         .offset(40.0, 140.0)
@@ -1808,7 +1808,7 @@ pub fn item_list_showcase() {
                     };
 
                     // Border wrapper
-                    compose_ui::Box(
+                    cranpose_ui::Box(
                         Modifier::empty()
                             .padding(2.0)
                             .background(border_color)
@@ -1847,7 +1847,7 @@ pub fn item_list_showcase() {
                                         Color(0.8, 0.3, 0.2, 0.9) // Red
                                     };
 
-                                    compose_ui::Box(
+                                    cranpose_ui::Box(
                                         Modifier::empty()
                                             .size_points(12.0, 12.0)
                                             .background(status_color)
@@ -1893,7 +1893,7 @@ pub fn complex_chain_showcase() {
 
         // Nested backgrounds showcase - creates visible colored borders
         // Red outer layer
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .padding(8.0)
                 .background(Color(0.8, 0.2, 0.2, 0.9))
@@ -1901,7 +1901,7 @@ pub fn complex_chain_showcase() {
             BoxSpec::default(),
             || {
                 // Green middle layer
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .padding(6.0)
                         .background(Color(0.2, 0.7, 0.3, 0.9))
@@ -1909,7 +1909,7 @@ pub fn complex_chain_showcase() {
                     BoxSpec::default(),
                     || {
                         // Blue inner layer
-                        compose_ui::Box(
+                        cranpose_ui::Box(
                             Modifier::empty()
                                 .padding(12.0)
                                 .background(Color(0.3, 0.5, 0.9, 0.9))
@@ -1940,7 +1940,7 @@ pub fn complex_chain_showcase() {
         });
 
         // Complex modifier chain with offset and sizing - Orange outer, Purple inner
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .offset(20.0, 0.0)
                 .size_points(180.0, 80.0)
@@ -1949,7 +1949,7 @@ pub fn complex_chain_showcase() {
                 .rounded_corners(10.0),
             BoxSpec::default(),
             || {
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .padding(8.0)
                         .background(Color(0.5, 0.3, 0.7, 0.9))
@@ -1966,7 +1966,7 @@ pub fn complex_chain_showcase() {
 
 #[composable]
 pub fn dynamic_modifiers_showcase() {
-    let frame = compose_core::useState(|| 0i32);
+    let frame = cranpose_core::useState(|| 0i32);
 
     Column(Modifier::empty(), ColumnSpec::default(), move || {
         Text(
@@ -1987,14 +1987,14 @@ pub fn dynamic_modifiers_showcase() {
         let y = 50.0;
 
         // Wrap moving box in a container with explicit size to prevent overflow
-        compose_ui::Box(
+        cranpose_ui::Box(
             Modifier::empty()
                 .size_points(250.0, 150.0)
                 .background(Color(0.05, 0.05, 0.15, 0.5))
                 .rounded_corners(8.0),
             BoxSpec::default(),
             move || {
-                compose_ui::Box(
+                cranpose_ui::Box(
                     Modifier::empty()
                         .size(Size {
                             width: 50.0,

@@ -1,5 +1,5 @@
 use super::*;
-use compose_core::{location_key, Composition, MemoryApplier, MutableState, NodeError};
+use cranpose_core::{location_key, Composition, MemoryApplier, MutableState, NodeError};
 
 mod conditional_text_test;
 
