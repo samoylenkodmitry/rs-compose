@@ -3,7 +3,7 @@ mod support;
 #[path = "../src/test_support.rs"]
 mod shared_test_support;
 
-use cranpose_liquid::{Glass, GlassDynamics, LiquidColors, LiquidShape};
+use cranpose_liquid::{Glass, GlassDynamics, GlassMorph, LiquidColors, LiquidShape};
 use cranpose_render_common::graph::{ProjectiveTransform, RenderGraph, RenderNode};
 use cranpose_render_wgpu::CapturedFrame;
 use cranpose_ui_graphics::{
@@ -32,27 +32,32 @@ fn resourced_shader(shader: &RuntimeShader, source: &str) -> RuntimeShader {
         copy.set_float(index, *value);
     }
     for (name, value) in shader.overrides() {
-        copy.set_override(name, *value);
+        if source.contains(&format!("override {name}:")) {
+            copy.set_override(name, *value);
+        }
     }
     copy.set_input_padding(shader.input_padding());
     copy.set_output_padding(shader.output_padding());
     copy.set_output_support(shader.output_support());
     copy.set_sample_domain(shader.sample_domain());
-    copy.set_substrates(shader.substrates().to_vec());
-    copy.set_draw_split(shader.draw_split());
+    copy.set_substrates(shader.substrates());
+    copy.set_draw_split(
+        (source != REFERENCE_WGSL)
+            .then(|| shader.draw_split())
+            .flatten(),
+    );
     copy.set_batched_source(shader.batched_source());
     copy
 }
 
 fn resourced(effect: &RenderEffect, source: &str) -> RenderEffect {
     match effect {
-        RenderEffect::Shader { shader } => RenderEffect::Shader {
-            shader: resourced_shader(shader, source),
-        },
-        RenderEffect::Chain { first, second } => RenderEffect::Chain {
-            first: Box::new(resourced(first, source)),
-            second: Box::new(resourced(second, source)),
-        },
+        RenderEffect::Shader { shader } => {
+            RenderEffect::runtime_shader(resourced_shader(shader, source))
+        }
+        RenderEffect::Chain { first, second } => {
+            resourced(first, source).then(resourced(second, source))
+        }
         other => other.clone(),
     }
 }
@@ -240,7 +245,7 @@ fn without_adaptive_block(source: &str) -> String {
 fn with_substrates(effect: RenderEffect, substrates: Vec<SubstrateSpec>) -> RenderEffect {
     match effect {
         RenderEffect::Shader { mut shader } => {
-            shader.set_substrates(substrates);
+            std::sync::Arc::make_mut(&mut shader).set_substrates(&substrates);
             RenderEffect::Shader { shader }
         }
         other => other,
@@ -250,9 +255,9 @@ fn with_substrates(effect: RenderEffect, substrates: Vec<SubstrateSpec>) -> Rend
 fn frosted_at(effect: RenderEffect, frost: f32, activity: f32) -> RenderEffect {
     match effect {
         RenderEffect::Shader { mut shader } => {
-            shader.set_float(GLASS_ADAPTIVE_FROST_UNIFORM, frost);
-            shader.set_float(GLASS_ACTIVITY_UNIFORM, activity);
-            specialize_liquid_glass(&mut shader);
+            std::sync::Arc::make_mut(&mut shader).set_float(GLASS_ADAPTIVE_FROST_UNIFORM, frost);
+            std::sync::Arc::make_mut(&mut shader).set_float(GLASS_ACTIVITY_UNIFORM, activity);
+            specialize_liquid_glass(std::sync::Arc::make_mut(&mut shader));
             RenderEffect::Shader { shader }
         }
         other => other,
@@ -272,10 +277,21 @@ fn frosted_card(
     source: &str,
     substrates: Option<Vec<SubstrateSpec>>,
 ) -> RenderGraph {
+    frosted_card_with_depth(frost, activity, source, substrates, 0.58)
+}
+
+fn frosted_card_with_depth(
+    frost: f32,
+    activity: f32,
+    source: &str,
+    substrates: Option<Vec<SubstrateSpec>>,
+    depth: f32,
+) -> RenderGraph {
     let colors = LiquidColors::dark(Color::from_rgb_u8(120, 140, 255));
     let mut children = backdrop();
     let node = rect(24.0, 20.0, 300.0, 200.0);
     let effect = card_glass(LiquidShape::RoundedRect(18.0))
+        .refraction_depth(depth)
         .adaptive_frost(Color::from_rgb_u8(40, 34, 70), 0.42)
         .backdrop_effect(
             &colors,
@@ -371,6 +387,102 @@ fn cards_at_a_fractional_scale_match_the_reference_shader() {
         |s| cards(s, 0.9, true),
         0.75,
     );
+}
+
+#[test]
+fn glass_interior_coverage_matches_the_reference_through_material_activity() {
+    let mut renderer = support::headless_renderer().expect("headless WGPU init failed");
+    for activity in [0.0, 0.1, 0.5, 0.999_999, 1.0] {
+        for depth in [0.0, 0.04, 0.58, 2.0] {
+            assert_matches_reference(
+                &mut renderer,
+                &format!("activity {activity} with depth {depth}"),
+                |source| frosted_card_with_depth(0.42, activity, source, None, depth),
+                1.5,
+            );
+        }
+    }
+}
+
+#[test]
+fn surface_and_lens_rims_match_reference_at_physical_refraction_depths() {
+    let mut renderer = support::headless_renderer().expect("headless WGPU init failed");
+    let colors = LiquidColors::dark(Color::from_rgb_u8(120, 140, 255));
+    for glass in [Glass::regular(), Glass::lens()] {
+        for depth in [0.0, 40.0, 240.0] {
+            for activity in [0.2, 1.0] {
+                assert_matches_reference(
+                    &mut renderer,
+                    &format!(
+                        "{:?} rim at depth {depth}, activity {activity}",
+                        glass.variant
+                    ),
+                    |source| {
+                        let mut children = backdrop();
+                        let effect = glass
+                            .clone()
+                            .shape(LiquidShape::RoundedRect(18.0))
+                            .refraction_depth_dp(depth)
+                            .blur_radius(0.0)
+                            .shadow(false)
+                            .backdrop_effect(
+                                &colors,
+                                1.5,
+                                GlassDynamics {
+                                    activity: Some(activity),
+                                    ..GlassDynamics::default()
+                                },
+                            );
+                        children.push(glass_layer(
+                            rect(24.0, 20.0, 300.0, 200.0),
+                            effect,
+                            1.0,
+                            Vec::new(),
+                            source,
+                        ));
+                        support::page_graph(FRAME_WIDTH, FRAME_HEIGHT, children)
+                    },
+                    1.5,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn inset_glass_keeps_its_optical_halo_and_contact_shadow() {
+    let mut renderer = support::headless_renderer().expect("headless WGPU init failed");
+    let colors = LiquidColors::dark(Color::from_rgb_u8(120, 140, 255));
+    for shadow in [false, true] {
+        assert_matches_reference(
+            &mut renderer,
+            &format!("inset lens with shadow {shadow}"),
+            |source| {
+                let mut children = backdrop();
+                let node = rect(24.0, 20.0, 300.0, 200.0);
+                let effect = Glass::lens()
+                    .shape(LiquidShape::RoundedRect(30.0))
+                    .blur_radius(0.0)
+                    .shadow(shadow)
+                    .no_clip()
+                    .backdrop_effect(
+                        &colors,
+                        1.5,
+                        GlassDynamics {
+                            morph: Some(GlassMorph {
+                                node_size: (node.width, node.height),
+                                primary: (150.0, 100.0, 220.0, 120.0, 30.0),
+                                ..GlassMorph::default()
+                            }),
+                            ..GlassDynamics::default()
+                        },
+                    );
+                children.push(glass_layer(node, effect, 1.0, Vec::new(), source));
+                support::page_graph(FRAME_WIDTH, FRAME_HEIGHT, children)
+            },
+            1.5,
+        );
+    }
 }
 
 #[test]
@@ -512,4 +624,36 @@ fn a_forced_dispersion_fold_renders_the_dispersive_card_as_its_dispersion_zero_t
         restored.pixels, base.pixels,
         "clearing the switch must return the dispersive pipeline"
     );
+}
+
+#[test]
+fn coincident_dispersion_rays_preserve_the_optical_transition() {
+    let mut renderer = support::headless_renderer().expect("headless renderer");
+    let colors = LiquidColors::dark(Color::from_rgb_u8(120, 140, 255));
+    for dispersion in [0.2, 1.0, 2.0] {
+        for depth in [0.04, 0.58, 1.2] {
+            for scale in [1.0, 1.5] {
+                assert_matches_reference(
+                    &mut renderer,
+                    &format!("dispersion {dispersion}, depth {depth}, scale {scale}"),
+                    |source| {
+                        let mut children = backdrop();
+                        let effect =
+                            card_glass_with_dispersion(LiquidShape::RoundedRect(18.0), dispersion)
+                                .refraction_depth(depth)
+                                .backdrop_effect(&colors, scale, GlassDynamics::default());
+                        children.push(glass_layer(
+                            rect(24.25, 20.5, 300.0, 200.0),
+                            effect,
+                            1.0,
+                            Vec::new(),
+                            source,
+                        ));
+                        support::page_graph(FRAME_WIDTH, FRAME_HEIGHT, children)
+                    },
+                    scale,
+                );
+            }
+        }
+    }
 }

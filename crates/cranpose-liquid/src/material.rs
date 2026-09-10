@@ -3,7 +3,7 @@
 //! [`LiquidModifierExt::glass_effect`] — the analogue of SwiftUI's
 //! `.glassEffect(_:in:)`.
 
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, rc::Rc, sync::OnceLock};
 
 use cranpose_ui::{Modifier, current_density};
 use cranpose_ui_graphics::{
@@ -15,6 +15,7 @@ use cranpose_ui_graphics::{
     GLASS_REFRACTION_CURVE_UNIFORM, GLASS_RESTING_TINT_UNIFORM,
     GLASS_TRANSMISSION_REFRACTION_UNIFORM, GraphicsLayer, LIQUID_GLASS_WGSL, LayerShape, Rect,
     RenderEffect, RoundedCornerShape, RuntimeShader, TileMode, liquid_glass_runtime_effect,
+    specialize_liquid_glass,
 };
 
 use crate::theme::LiquidColors;
@@ -717,7 +718,16 @@ impl ResolvedGlass {
             .filter(|value| value.is_finite())
             .unwrap_or(1.0)
             .clamp(0.0, 1.0);
-        let mut shader = RuntimeShader::new(LIQUID_GLASS_WGSL);
+        static SHADER: OnceLock<RuntimeShader> = OnceLock::new();
+        let mut shader = SHADER
+            .get_or_init(|| {
+                let mut shader = RuntimeShader::new(LIQUID_GLASS_WGSL);
+                shader.set_float(GLASS_ACTIVITY_UNIFORM, 1.0);
+                shader.set_float2(GLASS_OPTICAL_ZOOM_ANCHOR_UNIFORM, 0.0, 0.0);
+                specialize_liquid_glass(&mut shader);
+                shader
+            })
+            .clone();
         if let Some(morph) = dynamics.morph.as_ref() {
             let (node_w, node_h) = morph.node_size;
             let (cx, cy, w, h, radius) = morph.primary;
@@ -1073,8 +1083,10 @@ mod tests {
 
     fn terminal_shader(effect: RenderEffect) -> RuntimeShader {
         match effect {
-            RenderEffect::Shader { shader } => shader,
-            RenderEffect::Chain { second, .. } => terminal_shader(*second),
+            RenderEffect::Shader { shader } => std::sync::Arc::unwrap_or_clone(shader),
+            RenderEffect::Chain { second, .. } => {
+                terminal_shader(std::sync::Arc::unwrap_or_clone(second))
+            }
             effect => panic!("expected runtime shader, got {effect:?}"),
         }
     }
@@ -1203,6 +1215,89 @@ mod tests {
         assert!(raised.g() > resting.g());
         assert!(raised.b() > resting.b());
         assert_eq!(raised.a(), resting.a());
+    }
+
+    #[test]
+    fn template_specialization_follows_each_materials_dispersion_and_activity() {
+        for (dispersion, activity) in [(0.6, 0.0), (0.0, 0.5), (0.3, 1.0), (0.0, 0.0)] {
+            let resolved = Glass::regular()
+                .dispersion(dispersion)
+                .resolve(&light_colors());
+            let shader = terminal_shader(resolved.backdrop_effect(
+                1.0,
+                GlassDynamics {
+                    activity: Some(activity),
+                    ..GlassDynamics::default()
+                },
+            ));
+            assert_eq!(
+                shader.uniforms()[GLASS_DISPERSION_UNIFORM],
+                dispersion * activity
+            );
+            assert_eq!(shader.uniforms()[GLASS_ACTIVITY_UNIFORM], activity);
+            assert_eq!(
+                shader.overrides().contains(&("GLASS_FULL_ACTIVITY", 1.0)),
+                activity == 1.0
+            );
+            assert_eq!(
+                shader
+                    .overrides()
+                    .iter()
+                    .any(|(name, _)| { *name == cranpose_ui_graphics::GLASS_DISPERSION_OFF_FLAG }),
+                dispersion * activity == 0.0
+            );
+        }
+    }
+
+    #[test]
+    fn material_template_preserves_each_instances_optical_zoom_anchor() {
+        let resolved = Glass::lens().resolve(&light_colors());
+        for anchor in [(3.5, -2.25), (0.0, 0.0), (-7.0, 11.0)] {
+            let shader = terminal_shader(resolved.backdrop_effect(
+                1.5,
+                GlassDynamics {
+                    morph: Some(GlassMorph {
+                        node_size: (120.0, 72.0),
+                        primary: (60.0, 36.0, 96.0, 52.0, -1.0),
+                        zoom_anchor: anchor,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ));
+            assert_eq!(
+                &shader.uniforms()
+                    [GLASS_OPTICAL_ZOOM_ANCHOR_UNIFORM..GLASS_OPTICAL_ZOOM_ANCHOR_UNIFORM + 2],
+                &[anchor.0, anchor.1]
+            );
+        }
+    }
+
+    #[test]
+    fn material_instances_share_source_without_sharing_uniforms_or_overrides() {
+        let resolved = Glass::regular().resolve(&light_colors());
+        let mut first = terminal_shader(resolved.backdrop_effect(2.0, GlassDynamics::default()));
+        let untouched = terminal_shader(resolved.backdrop_effect(1.0, GlassDynamics::default()));
+        let unused_slot = RuntimeShader::MAX_USER_UNIFORMS - 1;
+        first.set_float(unused_slot, 17.0);
+        first.set_override("INSTANCE_ONLY", 1.0);
+        let second = terminal_shader(resolved.backdrop_effect(1.0, GlassDynamics::default()));
+        assert_eq!(second.uniforms(), untouched.uniforms());
+        assert_eq!(second.overrides(), untouched.overrides());
+        assert_eq!(
+            second.uniforms().get(unused_slot).copied().unwrap_or(0.0),
+            0.0
+        );
+        assert!(
+            !second
+                .overrides()
+                .iter()
+                .any(|(name, _)| *name == "INSTANCE_ONLY")
+        );
+        assert_eq!(first.uniforms()[unused_slot], 17.0);
+        assert_eq!(first.uniforms()[GLASS_EFFECT_DENSITY_UNIFORM], 2.0);
+        assert_eq!(second.uniforms()[GLASS_EFFECT_DENSITY_UNIFORM], 1.0);
+        assert_eq!(first.source().as_ptr(), second.source().as_ptr());
     }
 
     #[test]

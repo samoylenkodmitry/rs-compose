@@ -137,6 +137,7 @@ override GLASS_INTERIOR_GUARD: bool = false;
 // 2 for the rim, each pipeline compiled without the other's work and
 // discarding the other's fragments before any fetch; 0 draws it whole.
 override GLASS_RIM_DRAW: i32 = 0;
+override GLASS_FULL_ACTIVITY: bool = false;
 
 fn fixed_or(value: f32, fixed: f32, is_fixed: bool) -> f32 {
     return select(value, fixed, is_fixed);
@@ -431,31 +432,30 @@ fn wcksrd_optics(
     edge_extent: f32,
     edge_sharpness: f32,
     rim_style: f32,
+    in_rim: bool,
 ) -> OpticalSample {
     let lens_refraction = max(requested_lens_refraction, 0.001);
     let interior = clamp(-distance / lens_refraction, 0.0, 1.0);
-    // The border line's ramp spans lens_refraction/edge_sharpness px. The
-    // drawn line must stay resolvable by the pixel grid: a sub-pixel band
-    // point-sampled at pixel centers renders as disconnected sparkles along
-    // a curved rim. Widening the band below the floor conserves its energy
-    // exactly — the profile's integral along the normal equals its extent,
-    // so the gain ratio keeps the line's total light unchanged.
-    let border_extent = max(edge_extent, MIN_LINE_WIDTH_PX);
-    let border_gain = edge_extent / border_extent;
-    let border_ramp = max(lens_refraction / max(edge_sharpness, 1.0), MIN_LINE_WIDTH_PX);
-    let border = (clamp(-(distance - edge_extent) / border_ramp, 0.0, 1.0)
-        - clamp(-(distance + border_extent - edge_extent) / border_ramp, 0.0, 1.0))
-        * border_gain;
-    let optical_gradient_band = wcksrd_meniscus(
-        distance,
-        lens_refraction,
-        gradient_extent,
-    );
-    let lighting_band = mix(
-        wcksrd_surface_rim(distance, gradient_extent),
-        optical_gradient_band,
-        clamp(rim_style, 0.0, 1.0),
-    );
+    var border = 0.0;
+    var lighting_band = 0.0;
+    if in_rim {
+        let border_extent = max(edge_extent, MIN_LINE_WIDTH_PX);
+        let border_gain = edge_extent / border_extent;
+        let border_ramp = max(lens_refraction / max(edge_sharpness, 1.0), MIN_LINE_WIDTH_PX);
+        border = (clamp(-(distance - edge_extent) / border_ramp, 0.0, 1.0)
+            - clamp(-(distance + border_extent - edge_extent) / border_ramp, 0.0, 1.0))
+            * border_gain;
+        let optical_gradient_band = wcksrd_meniscus(
+            distance,
+            lens_refraction,
+            gradient_extent,
+        );
+        lighting_band = mix(
+            wcksrd_surface_rim(distance, gradient_extent),
+            optical_gradient_band,
+            clamp(rim_style, 0.0, 1.0),
+        );
+    }
     let source_y = -local_position.y / max(half_size.y, 1.0) * 0.29;
     let face_light = 0.5 * clamp(clamp(source_y, 0.0, 0.2) + 0.1, 0.0, 1.0)
         + 0.5 * clamp(clamp(-source_y, -1.0, 0.2) * lighting_band + 0.1, 0.0, 1.0);
@@ -697,7 +697,7 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
     let uv = input.uv;
     let map = region_map();
     let tex_size = logical_extent();
-    let material_activity = clamp(get_float(111u), 0.0, 1.0);
+    let material_activity = clamp(fixed_or(get_float(111u), 1.0, GLASS_FULL_ACTIVITY), 0.0, 1.0);
 
     // Effect layer pixel rect injected by the renderer at uniform slot 62
     // (x_offset, y_offset, width, height) in viewport pixels.
@@ -791,6 +791,9 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
     // wcKSRD's `smoothstep(0, 1, rb1)` is the material's coverage transition.
     // Premultiplied compositing against the untouched backdrop is equivalent
     // to the reference shader's final `mix(backdrop, lighting, transition)`.
+    if GLASS_RIM_DRAW != 1 && GLASS_SHADOW_OFF && d >= max(gradient_extent, 0.0) {
+        return vec4<f32>(0.0);
+    }
     let inradius = max(min(half_size.x, half_size.y), 1.0);
     let physical_refraction_depth = max(get_float(98u), 0.0) * optical_scale;
     let lens_refraction = max(
@@ -808,7 +811,7 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
     let guard_border_ramp = max(lens_refraction / max(mix(16.0, 8.0, clamp(fixed_or(get_float(28u), 0.0, GLASS_RIM_STYLE_OFF), 0.0, 1.0)), 1.0), MIN_LINE_WIDTH_PX);
     let guard_fold = fixed_or(get_float(88u), 0.0, GLASS_FOLD_OFF) * optical_scale;
     let rim_reach = max(
-        max(1.5 * gradient_extent + guard_ramp, floored_band_width(gradient_extent)),
+        max(select(1.5 * gradient_extent + guard_ramp, 0.0, GLASS_RIM_STYLE_OFF), floored_band_width(gradient_extent)),
         max(max(edge_extent, MIN_LINE_WIDTH_PX) + guard_border_ramp, guard_fold),
     ) + 1.0;
     if (GLASS_RIM_DRAW == 1 && d >= -rim_reach) {
@@ -829,7 +832,11 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
     let coverage_ramp = floored_band_width(
         mix(rest_feather, lens_refraction / 32.0, material_activity),
     );
-    let coverage = smoothstep(0.0, 1.0, clamp(-d / coverage_ramp, 0.0, 1.0));
+    let coverage = select(
+        smoothstep(0.0, 1.0, clamp(-d / coverage_ramp, 0.0, 1.0)),
+        1.0,
+        GLASS_RIM_DRAW == 1 && GLASS_FULL_ACTIVITY,
+    );
     let optical_coverage = smoothstep(
         0.0,
         1.0,
@@ -939,6 +946,7 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
         edge_extent,
         edge_sharpness,
         rim_style,
+        in_rim,
     );
     let interior = optical_sample.interior;
 
@@ -1047,7 +1055,10 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
         loupe_mode > 0.5,
     );
     var rgb = transmitted_path.rgb;
-    if dispersion_strength > 0.0 {
+    let index_spread = dispersion_strength * 0.22;
+    let coincident_rays = GLASS_RIM_DRAW == 1
+        && -d / max(lens_refraction * (1.0 + index_spread), 0.001) >= 1.0;
+    if dispersion_strength > 0.0 && !coincident_rays {
         // Chromatic transmission as ONE continuous ray model: each channel
         // walks the SAME lens field at its own refractive index (blue bends
         // more than red, as in real glass). The index scales the ramp
@@ -1059,7 +1070,6 @@ fn glass_fs(input: VertexOutput) -> vec4<f32> {
         // already-sampled transmitted ray; everything downstream (fold
         // absorption, meniscus, ink recolor, tone) operates on the merged
         // chromatic transmission.
-        let index_spread = dispersion_strength * 0.22;
         let red_path = sample_wcksrd_path(
             map,
             uv,

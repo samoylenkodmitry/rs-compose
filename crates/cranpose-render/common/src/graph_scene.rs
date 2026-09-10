@@ -1,11 +1,11 @@
 use std::{
     cell::{Cell, RefCell},
     cmp::Reverse,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     rc::Rc,
 };
 
-use cranpose_core::{MemoryApplier, NodeId};
+use cranpose_core::{MemoryApplier, NodeId, collections::map::HashSet};
 use cranpose_foundation::{PointerEvent, PointerEventKind};
 use cranpose_ui::{LayoutNode, ModifierNodeSlices, SubcomposeLayoutNode};
 use cranpose_ui_graphics::{Point, Rect, RoundedCornerShape};
@@ -72,14 +72,15 @@ pub struct HitClip {
     pub bounds: Rect,
 }
 
-#[derive(Clone)]
-pub struct HitGeometry {
+/// Geometry for a hit target, borrowing the clip chain until the sink records it.
+#[derive(Clone, Copy)]
+pub struct HitGeometry<'a> {
     pub rect: Rect,
     pub quad: [[f32; 2]; 4],
     pub local_bounds: Rect,
     pub world_to_local: ProjectiveTransform,
     pub hit_clip_bounds: Option<Rect>,
-    pub hit_clips: Vec<HitClip>,
+    pub hit_clips: &'a [HitClip],
 }
 
 #[derive(Clone)]
@@ -99,10 +100,11 @@ pub struct HitRegion {
     diagnostics: Rc<RenderDiagnostics>,
 }
 
-struct HitRegionInit {
+struct HitRegionInit<'a> {
     node_id: NodeId,
     capture_path: Vec<NodeId>,
-    geometry: HitGeometry,
+    geometry: HitGeometry<'a>,
+    clip_buffer: Vec<HitClip>,
     shape: Option<RoundedCornerShape>,
     click_actions: Vec<ClickAction>,
     pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
@@ -110,7 +112,7 @@ struct HitRegionInit {
     diagnostics: Rc<RenderDiagnostics>,
 }
 
-impl Default for HitRegionInit {
+impl Default for HitRegionInit<'_> {
     fn default() -> Self {
         Self {
             node_id: 0,
@@ -131,8 +133,9 @@ impl Default for HitRegionInit {
                 },
                 world_to_local: ProjectiveTransform::identity(),
                 hit_clip_bounds: None,
-                hit_clips: Vec::new(),
+                hit_clips: &[],
             },
+            clip_buffer: Vec::new(),
             shape: None,
             click_actions: Vec::new(),
             pointer_inputs: Vec::new(),
@@ -143,11 +146,12 @@ impl Default for HitRegionInit {
 }
 
 impl HitRegion {
-    fn with_diagnostics(init: HitRegionInit) -> Self {
+    fn with_diagnostics(init: HitRegionInit<'_>) -> Self {
         let HitRegionInit {
             node_id,
             capture_path,
             geometry,
+            clip_buffer: mut hit_clips,
             shape,
             click_actions,
             pointer_inputs,
@@ -160,8 +164,9 @@ impl HitRegion {
             local_bounds,
             world_to_local,
             hit_clip_bounds,
-            hit_clips,
+            hit_clips: clips,
         } = geometry;
+        hit_clips.extend_from_slice(clips);
         Self {
             node_id,
             capture_path,
@@ -314,9 +319,18 @@ impl HitTestTarget for HitRegion {
     }
 }
 
+#[derive(Default)]
+struct HitBuffers {
+    hit_clips: Vec<HitClip>,
+    capture_path: Vec<NodeId>,
+    click_actions: Vec<ClickAction>,
+    pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
+}
+
 pub struct Scene {
     pub graph: Option<RenderGraph>,
     pub hits: Vec<HitRegion>,
+    hit_buffers: Vec<HitBuffers>,
     pub next_hit_z: usize,
     pub node_index: HashMap<NodeId, usize>,
     diagnostics: Rc<RenderDiagnostics>,
@@ -327,6 +341,7 @@ impl Scene {
         Self {
             graph: None,
             hits: Vec::new(),
+            hit_buffers: Vec::new(),
             next_hit_z: 0,
             node_index: HashMap::new(),
             diagnostics: Rc::new(RenderDiagnostics::new()),
@@ -337,33 +352,60 @@ impl Scene {
         self.diagnostics.as_ref()
     }
 
+    /// Adds an interactive target in draw order, ignoring targets without handlers.
     pub fn push_hit(
         &mut self,
         node_id: NodeId,
-        capture_path: Vec<NodeId>,
-        geometry: HitGeometry,
+        capture_path: &[NodeId],
+        geometry: HitGeometry<'_>,
         shape: Option<RoundedCornerShape>,
-        click_actions: Vec<ClickAction>,
-        pointer_inputs: Vec<Rc<dyn Fn(PointerEvent)>>,
+        click_actions: impl IntoIterator<Item = ClickAction>,
+        pointer_inputs: &[Rc<dyn Fn(PointerEvent)>],
     ) {
-        if click_actions.is_empty() && pointer_inputs.is_empty() {
+        let mut click_actions = click_actions.into_iter().peekable();
+        if click_actions.peek().is_none() && pointer_inputs.is_empty() {
             return;
         }
+        let mut buffers = self.hit_buffers.pop().unwrap_or_default();
+        buffers.capture_path.extend_from_slice(capture_path);
+        buffers.click_actions.extend(click_actions);
+        buffers.pointer_inputs.extend_from_slice(pointer_inputs);
 
         let z_index = self.next_hit_z;
         self.next_hit_z += 1;
         let hit_index = self.hits.len();
         self.hits.push(HitRegion::with_diagnostics(HitRegionInit {
             node_id,
-            capture_path,
+            capture_path: buffers.capture_path,
             geometry,
+            clip_buffer: buffers.hit_clips,
             shape,
-            click_actions,
-            pointer_inputs,
+            click_actions: buffers.click_actions,
+            pointer_inputs: buffers.pointer_inputs,
             z_index,
             diagnostics: Rc::clone(&self.diagnostics),
         }));
         self.node_index.insert(node_id, hit_index);
+    }
+
+    /// Removes all hit targets and releases their handlers while retaining vector capacity.
+    pub fn clear_hits(&mut self) {
+        self.hit_buffers.clear();
+        for hit in self.hits.drain(..) {
+            let mut buffers = HitBuffers {
+                hit_clips: hit.hit_clips,
+                capture_path: hit.capture_path,
+                click_actions: hit.click_actions,
+                pointer_inputs: hit.pointer_inputs,
+            };
+            buffers.hit_clips.clear();
+            buffers.capture_path.clear();
+            buffers.click_actions.clear();
+            buffers.pointer_inputs.clear();
+            self.hit_buffers.push(buffers);
+        }
+        self.node_index.clear();
+        self.next_hit_z = 0;
     }
 
     pub fn replace_graph(&mut self, graph: RenderGraph) {
@@ -382,9 +424,7 @@ impl RenderScene for Scene {
 
     fn clear(&mut self) {
         self.graph = None;
-        self.hits.clear();
-        self.node_index.clear();
-        self.next_hit_z = 0;
+        self.clear_hits();
     }
 
     fn hit_test(&self, x: f32, y: f32) -> Vec<Self::HitTarget> {
@@ -409,12 +449,13 @@ impl RenderScene for Scene {
             .cloned()
     }
 
-    fn retained_visual_observation_nodes(&self) -> Option<HashSet<NodeId>> {
-        Some(
-            self.graph
-                .as_ref()
-                .map_or_else(HashSet::new, RenderGraph::retained_visual_observation_nodes),
-        )
+    fn collect_retained_visual_observation_nodes(&self, nodes: &mut HashSet<NodeId>) -> bool {
+        if let Some(graph) = &self.graph {
+            graph.collect_retained_visual_observation_nodes(nodes);
+        } else {
+            nodes.clear();
+        }
+        true
     }
 }
 
@@ -504,14 +545,14 @@ mod tests {
         }
     }
 
-    fn hit_geometry_for_rect(rect: Rect) -> HitGeometry {
+    fn hit_geometry_for_rect(rect: Rect) -> HitGeometry<'static> {
         HitGeometry {
             rect,
             quad: rect_to_quad(rect),
             local_bounds: local_bounds_for_rect(rect),
             world_to_local: translated_world_to_local(rect),
             hit_clip_bounds: None,
-            hit_clips: Vec::new(),
+            hit_clips: &[],
         }
     }
 
@@ -526,6 +567,137 @@ mod tests {
                 event.consume();
             }
         })
+    }
+
+    #[test]
+    fn rebuilding_hits_reuses_buffers_releases_handlers_and_preserves_captured_targets() {
+        let mut scene = Scene::new();
+        let first_count = Rc::new(Cell::new(0));
+        let second_count = Rc::new(Cell::new(0));
+        let first = make_handler(Rc::clone(&first_count), false);
+        let second = make_handler(Rc::clone(&second_count), false);
+        let first_click: Rc<dyn Fn(Point)> = Rc::new(|_| {});
+        let second_click: Rc<dyn Fn(Point)> = Rc::new(|_| {});
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 30.0,
+            height: 30.0,
+        };
+        scene.push_hit(
+            1,
+            &[1, 9],
+            hit_geometry_for_rect(rect),
+            None,
+            [ClickAction::WithPoint(Rc::clone(&first_click))],
+            &[Rc::clone(&first)],
+        );
+        let captured = scene.find_target(1).unwrap();
+        let path_storage = scene.hits[0].capture_path.as_ptr();
+        let input_storage = scene.hits[0].pointer_inputs.as_ptr();
+        scene.clear_hits();
+        assert!(scene.hits.is_empty());
+        assert!(scene.find_target(1).is_none());
+        assert_eq!(scene.next_hit_z, 0);
+        assert_eq!(Rc::strong_count(&first), 2);
+        assert_eq!(Rc::strong_count(&first_click), 2);
+        scene.push_hit(
+            2,
+            &[2],
+            hit_geometry_for_rect(rect),
+            None,
+            [ClickAction::WithPoint(Rc::clone(&second_click))],
+            &[Rc::clone(&second)],
+        );
+        assert_eq!(scene.hits[0].capture_path.as_ptr(), path_storage);
+        assert_eq!(scene.hits[0].pointer_inputs.as_ptr(), input_storage);
+        assert_eq!(scene.hits[0].capture_path, [2]);
+        assert_eq!(scene.hits[0].z_index, 0);
+        assert_eq!(scene.hits[0].click_actions.len(), 1);
+        assert!(
+            matches!(&scene.hits[0].click_actions[0], ClickAction::WithPoint(handler) if Rc::ptr_eq(handler, &second_click))
+        );
+        let event = PointerEvent::new(
+            PointerEventKind::Down,
+            Point::new(5.0, 5.0),
+            Point::new(5.0, 5.0),
+        );
+        scene.find_target(2).unwrap().dispatch(event.clone());
+        assert_eq!(first_count.get(), 0);
+        assert_eq!(second_count.get(), 1);
+        captured.dispatch(event);
+        assert_eq!(captured.capture_path, [1, 9]);
+        assert_eq!(first_count.get(), 1);
+        scene.clear_hits();
+        assert_eq!(Rc::strong_count(&second), 1);
+        assert_eq!(Rc::strong_count(&second_click), 1);
+        scene.push_hit(3, &[3], hit_geometry_for_rect(rect), None, [], &[]);
+        assert!(scene.hits.is_empty());
+        assert_eq!(scene.next_hit_z, 0);
+    }
+
+    #[test]
+    fn collecting_observation_owners_clears_an_empty_scene() {
+        let scene = Scene::new();
+        let mut nodes = HashSet::from([13, 17]);
+        let capacity = nodes.capacity();
+        assert!(scene.collect_retained_visual_observation_nodes(&mut nodes));
+        assert!(nodes.is_empty());
+        assert_eq!(nodes.capacity(), capacity);
+    }
+
+    #[test]
+    fn rebuilding_clip_buffers_replaces_clips_without_changing_captured_targets() {
+        let mut scene = Scene::new();
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let left = Rect {
+            width: 50.0,
+            ..rect
+        };
+        let right = Rect {
+            x: 50.0,
+            width: 50.0,
+            ..rect
+        };
+        let clip = |bounds| HitClip {
+            quad: rect_to_quad(bounds),
+            bounds,
+        };
+        let handler = make_handler(Rc::new(Cell::new(0)), false);
+        let push = |scene: &mut Scene, clips: &[HitClip]| {
+            scene.push_hit(
+                1,
+                &[1],
+                HitGeometry {
+                    hit_clips: clips,
+                    ..hit_geometry_for_rect(rect)
+                },
+                None,
+                [],
+                &[Rc::clone(&handler)],
+            );
+        };
+        push(&mut scene, &[clip(left)]);
+        let captured = scene.find_target(1).unwrap();
+        let storage = scene.hits[0].hit_clips.as_ptr();
+        assert!(captured.contains(25.0, 25.0));
+        assert!(!captured.contains(75.0, 25.0));
+        scene.clear_hits();
+        push(&mut scene, &[clip(right)]);
+        assert_eq!(scene.hits[0].hit_clips.as_ptr(), storage);
+        assert!(scene.hit_test(25.0, 25.0).is_empty());
+        assert_eq!(scene.hit_test(75.0, 25.0).len(), 1);
+        assert!(captured.contains(25.0, 25.0));
+        assert!(!captured.contains(75.0, 25.0));
+        scene.clear_hits();
+        push(&mut scene, &[]);
+        assert_eq!(scene.hit_test(25.0, 25.0).len(), 1);
+        assert_eq!(scene.hit_test(75.0, 25.0).len(), 1);
     }
 
     #[test]
@@ -545,10 +717,10 @@ mod tests {
         };
         scene.push_hit(
             1,
-            vec![1],
+            &[1],
             HitGeometry {
                 hit_clip_bounds: Some(clip),
-                hit_clips: vec![HitClip {
+                hit_clips: &[HitClip {
                     quad: rect_to_quad(clip),
                     bounds: clip,
                 }],
@@ -556,7 +728,7 @@ mod tests {
             },
             None,
             Vec::new(),
-            vec![Rc::new(|_event: PointerEvent| {})],
+            &[Rc::new(|_event: PointerEvent| {})],
         );
 
         assert!(scene.hit_test(60.0, 20.0).is_empty());
@@ -575,19 +747,19 @@ mod tests {
 
         scene.push_hit(
             1,
-            vec![1],
+            &[1],
             hit_geometry_for_rect(rect),
             None,
             Vec::new(),
-            vec![Rc::new(|_event: PointerEvent| {})],
+            &[Rc::new(|_event: PointerEvent| {})],
         );
         scene.push_hit(
             2,
-            vec![2],
+            &[2],
             hit_geometry_for_rect(rect),
             None,
             Vec::new(),
-            vec![Rc::new(|_event: PointerEvent| {})],
+            &[Rc::new(|_event: PointerEvent| {})],
         );
 
         assert_eq!(scene.node_index.get(&1), Some(&0));
@@ -613,11 +785,11 @@ mod tests {
         };
         scene.push_hit(
             1,
-            vec![1],
+            &[1],
             hit_geometry_for_rect(rect),
             Some(RoundedCornerShape::uniform(20.0)),
             Vec::new(),
-            vec![Rc::new(|_event: PointerEvent| {})],
+            &[Rc::new(|_event: PointerEvent| {})],
         );
 
         assert!(scene.hit_test(1.0, 1.0).is_empty());
@@ -850,7 +1022,7 @@ mod tests {
             .expect("transformed hit region should be invertible");
         scene.push_hit(
             1,
-            vec![1],
+            &[1],
             HitGeometry {
                 rect: Rect {
                     x: 10.0,
@@ -862,11 +1034,11 @@ mod tests {
                 local_bounds: rect,
                 world_to_local,
                 hit_clip_bounds: None,
-                hit_clips: Vec::new(),
+                hit_clips: &[],
             },
             None,
             Vec::new(),
-            vec![Rc::new(|_event: PointerEvent| {})],
+            &[Rc::new(|_event: PointerEvent| {})],
         );
 
         assert!(
@@ -907,7 +1079,7 @@ mod tests {
                 local_bounds,
                 world_to_local,
                 hit_clip_bounds: None,
-                hit_clips: Vec::new(),
+                hit_clips: &[],
             },
             click_actions: vec![click_action],
             ..Default::default()

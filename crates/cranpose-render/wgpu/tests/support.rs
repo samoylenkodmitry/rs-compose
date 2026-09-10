@@ -603,8 +603,8 @@ pub fn substrate_probe(spec: SubstrateSpec, read: SubstrateProbeRead) -> RenderE
         RUNTIME_SHADER_PRELUDE_WGSL,
     ));
     shader.set_batched_source(true);
-    shader.set_substrates(vec![spec]);
-    RenderEffect::Shader { shader }
+    shader.set_substrates(&[spec]);
+    RenderEffect::runtime_shader(shader)
 }
 
 /// A page of the given size holding `children` in order.

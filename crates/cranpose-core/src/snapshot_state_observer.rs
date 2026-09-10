@@ -14,11 +14,17 @@ use crate::{
     RecomposeScope, RecomposeScopeInner, ScopeId,
     collections::map::{HashMap, HashSet},
     hash::default as default_hash,
-    snapshot_v2::{ReadObserver, StateObjectId, register_apply_observer},
+    snapshot_v2::{
+        ReadObserver, StateObjectId, TransparentObserverMutableSnapshot, register_apply_observer,
+    },
     state::StateObject,
 };
 
 type Executor = dyn Fn(Box<dyn FnOnce() + 'static>) + 'static;
+
+trait ScopeChangedCallback: Fn(&dyn Any) + Any {}
+
+impl<F: Fn(&dyn Any) + Any> ScopeChangedCallback for F {}
 
 /// Observer that records state object reads performed inside a given scope and
 /// notifies the caller when any of the observed objects change.
@@ -135,8 +141,9 @@ struct SnapshotStateObserverInner {
     indexed_scopes: RefCell<HashMap<usize, Rc<RefCell<ScopeEntry>>>>,
     observed_to_scopes: RefCell<HashMap<StateObjectId, HashSet<usize>>>,
     pause_count: Rc<Cell<usize>>,
-    active_read_targets: Rc<RefCell<Vec<Rc<RefCell<ObservedIds>>>>>,
+    active_read_targets: Rc<RefCell<ReadObservationStack>>,
     read_dispatcher: ReadObserver,
+    read_snapshot: RefCell<Option<Arc<TransparentObserverMutableSnapshot>>>,
     apply_handle: RefCell<Option<crate::snapshot_v2::ObserverHandle>>,
     weak_self: RefCell<Weak<SnapshotStateObserverInner>>,
     frame_version: Cell<u64>,
@@ -168,7 +175,7 @@ impl SnapshotStateObserverInner {
 
     fn new(on_changed_executor: impl Fn(Box<dyn FnOnce() + 'static>) + 'static) -> Self {
         let pause_count = Rc::new(Cell::new(0));
-        let active_read_targets = Rc::new(RefCell::new(Vec::<Rc<RefCell<ObservedIds>>>::new()));
+        let active_read_targets = Rc::new(RefCell::new(ReadObservationStack::default()));
         let dispatcher_pause_count = Rc::clone(&pause_count);
         let dispatcher_targets = Rc::clone(&active_read_targets);
         let read_dispatcher: ReadObserver = Arc::new(move |state| {
@@ -190,6 +197,7 @@ impl SnapshotStateObserverInner {
             pause_count,
             active_read_targets,
             read_dispatcher,
+            read_snapshot: RefCell::new(None),
             apply_handle: RefCell::new(None),
             weak_self: RefCell::new(Weak::new()),
             frame_version: Cell::new(0),
@@ -219,37 +227,41 @@ impl SnapshotStateObserverInner {
         let frame_version = self.frame_version.get();
         let has_frame_version = frame_version != 0;
 
-        let on_changed: Rc<dyn Fn(&dyn Any)> = {
-            let callback = Rc::new(on_value_changed_for_scope);
-            Rc::new(move |scope_any: &dyn Any| {
-                if let Some(typed) = scope_any.downcast_ref::<T>() {
-                    callback(typed);
-                }
-            })
-        };
-
         let existing_entry = self.find_scope_entry(&scope);
+        let on_changed = std::cell::LazyCell::new(|| {
+            let callback = move |scope_any: &dyn Any| {
+                if let Some(typed) = scope_any.downcast_ref::<T>() {
+                    on_value_changed_for_scope(typed);
+                }
+            };
+            match existing_entry.as_ref() {
+                Some(entry) => entry.borrow_mut().callback_reusing(callback),
+                None => Rc::new(callback),
+            }
+        });
+
         if let Some(entry) = existing_entry.as_ref() {
             let already_observed = {
                 let mut entry_mut = entry.borrow_mut();
-                entry_mut.update(scope.clone(), on_changed.clone());
+                entry_mut.update_scope(scope.clone());
                 has_frame_version && entry_mut.last_seen_version == frame_version
             };
+            let callback = on_changed.clone();
+            entry.borrow_mut().on_changed = callback;
             if already_observed {
                 return block();
             }
         }
 
-        let observed = Rc::new(RefCell::new(ObservedIds::new()));
-        self.active_read_targets
-            .borrow_mut()
-            .push(Rc::clone(&observed));
+        let observed = self.active_read_targets.borrow_mut().push();
         struct ActiveObservationGuard {
-            stack: Rc<RefCell<Vec<Rc<RefCell<ObservedIds>>>>>,
+            stack: Rc<RefCell<ReadObservationStack>>,
         }
         impl Drop for ActiveObservationGuard {
             fn drop(&mut self) {
-                self.stack.borrow_mut().pop();
+                let target = self.stack.borrow_mut().pop();
+                let discarded = target.replace(ObservedIds::new());
+                drop(discarded);
             }
         }
         let _guard = ActiveObservationGuard {
@@ -270,10 +282,11 @@ impl SnapshotStateObserverInner {
             std::mem::replace(&mut *observed, ObservedIds::new())
         };
         let entry = existing_entry
+            .clone()
             .unwrap_or_else(|| self.insert_scope_entry(scope.clone(), on_changed.clone()));
         {
             let mut entry_mut = entry.borrow_mut();
-            entry_mut.update(scope, on_changed);
+            entry_mut.update(scope, Rc::clone(&on_changed));
             entry_mut.last_seen_version = if has_frame_version {
                 frame_version
             } else {
@@ -371,7 +384,7 @@ impl SnapshotStateObserverInner {
     fn insert_scope_entry(
         &self,
         scope: impl Any + Clone + Eq + Hash + 'static,
-        on_changed: Rc<dyn Fn(&dyn Any)>,
+        on_changed: Rc<dyn ScopeChangedCallback>,
     ) -> Rc<RefCell<ScopeEntry>> {
         let entry_id = self.next_entry_id.get();
         self.next_entry_id.set(entry_id.wrapping_add(1));
@@ -518,12 +531,18 @@ impl SnapshotStateObserverInner {
     }
 
     fn run_with_read_observer<R>(&self, block: impl FnOnce() -> R) -> R {
-        use crate::snapshot_v2::take_transparent_observer_mutable_snapshot;
+        use crate::snapshot_v2::take_transparent_observer_mutable_snapshot_reusing;
 
-        let snapshot =
-            take_transparent_observer_mutable_snapshot(Some(self.read_dispatcher.clone()), None);
+        let mut snapshot = take_transparent_observer_mutable_snapshot_reusing(
+            Some(self.read_dispatcher.clone()),
+            None,
+            self.read_snapshot.take(),
+        );
         let result = snapshot.enter(block);
         snapshot.dispose();
+        if Arc::get_mut(&mut snapshot).is_some() && !snapshot.has_pending_changes() {
+            self.read_snapshot.replace(Some(snapshot));
+        }
         result
     }
 
@@ -574,8 +593,11 @@ impl SnapshotStateObserverInner {
             let previous = std::mem::replace(&mut entry_mut.observed, observed);
             (entry_id, previous)
         };
-        self.unregister_observed_ids(entry_id, &previous);
         let entry_ref = entry.borrow();
+        if previous.iter().eq(entry_ref.observed.iter()) {
+            return;
+        }
+        self.unregister_observed_ids(entry_id, &previous);
         self.register_observed_ids(entry_id, &entry_ref.observed);
     }
 
@@ -630,14 +652,40 @@ where
     *map = rebuilt;
 }
 
+#[derive(Default)]
+struct ReadObservationStack {
+    targets: Vec<Rc<RefCell<ObservedIds>>>,
+    depth: usize,
+}
+
+impl ReadObservationStack {
+    fn push(&mut self) -> Rc<RefCell<ObservedIds>> {
+        if self.depth == self.targets.len() {
+            self.targets.push(Rc::new(RefCell::new(ObservedIds::new())));
+        }
+        let target = Rc::clone(&self.targets[self.depth]);
+        self.depth += 1;
+        target
+    }
+
+    fn last(&self) -> Option<&Rc<RefCell<ObservedIds>>> {
+        self.depth.checked_sub(1).map(|index| &self.targets[index])
+    }
+
+    fn pop(&mut self) -> Rc<RefCell<ObservedIds>> {
+        self.depth -= 1;
+        Rc::clone(&self.targets[self.depth])
+    }
+}
+
 enum ObservedIds {
     Small(SmallVec<[ObservedState; MAX_OBSERVED_STATES]>),
-    Large(HashMap<StateObjectId, Option<Box<dyn Any>>>),
+    Large(HashMap<StateObjectId, Option<Rc<dyn Any>>>),
 }
 
 struct ObservedState {
     id: StateObjectId,
-    _lease: Option<Box<dyn Any>>,
+    _lease: Option<Rc<dyn Any>>,
 }
 
 impl ObservedIds {
@@ -694,11 +742,16 @@ impl ObservedIds {
         }
     }
 
-    fn iter(&self) -> Box<dyn Iterator<Item = StateObjectId> + '_> {
-        match self {
-            ObservedIds::Small(small) => Box::new(small.iter().map(|observed| observed.id)),
-            ObservedIds::Large(large) => Box::new(large.keys().copied()),
-        }
+    fn iter(&self) -> impl Iterator<Item = StateObjectId> + '_ {
+        let (small, large) = match self {
+            ObservedIds::Small(small) => (Some(small.as_slice()), None),
+            ObservedIds::Large(large) => (None, Some(large)),
+        };
+        small
+            .into_iter()
+            .flatten()
+            .map(|observed| observed.id)
+            .chain(large.into_iter().flat_map(|states| states.keys().copied()))
     }
 }
 
@@ -715,13 +768,13 @@ enum ScopeStorage {
 struct ScopeEntry {
     id: usize,
     scope: ScopeStorage,
-    on_changed: Rc<dyn Fn(&dyn Any)>,
+    on_changed: Rc<dyn ScopeChangedCallback>,
     observed: ObservedIds,
     last_seen_version: u64,
 }
 
 impl ScopeEntry {
-    fn new<T>(id: usize, scope: T, on_changed: Rc<dyn Fn(&dyn Any)>) -> Self
+    fn new<T>(id: usize, scope: T, on_changed: Rc<dyn ScopeChangedCallback>) -> Self
     where
         T: Any + 'static,
     {
@@ -734,12 +787,39 @@ impl ScopeEntry {
         }
     }
 
-    fn update<T>(&mut self, new_scope: T, on_changed: Rc<dyn Fn(&dyn Any)>)
+    fn callback_reusing<F: Fn(&dyn Any) + 'static>(
+        &mut self,
+        callback: F,
+    ) -> Rc<dyn ScopeChangedCallback> {
+        if let Some(stored) = Rc::get_mut(&mut self.on_changed)
+            .and_then(|stored| (stored as &mut dyn Any).downcast_mut::<F>())
+        {
+            *stored = callback;
+            Rc::clone(&self.on_changed)
+        } else {
+            Rc::new(callback)
+        }
+    }
+
+    fn update<T>(&mut self, new_scope: T, on_changed: Rc<dyn ScopeChangedCallback>)
     where
         T: Any + 'static,
     {
-        self.scope = ScopeStorage::from_value(new_scope);
+        self.update_scope(new_scope);
         self.on_changed = on_changed;
+    }
+
+    fn update_scope<T>(&mut self, new_scope: T)
+    where
+        T: Any + 'static,
+    {
+        if let ScopeStorage::Owned(stored) = &mut self.scope
+            && let Some(stored) = stored.downcast_mut::<T>()
+        {
+            *stored = new_scope;
+        } else {
+            self.scope = ScopeStorage::from_value(new_scope);
+        }
     }
 
     fn matches_scope<T>(&self, scope: &T) -> bool
@@ -824,6 +904,237 @@ mod tests {
 
     #[derive(Clone, Eq, Hash, PartialEq)]
     struct TestScope(&'static str);
+
+    #[test]
+    fn scope_update_reuses_storage_and_replaces_payload_and_callback() {
+        let first = Rc::new(String::from("first"));
+        let second = Rc::new(String::from("second"));
+        let delivered = Rc::new(RefCell::new(Vec::new()));
+        let mut entry = ScopeEntry::new(0, first.clone(), Rc::new(|_| panic!("stale callback")));
+        let ScopeStorage::Owned(stored) = &entry.scope else {
+            panic!("expected owned scope");
+        };
+        let address = stored.downcast_ref::<Rc<String>>().unwrap() as *const Rc<String>;
+        let received = delivered.clone();
+        entry.update(
+            second.clone(),
+            Rc::new(move |scope| {
+                received.borrow_mut().push(
+                    scope
+                        .downcast_ref::<Rc<String>>()
+                        .unwrap()
+                        .as_str()
+                        .to_owned(),
+                );
+            }),
+        );
+        assert_eq!(Rc::strong_count(&first), 1);
+        assert_eq!(Rc::strong_count(&second), 2);
+        entry.notify();
+        assert_eq!(*delivered.borrow(), vec!["second"]);
+        let ScopeStorage::Owned(stored) = &entry.scope else {
+            panic!("expected owned scope");
+        };
+        assert_eq!(
+            stored.downcast_ref::<Rc<String>>().unwrap() as *const Rc<String>,
+            address
+        );
+        drop(entry);
+        assert_eq!(Rc::strong_count(&second), 1);
+    }
+
+    #[test]
+    fn reobservation_refreshes_captures_and_preserves_shared_callbacks() {
+        let _guard = reset_runtime();
+        let state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let delivered = Rc::new(RefCell::new(Vec::new()));
+        let callback = |generation| {
+            let delivered = delivered.clone();
+            move |scope: &TestScope| delivered.borrow_mut().push((generation, scope.0))
+        };
+        let scope = TestScope("callback");
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        let read = || {
+            let _ = state.get();
+        };
+        observer.observe_reads(scope.clone(), callback(1), read);
+        let entry = observer.inner.find_scope_entry(&scope).unwrap();
+        let held = entry.borrow().on_changed.clone();
+        observer.observe_reads(scope.clone(), callback(2), read);
+        held(&scope);
+        entry.borrow().notify();
+        drop(held);
+
+        let allocation = Rc::as_ptr(&entry.borrow().on_changed);
+        observer.observe_reads(scope.clone(), callback(3), read);
+        assert!(std::ptr::addr_eq(
+            allocation,
+            Rc::as_ptr(&entry.borrow().on_changed)
+        ));
+        entry.borrow().notify();
+
+        let received = delivered.clone();
+        observer.observe_reads(
+            scope,
+            move |scope| received.borrow_mut().push((4, scope.0)),
+            read,
+        );
+        entry.borrow().notify();
+        assert_eq!(
+            *delivered.borrow(),
+            [
+                (1, "callback"),
+                (2, "callback"),
+                (3, "callback"),
+                (4, "callback")
+            ]
+        );
+    }
+
+    #[test]
+    fn reobservation_across_storage_thresholds_replaces_dependencies_and_callbacks() {
+        let _guard = reset_runtime();
+        let states: Vec<_> = (0..MAX_OBSERVED_STATES + 2)
+            .map(|_| SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual)))
+            .collect();
+        let notifications = Rc::new(RefCell::new(Vec::new()));
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        observer.start();
+        for (generation, count) in [MAX_OBSERVED_STATES, MAX_OBSERVED_STATES + 1, 2, 0]
+            .into_iter()
+            .enumerate()
+        {
+            observer.begin_frame();
+            let recorded = notifications.clone();
+            observer.observe_reads(
+                TestScope("changing"),
+                move |scope| {
+                    assert_eq!(scope.0, "changing");
+                    recorded.borrow_mut().push(generation);
+                },
+                || {
+                    for state in states.iter().take(count) {
+                        let _ = state.get();
+                        let _ = state.get();
+                    }
+                },
+            );
+            notifications.borrow_mut().clear();
+            for (index, state) in states.iter().enumerate() {
+                let snapshot = take_mutable_snapshot(None, None);
+                snapshot.enter(|| state.set(generation as i32));
+                snapshot.apply().check();
+                let expected = (index + 1).min(count);
+                assert_eq!(
+                    *notifications.borrow(),
+                    vec![generation; expected],
+                    "count={count}, changed state={index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reobservation_preserves_notifications_when_dependencies_repeat_or_change() {
+        let _guard = reset_runtime();
+        let states: Vec<_> = (0..3)
+            .map(|_| SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual)))
+            .collect();
+        let notifications = Rc::new(RefCell::new(Vec::new()));
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        observer.start();
+        for (generation, indices) in [[0, 1], [0, 1], [1, 0], [1, 2], [1, 2]]
+            .into_iter()
+            .enumerate()
+        {
+            observer.begin_frame();
+            let received = notifications.clone();
+            observer.observe_reads(
+                TestScope("repeated"),
+                move |_| received.borrow_mut().push(generation),
+                || {
+                    for index in indices {
+                        let _ = states[index].get();
+                    }
+                },
+            );
+            for (index, state) in states.iter().enumerate() {
+                notifications.borrow_mut().clear();
+                let snapshot = take_mutable_snapshot(None, None);
+                snapshot.enter(|| state.set(generation as i32));
+                snapshot.apply().check();
+                assert_eq!(
+                    *notifications.borrow(),
+                    if indices.contains(&index) {
+                        vec![generation]
+                    } else {
+                        vec![]
+                    },
+                    "generation={generation}, state={index}"
+                );
+            }
+        }
+        observer.clear(&TestScope("repeated"));
+        notifications.borrow_mut().clear();
+        for state in states {
+            observer.notify_changes(&[state]);
+        }
+        assert!(notifications.borrow().is_empty());
+    }
+
+    #[test]
+    fn stateless_scope_can_start_observing_and_replace_its_callback_before_the_block() {
+        let _guard = reset_runtime();
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        let state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let notifications = Rc::new(RefCell::new(Vec::new()));
+        let discarded = notifications.clone();
+        observer.observe_reads(
+            TestScope("changing"),
+            move |_| discarded.borrow_mut().push(0),
+            || {},
+        );
+        assert_eq!(Rc::strong_count(&notifications), 1);
+        assert_eq!(observer.debug_stats().scopes_len, 0);
+        for generation in 1..=2 {
+            observer.begin_frame();
+            let delivered = notifications.clone();
+            observer.observe_reads(
+                TestScope("changing"),
+                move |_| delivered.borrow_mut().push(generation),
+                || {
+                    observer.notify_changes(&[state.clone()]);
+                    let _ = state.get();
+                },
+            );
+            observer.notify_changes(&[state.clone()]);
+        }
+        assert_eq!(*notifications.borrow(), vec![1, 2, 2]);
+        observer.clear(&TestScope("changing"));
+        assert_eq!(Rc::strong_count(&notifications), 1);
+    }
+
+    #[test]
+    fn callback_captures_are_released_on_replacement_and_clear() {
+        let _guard = reset_runtime();
+        let state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        let owners = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
+        for owner in &owners {
+            let captured = owner.clone();
+            observer.observe_reads(
+                TestScope("owner"),
+                move |_| captured.set(captured.get() + 1),
+                || {
+                    let _ = state.get();
+                },
+            );
+            assert_eq!(Rc::strong_count(owner), 2);
+        }
+        assert_eq!(Rc::strong_count(&owners[0]), 1);
+        observer.clear(&TestScope("owner"));
+        assert_eq!(Rc::strong_count(&owners[1]), 1);
+    }
 
     #[test]
     fn notifies_scope_when_state_changes() {
@@ -954,10 +1265,85 @@ mod tests {
     }
 
     #[test]
+    fn recycled_observation_refreshes_snapshot_state() {
+        let _guard = reset_runtime();
+        let state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        let mut allocation = None;
+        for value in 1..=3 {
+            let parent = take_mutable_snapshot(None, None);
+            parent.enter(|| {
+                state.set(value);
+                let expected = crate::snapshot_v2::current_snapshot().unwrap();
+                observer.inner.run_with_read_observer(|| {
+                    let crate::snapshot_v2::AnySnapshot::TransparentMutable(current) =
+                        crate::snapshot_v2::current_snapshot().unwrap()
+                    else {
+                        panic!("expected an observation snapshot");
+                    };
+                    assert_eq!(current.snapshot_id(), expected.snapshot_id());
+                    assert_eq!(current.invalid(), expected.invalid());
+                    assert!(!current.is_disposed());
+                    assert!(!current.has_pending_changes());
+                    assert_eq!(state.get(), value);
+                    let address = Arc::as_ptr(&current) as usize;
+                    assert_eq!(*allocation.get_or_insert(address), address);
+                });
+            });
+            parent.apply().check();
+        }
+    }
+
+    #[test]
+    fn recycled_observation_preserves_escaped_snapshots() {
+        let _guard = reset_runtime();
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        let escaped = observer
+            .inner
+            .run_with_read_observer(|| crate::snapshot_v2::current_snapshot().unwrap());
+        let id = escaped.snapshot_id();
+        observer.inner.run_with_read_observer(|| {
+            let current = crate::snapshot_v2::current_snapshot().unwrap();
+            let crate::snapshot_v2::AnySnapshot::TransparentMutable(escaped) = &escaped else {
+                panic!("expected an observation snapshot");
+            };
+            assert!(!current.is_same_transparent(escaped));
+            assert_eq!(escaped.snapshot_id(), id);
+            assert!(escaped.is_disposed());
+        });
+        let weak = observer.inner.run_with_read_observer(|| {
+            let crate::snapshot_v2::AnySnapshot::TransparentMutable(current) =
+                crate::snapshot_v2::current_snapshot().unwrap()
+            else {
+                panic!("expected an observation snapshot");
+            };
+            Arc::downgrade(&current)
+        });
+        assert!(weak.upgrade().is_none());
+        observer.inner.run_with_read_observer(|| {
+            assert!(weak.upgrade().is_none());
+        });
+    }
+
+    #[test]
+    fn recycled_observation_does_not_retain_written_state() {
+        let _guard = reset_runtime();
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        let state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let owners = Arc::strong_count(&state);
+        observer.inner.run_with_read_observer(|| {
+            let current = crate::snapshot_v2::current_snapshot().unwrap();
+            current.record_write(state.clone());
+        });
+        assert_eq!(Arc::strong_count(&state), owners);
+    }
+
+    #[test]
     fn nested_observe_reads_attributes_state_to_innermost_scope_only() {
         let _guard = reset_runtime();
 
         let state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let outer_state = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
         let outer_triggered = Rc::new(Cell::new(0));
         let inner_triggered = Rc::new(Cell::new(0));
 
@@ -973,6 +1359,7 @@ mod tests {
                 move |_| outer_triggered.set(outer_triggered.get() + 1)
             },
             || {
+                let _ = outer_state.get();
                 observer.observe_reads(
                     inner_scope.clone(),
                     {
@@ -994,6 +1381,53 @@ mod tests {
 
         assert_eq!(outer_triggered.get(), 0);
         assert_eq!(inner_triggered.get(), 1);
+        let snapshot = take_mutable_snapshot(None, None);
+        snapshot.enter(|| outer_state.set(1));
+        snapshot.apply().check();
+        assert_eq!(outer_triggered.get(), 1);
+        assert_eq!(inner_triggered.get(), 1);
+        observer.stop();
+    }
+
+    #[test]
+    fn unwound_observation_does_not_leak_reads_into_reused_storage() {
+        let _guard = reset_runtime();
+        let abandoned = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let live = SnapshotMutableState::new_in_arc(0, Arc::new(NeverEqual));
+        let triggered = Rc::new(Cell::new(0));
+        let observer = SnapshotStateObserver::new(|callback| callback());
+        observer.start();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            observer.observe_reads(
+                TestScope("abandoned"),
+                |_| {},
+                || {
+                    let _ = abandoned.get();
+                    panic!("abandon observation");
+                },
+            );
+        }));
+        assert!(result.is_err());
+        observer.observe_reads(
+            TestScope("live"),
+            {
+                let triggered = Rc::clone(&triggered);
+                move |_| triggered.set(triggered.get() + 1)
+            },
+            || {
+                let _ = live.get();
+            },
+        );
+
+        let snapshot = take_mutable_snapshot(None, None);
+        snapshot.enter(|| abandoned.set(1));
+        snapshot.apply().check();
+        assert_eq!(triggered.get(), 0);
+        let snapshot = take_mutable_snapshot(None, None);
+        snapshot.enter(|| live.set(1));
+        snapshot.apply().check();
+        assert_eq!(triggered.get(), 1);
         observer.stop();
     }
 

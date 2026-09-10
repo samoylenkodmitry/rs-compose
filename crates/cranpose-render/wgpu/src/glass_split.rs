@@ -47,6 +47,7 @@ struct Reach {
     corner: f32,
     interior_inset: f32,
     rim_high: f32,
+    outer_outset: f32,
 }
 
 fn uniform(shader: &RuntimeShader, slot: usize) -> f32 {
@@ -108,13 +109,22 @@ fn reach(shader: &RuntimeShader, origin: (f32, f32), layer_pixel_rect: [f32; 4])
     let gradient = GRADIENT_EXTENT_DP * scale;
     let edge = EDGE_EXTENT_DP * scale;
     let fold = uniform(shader, GLASS_FOLD_DEPTH_UNIFORM).max(0.0) * scale;
-    let rim_low = 1.5 * gradient + (0.25 * lens).max(MIN_BAND_WIDTH_PX) + 1.0;
-    let rim_high = 1.5 * gradient
-        + (0.25 * lens_high).max(MIN_BAND_WIDTH_PX)
-        + gradient.max(MIN_BAND_WIDTH_PX)
-        + edge.max(MIN_LINE_WIDTH_PX)
-        + (lens_high / 8.0).max(MIN_LINE_WIDTH_PX)
-        + fold
+    let rim_low = if raised(shader, "GLASS_RIM_STYLE_OFF") {
+        gradient.max(MIN_BAND_WIDTH_PX) + 1.0
+    } else {
+        1.5 * gradient + (0.25 * lens).max(MIN_BAND_WIDTH_PX) + 1.0
+    };
+    let surface = raised(shader, "GLASS_RIM_STYLE_OFF");
+    let meniscus_high = if surface {
+        0.0
+    } else {
+        1.5 * gradient + (0.25 * lens_high).max(MIN_BAND_WIDTH_PX)
+    };
+    let border_divisor = if surface { 16.0 } else { 8.0 };
+    let rim_high = meniscus_high
+        .max(gradient.max(MIN_BAND_WIDTH_PX))
+        .max(edge.max(MIN_LINE_WIDTH_PX) + (lens_high / border_divisor).max(MIN_LINE_WIDTH_PX))
+        .max(fold)
         + 1.0
         + PIXEL_MARGIN;
     Reach {
@@ -125,6 +135,7 @@ fn reach(shader: &RuntimeShader, origin: (f32, f32), layer_pixel_rect: [f32; 4])
         corner: corner.max(0.0),
         interior_inset: rim_low * LOWER_BOUND_SLACK,
         rim_high,
+        outer_outset: gradient + PIXEL_MARGIN,
     }
 }
 
@@ -154,6 +165,25 @@ pub(crate) fn split_scissors(
         return None;
     }
     let reach = reach(shader, origin, layer_pixel_rect);
+    let bounds = if raised(shader, "GLASS_SHADOW_OFF") && raised(shader, "GLASS_ELLIPSE_BLEND_OFF")
+    {
+        let visible = pixel_rect(
+            (reach.inner_x - reach.outer_outset).floor(),
+            (reach.inner_y - reach.outer_outset).floor(),
+            (reach.inner_x + reach.width + reach.outer_outset).ceil(),
+            (reach.inner_y + reach.height + reach.outer_outset).ceil(),
+        )
+        .and_then(|rect| intersect(rect, bounds));
+        let Some(visible) = visible else {
+            return Some(SplitScissors {
+                interior: None,
+                rim: [None; 4],
+            });
+        };
+        visible
+    } else {
+        bounds
+    };
     let rim_inset = reach.rim_high + (reach.corner - reach.rim_high).max(0.0) * CORNER_TANGENT;
     let interior = pixel_rect(
         (reach.inner_x + reach.interior_inset).floor() - PIXEL_MARGIN,
@@ -294,7 +324,7 @@ mod tests {
         shader.set_float2(CONTAINER_UNIFORM, 200.0, 70.0);
         shader.set_float2(CENTER_UNIFORM, 100.0, 35.0);
         shader.set_float2(SIZE_UNIFORM, 200.0, 70.0);
-        shader.set_float(CORNER_RADIUS_UNIFORM, 20.0);
+        shader.set_float(CORNER_RADIUS_UNIFORM, 25.0);
         let rect = [0.0, 0.0, 445.0, 156.0];
         let reach = reach(&shader, (0.0, 0.0), rect);
         let whole_corner_hole = reach.height - 2.0 * (reach.rim_high + reach.corner);

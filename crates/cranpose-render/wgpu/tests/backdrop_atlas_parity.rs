@@ -39,13 +39,11 @@ fn striped_page() -> Vec<RenderNode> {
 fn unbatched(effect: RenderEffect) -> RenderEffect {
     match effect {
         RenderEffect::Shader { mut shader } => {
-            shader.set_batched_source(false);
+            std::sync::Arc::make_mut(&mut shader).set_batched_source(false);
             RenderEffect::Shader { shader }
         }
-        RenderEffect::Chain { first, second } => RenderEffect::Chain {
-            first: Box::new(unbatched(*first)),
-            second: Box::new(unbatched(*second)),
-        },
+        RenderEffect::Chain { first, second } => unbatched(std::sync::Arc::unwrap_or_clone(first))
+            .then(unbatched(std::sync::Arc::unwrap_or_clone(second))),
         other => other,
     }
 }
@@ -195,7 +193,7 @@ fn effect_fs(input: VertexOutput) -> @location(0) vec4<f32> {
 "#
     ));
     shader.set_batched_source(true);
-    RenderEffect::Shader { shader }
+    RenderEffect::runtime_shader(shader)
 }
 
 fn pixel_at(frame: &CapturedFrame, x: f32, y: f32) -> [u8; 4] {
@@ -221,7 +219,7 @@ fn effect_fs(input: VertexOutput) -> @location(0) vec4<f32> {
     ));
     shader.set_batched_source(true);
     shader.set_draw_split(Some(name));
-    RenderEffect::Shader { shader }
+    RenderEffect::runtime_shader(shader)
 }
 
 #[test]
@@ -254,7 +252,7 @@ fn active_glass(activity: f32, rim_style: f32, specialized: bool) -> RenderEffec
     if specialized {
         cranpose_ui_graphics::specialize_liquid_glass(&mut shader);
     }
-    RenderEffect::blur(BLUR_RADIUS).then(RenderEffect::Shader { shader })
+    RenderEffect::blur(BLUR_RADIUS).then(RenderEffect::runtime_shader(shader))
 }
 
 #[test]
@@ -410,6 +408,78 @@ fn a_blurred_neighbour_preserves_averaged_substrates() {
         support::page_graph(FRAME_WIDTH, FRAME_HEIGHT, children),
     );
     assert_first_glass_averages(&page, &frame);
+}
+
+#[test]
+fn blur_substrates_preserve_captures_and_match_mixed_atlases_across_frames() {
+    let mut renderer = support::headless_renderer().expect("GPU renderer");
+    for (color, y_offset, count, radius_px) in [
+        (Color::RED, 0.0, 3, 12.0),
+        (Color::BLUE, -48.0, 4, 3.0),
+        (Color::GREEN, 0.0, 2, 20.0),
+        (Color::WHITE, -12.0, 3, 7.0),
+    ] {
+        let scene = |mixed| {
+            let mut children = striped_page();
+            children.push(solid_rect(rect(0.0, 42.0, FRAME_WIDTH as f32, 9.0), color));
+            for index in 0..count {
+                let spec = if mixed && index == 2 {
+                    SubstrateSpec::Average { block: 4 }
+                } else {
+                    SubstrateSpec::Blur { radius_px }
+                };
+                let mut node = glass_layer(
+                    index,
+                    if index == 0 {
+                        glass_shader()
+                    } else {
+                        support::substrate_probe(spec, SubstrateProbeRead::Held)
+                    },
+                );
+                if let RenderNode::Layer(layer) = &mut node {
+                    layer.transform_to_parent = ProjectiveTransform::translation(
+                        GLASS_LEFT + index as f32 * GLASS_PITCH,
+                        GLASS_TOP + y_offset,
+                    );
+                }
+                children.push(node);
+            }
+            support::page_graph(FRAME_WIDTH, FRAME_HEIGHT, children)
+        };
+        let direct = capture(&mut renderer, scene(false));
+        let reference = capture(
+            &mut support::LockedRenderer::beside_locked().expect("reference renderer"),
+            scene(false),
+        );
+        assert_eq!(
+            support::max_channel_delta(&direct.pixels, &reference.pixels),
+            0,
+            "reused blur uploads must match a fresh frame"
+        );
+        let mixed = capture(&mut renderer, scene(true));
+        let top = (GLASS_TOP + y_offset).max(0.0);
+        let visible_glass = rect(
+            GLASS_LEFT,
+            top,
+            GLASS_WIDTH,
+            GLASS_TOP + y_offset + GLASS_HEIGHT - top,
+        );
+        assert!(support::distinct_colors(&region_pixels(&direct, visible_glass)) > 8);
+        let region = rect(
+            0.0,
+            0.0,
+            GLASS_LEFT + 2.0 * GLASS_PITCH,
+            FRAME_HEIGHT as f32,
+        );
+        let delta = support::max_channel_delta(
+            &region_pixels(&direct, region),
+            &region_pixels(&mixed, region),
+        );
+        assert!(
+            delta <= 1,
+            "blur substrate changed by {delta} beside an average"
+        );
+    }
 }
 
 /// A blurred glass reads its blur downscaled, and its rounded mask is
@@ -854,7 +924,7 @@ fn effect_fs(input: VertexOutput) -> @location(0) vec4<f32> {
 "#
     ));
     shader.set_batched_source(true);
-    RenderEffect::Shader { shader }
+    RenderEffect::runtime_shader(shader)
 }
 
 fn layout_probe_glasses(present: &[usize]) -> RenderGraph {

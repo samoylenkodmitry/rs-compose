@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use cranpose_ui_graphics::{BlendMode, Rect, RuntimeShader};
 
@@ -89,7 +89,7 @@ pub(crate) enum ResolvedCompositeKind {
         source_viewport: Option<(f32, f32, f32, f32)>,
     },
     Shader {
-        shader: Rc<RuntimeShader>,
+        shader: Arc<RuntimeShader>,
         layer_pixel_rect: [f32; 4],
         source_region: Option<(f32, f32, f32, f32)>,
         source_logical_size: Option<(f32, f32)>,
@@ -121,7 +121,6 @@ pub(crate) struct PassSegment<'a> {
 
 enum Item<'a> {
     Run(&'a RunDraw, Option<std::ops::Range<u32>>),
-    ShadowRun(RunDraw),
     Image(usize),
     Text(&'a TextDraw),
     Composite(&'a ResolvedComposite),
@@ -390,12 +389,8 @@ impl GpuRenderer {
                         .draw_prepared_composite(pass, target_size, prepared);
                 }
                 Batch::Shader(prepared) => {
-                    self.effect_renderer.draw_prepared_shader_src_over(
-                        &self.device,
-                        pass,
-                        target_size,
-                        prepared,
-                    );
+                    self.effect_renderer
+                        .draw_prepared_shader_src_over(pass, target_size, prepared);
                 }
                 Batch::Projective(prepared) => {
                     self.effect_renderer.draw_prepared_projective_composite(
@@ -492,14 +487,15 @@ pub(crate) fn segment_draws_anything(
     root_scale: f32,
 ) -> bool {
     let viewport_rect = segment_viewport_rect(target, segment, root_scale);
-    !merge_items(
+    merge_items(
         segment,
         viewport_rect,
         root_scale,
         (target.width, target.height),
         false,
     )
-    .is_empty()
+    .next()
+    .is_some()
 }
 
 /// Re-bases an inverse (target pixel -> source pixel) matrix onto a target
@@ -518,53 +514,57 @@ fn merge_items<'a>(
     root_scale: f32,
     target_size: (u32, u32),
     skip_text: bool,
-) -> Vec<Item<'a>> {
-    let mut items = Vec::with_capacity(segment.ops.len() + segment.composites.len());
+) -> impl Iterator<Item = Item<'a>> + use<'a> {
+    let scene = segment.scene;
+    let mut ops = segment.ops.iter().enumerate().peekable();
     let mut composites = segment.composites.iter().peekable();
-    let mut push_composites_below = |items: &mut Vec<Item<'a>>, z: usize| {
-        while let Some(composite) = composites.peek() {
-            if composite.z_index > z {
-                break;
+    let mut shadow_texts: std::slice::Iter<'a, TextDraw> = [].iter();
+    let offset = segment.offset;
+    let scissor = segment.scissor;
+    let first_run_window = segment.first_run_window.clone();
+    std::iter::from_fn(move || {
+        loop {
+            if let Some(text) = shadow_texts
+                .find(|text| text_draw_is_visible_in_rect(text, viewport_rect, root_scale))
+            {
+                return Some(Item::Text(text));
             }
-            let composite = composites.next().expect("peeked composite");
-            if composite_visible(composite, target_size, segment.offset, segment.scissor) {
-                items.push(Item::Composite(composite));
-            }
-        }
-    };
-    for (op_index, op) in segment.ops.iter().enumerate() {
-        push_composites_below(&mut items, op.z_index);
-        if !op_is_visible_in_rect(segment.scene, op, viewport_rect, root_scale) {
-            continue;
-        }
-        match op.kind {
-            DrawOpKind::Run(index) => {
-                let run = &segment.scene.runs[index];
-                if run_has_shapes(run) {
-                    let window = (op_index == 0)
-                        .then(|| segment.first_run_window.clone())
-                        .flatten();
-                    items.push(Item::Run(run, window));
+            let next_z = ops.peek().map(|(_, op)| op.z_index);
+            if composites
+                .peek()
+                .is_some_and(|composite| next_z.is_none_or(|z| composite.z_index <= z))
+            {
+                let composite = composites.next().expect("peeked composite");
+                if composite_visible(composite, target_size, offset, scissor) {
+                    return Some(Item::Composite(composite));
                 }
+                continue;
             }
-            DrawOpKind::Image(index) => items.push(Item::Image(index)),
-            DrawOpKind::Text(_) if skip_text => {}
-            DrawOpKind::Text(index) => items.push(Item::Text(&segment.scene.texts[index])),
-            DrawOpKind::Shadow(index) => {
-                let shadow = &segment.scene.shadow_draws[index];
-                if let Some(run) = unblurred_shadow_run(shadow, viewport_rect, root_scale) {
-                    items.push(Item::ShadowRun(run));
+            let (op_index, op) = ops.next()?;
+            if !op_is_visible_in_rect(scene, op, viewport_rect, root_scale) {
+                continue;
+            }
+            match op.kind {
+                DrawOpKind::Run(index) => {
+                    let run = &scene.runs[index];
+                    if run_has_shapes(run) {
+                        let window = (op_index == 0).then(|| first_run_window.clone()).flatten();
+                        return Some(Item::Run(run, window));
+                    }
                 }
-                for text in &shadow.texts {
-                    if text_draw_is_visible_in_rect(text, viewport_rect, root_scale) {
-                        items.push(Item::Text(text));
+                DrawOpKind::Image(index) => return Some(Item::Image(index)),
+                DrawOpKind::Text(_) if skip_text => {}
+                DrawOpKind::Text(index) => return Some(Item::Text(&scene.texts[index])),
+                DrawOpKind::Shadow(index) => {
+                    let shadow = &scene.shadow_draws[index];
+                    shadow_texts = shadow.texts.iter();
+                    if let Some(run) = unblurred_shadow_run(shadow, viewport_rect, root_scale) {
+                        return Some(Item::Run(run, None));
                     }
                 }
             }
         }
-    }
-    push_composites_below(&mut items, usize::MAX);
-    items
+    })
 }
 
 /// An unblurred shadow's casters as a run, when any of them reaches the
@@ -573,9 +573,9 @@ fn unblurred_shadow_run(
     shadow: &crate::scene::ShadowDraw,
     viewport_rect: Rect,
     root_scale: f32,
-) -> Option<RunDraw> {
+) -> Option<&RunDraw> {
     let run = shadow.shapes.as_ref()?;
-    run_draw_is_visible_in_rect(run, viewport_rect, root_scale).then(|| run.clone())
+    run_draw_is_visible_in_rect(run, viewport_rect, root_scale).then_some(run)
 }
 
 /// The per-frame vectors a pass fills: image and glyph geometry and draw
@@ -615,13 +615,14 @@ impl<'s, C: FrameCommandRecorder> PassPrep<'_, 's, C> {
         };
         let viewport_rect = segment_viewport_rect(self.target, segment, self.root_scale);
         let uniform_slot = renderer.claim_uniform_slot(viewport);
-        let items = merge_items(
+        let mut items = Vec::with_capacity(segment.ops.len() + segment.composites.len());
+        items.extend(merge_items(
             segment,
             viewport_rect,
             self.root_scale,
             self.target_size(),
             renderer.ablation.text,
-        );
+        ));
         let run = SegmentRun {
             segment,
             viewport,
@@ -630,7 +631,7 @@ impl<'s, C: FrameCommandRecorder> PassPrep<'_, 's, C> {
         let mut index = 0;
         while index < items.len() {
             index = match &items[index] {
-                Item::Run(..) | Item::ShadowRun(_) => self.run_items(renderer, &items, index, &run),
+                Item::Run(..) => self.run_items(renderer, &items, index, &run),
                 Item::Image(_) => self.image_run(renderer, &items, index, &run, scratch)?,
                 Item::Text(text) => {
                     self.text_item(renderer, text, &run, scratch)?;
@@ -676,7 +677,6 @@ impl<'s, C: FrameCommandRecorder> PassPrep<'_, 's, C> {
         while end < items.len() {
             let (draw, window) = match &items[end] {
                 Item::Run(draw, window) => (*draw, window.clone().unwrap_or(0..u32::MAX)),
-                Item::ShadowRun(draw) => (draw, 0..u32::MAX),
                 _ => break,
             };
             if renderer.run_is_stored(draw) {
@@ -865,14 +865,13 @@ impl<'s, C: FrameCommandRecorder> PassPrep<'_, 's, C> {
                     source_viewport: *source_viewport,
                     sample_mode: *sample_mode,
                 };
-                let prepared = renderer.effect_renderer.prepare_composite_batch_draws(
+                let prepared = renderer.effect_renderer.prepare_composite_draw(
                     self.recorder,
                     self.device,
                     self.load_op,
-                    std::slice::from_ref(&item),
+                    &item,
                 );
-                self.batches
-                    .extend(prepared.into_iter().map(Batch::Composite));
+                self.batches.push(Batch::Composite(prepared));
             }
             ResolvedCompositeKind::Shader {
                 shader,
@@ -897,13 +896,9 @@ impl<'s, C: FrameCommandRecorder> PassPrep<'_, 's, C> {
                 };
                 let prepared = renderer
                     .effect_renderer
-                    .prepare_shader_batch_draws(
-                        self.recorder,
-                        self.device,
-                        std::slice::from_ref(&item),
-                    )
+                    .prepare_shader_draw(self.recorder, self.device, &item)
                     .ok_or_else(|| "shader composite preparation failed".to_string())?;
-                self.batches.extend(prepared.into_iter().map(Batch::Shader));
+                self.batches.push(Batch::Shader(prepared));
             }
             ResolvedCompositeKind::Projective {
                 dest_quad,
@@ -938,4 +933,109 @@ struct SegmentRun<'s, 'a> {
     segment: &'a PassSegment<'s>,
     viewport: ViewportUniformParams,
     uniform_slot: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use cranpose_ui_graphics::{Brush, Color, DrawPrimitive, Point, ShapeRecorder};
+
+    use super::*;
+    use crate::scene::{Placement, ShadowDraw};
+
+    #[test]
+    fn shadow_run_items_preserve_geometry_culling_and_first_run_window() {
+        let run = |x| {
+            let mut recorder = ShapeRecorder::default();
+            for y in [0.0, 8.0] {
+                recorder.push_primitive(DrawPrimitive::Rect {
+                    rect: Rect {
+                        x,
+                        y,
+                        width: 8.0,
+                        height: 8.0,
+                    },
+                    brush: Brush::solid(Color::WHITE),
+                    stroke: None,
+                });
+            }
+            RunDraw::whole(
+                std::sync::Arc::new(recorder),
+                Placement::at(Point::default(), None, None),
+            )
+            .unwrap()
+        };
+        let mut scene = CompositorScene::new();
+        scene.push_run(run(0.0));
+        for x in [16.0, 128.0] {
+            scene.push_shadow_draw(ShadowDraw {
+                shapes: Some(run(x)),
+                post_blur_cutouts: None,
+                texts: Vec::new(),
+                blur_radius: 0.0,
+                clip: None,
+                rounded_clip: None,
+                occluder: None,
+                z_index: 0,
+            });
+        }
+        let segment = PassSegment {
+            scene: &scene,
+            ops: &scene.draw_ops,
+            composites: &[],
+            offset: [0.0, 0.0],
+            scissor: None,
+            first_run_window: Some(1..2),
+        };
+        let items = merge_items(
+            &segment,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 64.0,
+                height: 64.0,
+            },
+            1.0,
+            (64, 64),
+            false,
+        )
+        .collect::<Vec<_>>();
+        assert_eq!(items.len(), 2);
+        let Item::Run(ordinary, window) = &items[0] else {
+            panic!("expected the ordinary run")
+        };
+        assert!(std::ptr::eq(*ordinary, &scene.runs[0]));
+        assert_eq!(*window, Some(1..2));
+        let Item::Run(shadow, window) = &items[1] else {
+            panic!("expected the visible shadow run")
+        };
+        assert!(std::ptr::eq(
+            *shadow,
+            scene.shadow_draws[0].shapes.as_ref().unwrap()
+        ));
+        assert_eq!(*window, None);
+        assert_eq!(shadow.record_count(), 2);
+        for (x, expected) in [(16.0, Some(0)), (128.0, Some(1)), (256.0, None)] {
+            let mut visible = merge_items(
+                &segment,
+                Rect {
+                    x,
+                    y: 0.0,
+                    width: 8.0,
+                    height: 16.0,
+                },
+                1.0,
+                (64, 64),
+                false,
+            );
+            match (visible.next(), expected) {
+                (Some(Item::Run(run, None)), Some(index)) => assert!(std::ptr::eq(
+                    run,
+                    scene.shadow_draws[index].shapes.as_ref().unwrap()
+                )),
+                (None, None) => {}
+                _ => panic!("incorrect first visible shadow at x={x}"),
+            }
+            assert!(visible.next().is_none());
+        }
+    }
 }

@@ -4,6 +4,7 @@ use cranpose_core::NodeId;
 use cranpose_foundation::PointerEvent;
 use cranpose_ui::Point;
 use cranpose_ui_graphics::{Rect, RoundedCornerShape};
+use smallvec::SmallVec;
 
 use crate::{
     graph::{LayerNode, ProjectiveTransform, RenderNode, quad_bounds},
@@ -16,7 +17,7 @@ pub trait HitGraphSink {
         &mut self,
         node_id: NodeId,
         capture_path: &[NodeId],
-        geometry: HitGeometry,
+        geometry: HitGeometry<'_>,
         shape: Option<RoundedCornerShape>,
         click_actions: &[Rc<dyn Fn(Point)>],
         pointer_inputs: &[Rc<dyn Fn(PointerEvent)>],
@@ -28,7 +29,7 @@ impl HitGraphSink for Scene {
         &mut self,
         node_id: NodeId,
         capture_path: &[NodeId],
-        geometry: HitGeometry,
+        geometry: HitGeometry<'_>,
         shape: Option<RoundedCornerShape>,
         click_actions: &[Rc<dyn Fn(Point)>],
         pointer_inputs: &[Rc<dyn Fn(PointerEvent)>],
@@ -36,15 +37,11 @@ impl HitGraphSink for Scene {
         Scene::push_hit(
             self,
             node_id,
-            capture_path.to_vec(),
+            capture_path,
             geometry,
             shape,
-            click_actions
-                .iter()
-                .cloned()
-                .map(ClickAction::WithPoint)
-                .collect(),
-            pointer_inputs.to_vec(),
+            click_actions.iter().cloned().map(ClickAction::WithPoint),
+            pointer_inputs,
         );
     }
 }
@@ -60,6 +57,7 @@ pub fn collect_hits_from_graph<S: HitGraphSink>(
     }
     let mut hit_clips = Vec::new();
     let mut pointer_input_ancestors = Vec::new();
+    let mut capture_path = SmallVec::<[NodeId; 8]>::new();
     collect_hits_from_graph_inner(
         layer,
         parent_transform,
@@ -67,6 +65,7 @@ pub fn collect_hits_from_graph<S: HitGraphSink>(
         parent_hit_clip,
         &mut hit_clips,
         &mut pointer_input_ancestors,
+        &mut capture_path,
     );
 }
 
@@ -77,6 +76,7 @@ fn collect_hits_from_graph_inner<S: HitGraphSink>(
     parent_hit_clip: Option<Rect>,
     hit_clips: &mut Vec<HitClip>,
     pointer_input_ancestors: &mut Vec<NodeId>,
+    capture_path: &mut SmallVec<[NodeId; 8]>,
 ) {
     if !layer.has_hit_targets {
         return;
@@ -110,19 +110,19 @@ fn collect_hits_from_graph_inner<S: HitGraphSink>(
     }
 
     if let (Some(node_id), Some(hit)) = (layer.node_id, &layer.hit_test) {
-        let mut capture_path = Vec::with_capacity(1 + pointer_input_ancestors.len());
+        capture_path.clear();
         capture_path.push(node_id);
         capture_path.extend(pointer_input_ancestors.iter().rev().copied());
         sink.push_hit(
             node_id,
-            &capture_path,
+            capture_path,
             HitGeometry {
                 rect: transformed_rect,
                 quad: transformed_quad,
                 local_bounds: layer.local_bounds,
                 world_to_local,
                 hit_clip_bounds,
-                hit_clips: hit_clips.to_vec(),
+                hit_clips,
             },
             hit.shape,
             &hit.click_actions,
@@ -148,6 +148,7 @@ fn collect_hits_from_graph_inner<S: HitGraphSink>(
                 hit_clip_bounds,
                 hit_clips,
                 pointer_input_ancestors,
+                capture_path,
             );
         }
     }
@@ -185,7 +186,7 @@ mod tests {
             &mut self,
             node_id: NodeId,
             capture_path: &[NodeId],
-            geometry: HitGeometry,
+            geometry: HitGeometry<'_>,
             _shape: Option<RoundedCornerShape>,
             _click_actions: &[Rc<dyn Fn(Point)>],
             _pointer_inputs: &[Rc<dyn Fn(PointerEvent)>],
@@ -288,6 +289,29 @@ mod tests {
             })
         );
         assert_eq!(*child_clip_count, 2);
+    }
+
+    #[test]
+    fn capture_paths_do_not_leak_between_siblings_or_traversals() {
+        let identity = ProjectiveTransform::identity();
+        let mut root = test_layer(12, identity);
+        for node_id in (1..12).rev() {
+            let mut parent = test_layer(node_id, identity);
+            parent.hit_test.as_mut().unwrap().pointer_inputs = vec![Rc::new(|_| {})];
+            parent.children.push(RenderNode::Layer(Box::new(root)));
+            root = parent;
+        }
+        root.children
+            .push(RenderNode::Layer(Box::new(test_layer(13, identity))));
+        let mut sink = TestSink::default();
+        collect_hits_from_graph(&root, identity, &mut sink, None);
+        collect_hits_from_graph(&test_layer(14, identity), identity, &mut sink, None);
+        let mut expected: Vec<Vec<_>> = (1..=12)
+            .map(|node_id| (1..=node_id).rev().collect())
+            .collect();
+        expected.extend([vec![13, 1], vec![14]]);
+        let paths: Vec<_> = sink.hits.into_iter().map(|hit| hit.1).collect();
+        assert_eq!(paths, expected);
     }
 
     #[test]

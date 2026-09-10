@@ -4,6 +4,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::Range,
     rc::Rc,
+    sync::Arc,
 };
 
 use cranpose_core::NodeId;
@@ -15,6 +16,7 @@ use cranpose_ui_graphics::{
     BlendMode, MAX_SUBSTRATES, Point, Rect, RenderEffect, RenderHash, RuntimeShader, SubstrateSpec,
     TileMode,
 };
+use smallvec::{SmallVec, smallvec};
 
 use crate::{
     ablation::Ablation,
@@ -118,15 +120,15 @@ impl DeviceRect {
 
     /// What is left of the rect outside `hole`: up to four rects that
     /// partition it exactly, none overlapping the hole.
-    fn subtract(self, hole: Self) -> Vec<Self> {
+    fn subtract(self, hole: Self) -> SmallVec<[Self; 4]> {
         let Some(hole) = hole.intersect(self) else {
-            return vec![self];
+            return smallvec![self];
         };
         let right = self.x + self.width;
         let bottom = self.y + self.height;
         let hole_right = hole.x + hole.width;
         let hole_bottom = hole.y + hole.height;
-        let mut parts = Vec::with_capacity(4);
+        let mut parts = SmallVec::new();
         let mut push = |x: f32, y: f32, width: f32, height: f32| {
             if width > 0.0 && height > 0.0 {
                 parts.push(Self {
@@ -145,8 +147,8 @@ impl DeviceRect {
     }
 
     /// The rect minus every hole, as rects that partition what is left.
-    fn subtract_all(self, holes: &[Self]) -> Vec<Self> {
-        holes.iter().fold(vec![self], |parts, hole| {
+    fn subtract_all(self, holes: &[Self]) -> SmallVec<[Self; 4]> {
+        holes.iter().fold(smallvec![self], |parts, hole| {
             parts
                 .into_iter()
                 .flat_map(|part| part.subtract(*hole))
@@ -420,6 +422,21 @@ struct Blocker {
     rect: DeviceRect,
 }
 
+fn collect_covered_rects(
+    holes: &[Blocker],
+    z: usize,
+    coverage: DeviceRect,
+    covered: &mut Vec<DeviceRect>,
+) {
+    covered.clear();
+    covered.extend(
+        holes
+            .iter()
+            .filter(|hole| hole.z < z)
+            .filter_map(|hole| hole.rect.intersect(coverage)),
+    );
+}
+
 /// One thing a flush may draw, in the order the pass draws them: at one z
 /// a composite before an op. A composite is named by its index in the
 /// flush's list, so the candidates stay small enough to sort in place.
@@ -437,6 +454,12 @@ impl Candidate {
     }
 }
 
+fn ensure_sorted_by_key<T, K: Ord>(values: &mut [T], key: impl Fn(&T) -> K) {
+    if !values.is_sorted_by_key(&key) {
+        values.sort_by_key(key);
+    }
+}
+
 impl LayerPass<'_> {
     fn target_rect(&self) -> DeviceRect {
         self.page.rect()
@@ -444,13 +467,14 @@ impl LayerPass<'_> {
 
     /// The ops between the page's drawn z and `z` outside the excluded
     /// ranges, with the deferred ops below `z`, in z order.
-    fn ops_below(&self, z: usize) -> Vec<DrawOp> {
-        let deferred_end = self.deferred.partition_point(|op| op.z_index < z);
-        let mut ops =
-            filtered_ops_in_range(&self.layer.scene.draw_ops, self.drawn_z, z, &self.excluded);
-        ops.extend_from_slice(&self.deferred[..deferred_end]);
-        ops.sort_by_key(|op| op.z_index);
-        ops
+    fn ops_below(&self, z: usize) -> Cow<'_, [DrawOp]> {
+        pending_draw_ops(
+            &self.layer.scene.draw_ops,
+            self.drawn_z,
+            z,
+            &self.excluded,
+            &self.deferred,
+        )
     }
 
     /// Splits what a flush would draw into what draws now and what waits.
@@ -460,9 +484,16 @@ impl LayerPass<'_> {
     /// nothing above it that overlaps it is drawn before it.
     fn release(
         &mut self,
-        ops: Vec<DrawOp>,
-        composites: Vec<ResolvedComposite>,
+        mut ops: Vec<DrawOp>,
+        mut composites: Vec<ResolvedComposite>,
     ) -> (Vec<DrawOp>, Vec<ResolvedComposite>) {
+        if self.blockers.is_empty() {
+            ensure_sorted_by_key(&mut ops, |op| op.z_index);
+            composites.retain(|composite| composite_coverage(composite).is_some());
+            ensure_sorted_by_key(&mut composites, |composite| composite.z_index);
+            ensure_sorted_by_key(&mut self.deferred, |op| op.z_index);
+            return (ops, composites);
+        }
         let scene = &self.layer.scene;
         let scale = self.scale;
         let mut candidates: Vec<Candidate> = composites
@@ -478,6 +509,7 @@ impl LayerPass<'_> {
         let mut composites: Vec<Option<ResolvedComposite>> =
             composites.into_iter().map(Some).collect();
         let mut holes = self.blockers.clone();
+        let mut covered = Vec::new();
         let mut now_ops = Vec::new();
         let mut now = Vec::new();
         for candidate in candidates {
@@ -485,17 +517,24 @@ impl LayerPass<'_> {
                 Candidate::Op(op) => {
                     let bounds = op_draw_bounds(scene, &op, scale)
                         .map(|bounds| DeviceRect::from_logical(bounds, scale));
-                    let blocked = bounds.filter(|bounds| {
-                        holes.iter().any(|hole| {
-                            hole.z < op.z_index && hole.rect.intersect(*bounds).is_some()
-                        })
+                    let blocked = bounds.and_then(|bounds| {
+                        holes
+                            .iter()
+                            .filter(|hole| hole.z < op.z_index)
+                            .find_map(|hole| {
+                                hole.rect
+                                    .intersect(bounds)
+                                    .map(|part| (bounds, part == bounds))
+                            })
                     });
                     match blocked {
-                        Some(rect) => {
-                            holes.push(Blocker {
-                                z: op.z_index,
-                                rect,
-                            });
+                        Some((rect, fully_covered)) => {
+                            if !fully_covered {
+                                holes.push(Blocker {
+                                    z: op.z_index,
+                                    rect,
+                                });
+                            }
                             self.deferred.push(op);
                         }
                         None => now_ops.push(op),
@@ -508,11 +547,7 @@ impl LayerPass<'_> {
                     let Some(coverage) = composite_coverage(&composite) else {
                         continue;
                     };
-                    let covered: Vec<DeviceRect> = holes
-                        .iter()
-                        .filter(|hole| hole.z < composite.z_index)
-                        .filter_map(|hole| hole.rect.intersect(coverage))
-                        .collect();
+                    collect_covered_rects(&holes, composite.z_index, coverage, &mut covered);
                     if covered.is_empty() {
                         now.push(composite);
                         continue;
@@ -525,10 +560,6 @@ impl LayerPass<'_> {
                     );
                     for (index, hole) in covered.iter().enumerate() {
                         for part in hole.subtract_all(&covered[..index]) {
-                            holes.push(Blocker {
-                                z: composite.z_index,
-                                rect: part,
-                            });
                             self.pending.push(with_scissor(&composite, part));
                         }
                     }
@@ -541,7 +572,7 @@ impl LayerPass<'_> {
 
     /// The pending composites below `z`, in z order.
     fn pending_below(&mut self, z: usize) -> &[ResolvedComposite] {
-        self.pending.sort_by_key(|composite| composite.z_index);
+        ensure_sorted_by_key(&mut self.pending, |composite| composite.z_index);
         let end = self
             .pending
             .partition_point(|composite| composite.z_index < z);
@@ -579,8 +610,8 @@ struct BlurSpec {
 #[derive(Clone, Copy)]
 enum BatchedEffect<'a> {
     Blur(BlurSpec),
-    Shader(&'a RuntimeShader),
-    BlurThenShader(BlurSpec, &'a RuntimeShader),
+    Shader(&'a Arc<RuntimeShader>),
+    BlurThenShader(BlurSpec, &'a Arc<RuntimeShader>),
 }
 
 impl<'a> BatchedEffect<'a> {
@@ -969,7 +1000,7 @@ fn layer_pixel_rect(child: &ChildLayer, surface_rect: DeviceRect, scale: f32) ->
 #[allow(clippy::too_many_arguments)]
 fn shader_tail_composite(
     child: &ChildLayer,
-    shader: &RuntimeShader,
+    shader: &Arc<RuntimeShader>,
     z: usize,
     source: CompositeSource,
     dest: DeviceRect,
@@ -984,7 +1015,7 @@ fn shader_tail_composite(
         dest: dest.tuple(),
         scissor: Some(visible.tuple()),
         kind: ResolvedCompositeKind::Shader {
-            shader: Rc::new(shader.clone()),
+            shader: Arc::clone(shader),
             layer_pixel_rect,
             source_region: None,
             source_logical_size: None,
@@ -1185,7 +1216,7 @@ fn replayed_kind(
             alpha,
             ..
         } => ResolvedCompositeKind::Shader {
-            shader: Rc::clone(shader),
+            shader: Arc::clone(shader),
             layer_pixel_rect: item.layer_pixel_rect(),
             source_region: *source_region,
             source_logical_size: *source_logical_size,
@@ -1248,7 +1279,7 @@ fn stage_composites(
                 },
                 BatchedEffect::Shader(shader) | BatchedEffect::BlurThenShader(_, shader) => {
                     ResolvedCompositeKind::Shader {
-                        shader: Rc::new(shader.clone()),
+                        shader: Arc::clone(shader),
                         layer_pixel_rect: item.layer_pixel_rect(),
                         source_region: Some(region),
                         source_logical_size: logical_size,
@@ -1299,10 +1330,12 @@ struct PlannedSubstrate {
     atlas_slot: Option<TexelRect>,
 }
 
+type PlannedSubstrates = SmallVec<[PlannedSubstrate; MAX_SUBSTRATES]>;
+
 #[derive(Clone, Default)]
 struct SideSlots {
     blur: Option<TexelRect>,
-    substrates: Vec<TexelRect>,
+    substrates: SmallVec<[TexelRect; MAX_SUBSTRATES]>,
 }
 
 struct AtlasView<'a> {
@@ -1332,7 +1365,7 @@ impl AtlasView<'_> {
 struct StageLayout {
     atlas_sizes: Vec<(u32, u32)>,
     placements: Vec<Option<AtlasPlacement>>,
-    substrates: Vec<Vec<PlannedSubstrate>>,
+    substrates: Vec<PlannedSubstrates>,
     side_sizes: Vec<(u32, u32)>,
     side: Vec<SideSlots>,
 }
@@ -1368,23 +1401,21 @@ impl StageLayout {
         hasher.finish()
     }
 
-    fn atlas_views(&self) -> Vec<AtlasView<'_>> {
-        (0..self.atlas_sizes.len())
-            .map(|atlas| AtlasView {
-                layout: self,
-                atlas,
-                members: self
-                    .placements
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, placement)| {
-                        placement
-                            .filter(|placement| placement.atlas == atlas)
-                            .map(|placement| (index, placement))
-                    })
-                    .collect(),
-            })
-            .collect()
+    fn atlas_views(&self) -> impl Iterator<Item = AtlasView<'_>> {
+        (0..self.atlas_sizes.len()).map(|atlas| AtlasView {
+            layout: self,
+            atlas,
+            members: self
+                .placements
+                .iter()
+                .enumerate()
+                .filter_map(|(index, placement)| {
+                    placement
+                        .filter(|placement| placement.atlas == atlas)
+                        .map(|placement| (index, placement))
+                })
+                .collect(),
+        })
     }
 
     fn restrict(&self, indices: &[usize]) -> Self {
@@ -1889,10 +1920,10 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
     /// the excluded ranges, the deferred ops below `z`, and every pending
     /// composite below `z`, except what still waits behind a blocker.
     fn flush_page(&mut self, pass: &mut LayerPass<'_>, z: usize) -> Result<(), String> {
-        let ops = pass.ops_below(z);
+        let ops = pass.ops_below(z).into_owned();
         let deferred_end = pass.deferred.partition_point(|op| op.z_index < z);
         pass.deferred.drain(..deferred_end);
-        pass.pending.sort_by_key(|composite| composite.z_index);
+        ensure_sorted_by_key(&mut pass.pending, |composite| composite.z_index);
         let end = pass
             .pending
             .partition_point(|composite| composite.z_index < z);
@@ -1928,7 +1959,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
             label,
         )?;
         pass.drawn.extend(composites);
-        pass.drawn.sort_by_key(|composite| composite.z_index);
+        ensure_sorted_by_key(&mut pass.drawn, |composite| composite.z_index);
         pass.drawn_z = pass.drawn_z.max(z);
         Ok(())
     }
@@ -1974,7 +2005,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                 gate.hit(prefix.key);
             }
             composites.push(prefix_blit(&prefix, retained.texture));
-            composites.sort_by_key(|composite| composite.z_index);
+            ensure_sorted_by_key(composites, |composite| composite.z_index);
             return Ok(Some(1..u32::MAX));
         }
         self.renderer
@@ -2072,7 +2103,10 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                 if diagnose {
                     log_stage(stage, &items);
                 }
-                let mut outputs = self.run_stage(pass, &items, &layout.restrict(&indices))?;
+                let restricted =
+                    (indices.len() != layout.placements.len()).then(|| layout.restrict(&indices));
+                let mut outputs =
+                    self.run_stage(pass, &items, restricted.as_ref().unwrap_or(&layout))?;
                 self.admit_backdrops(&items, &mut outputs);
                 pass.pending.extend(outputs);
             }
@@ -2375,7 +2409,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                 dest: capture_rect.tuple(),
                 scissor: Some(support.tuple()),
                 kind: ResolvedCompositeKind::Shader {
-                    shader: Rc::new(shader.clone()),
+                    shader: Arc::clone(shader),
                     layer_pixel_rect,
                     source_region: None,
                     source_logical_size: None,
@@ -2421,23 +2455,20 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
     ) -> (
         AtlasPacker,
         Vec<Option<AtlasPlacement>>,
-        Vec<Vec<PlannedSubstrate>>,
+        Vec<PlannedSubstrates>,
     ) {
         let limit = self.renderer.max_texture_dim().min(MAX_ATLAS_DIM);
         let mut packer = AtlasPacker::new(limit);
-        let order: Vec<usize> = (0..items.len()).collect();
         let mut placements: Vec<Option<AtlasPlacement>> = vec![None; items.len()];
-        for index in &order {
-            let item = items[*index];
+        for (index, item) in items.iter().enumerate() {
             if item.batched.is_none() {
                 continue;
             }
             let (width, height) = item.capture_rect.pixel_size();
-            placements[*index] = packer.place(width, height);
+            placements[index] = packer.place(width, height);
         }
-        let mut substrates: Vec<Vec<PlannedSubstrate>> = vec![Vec::new(); items.len()];
-        for index in order {
-            let item = items[index];
+        let mut substrates = vec![PlannedSubstrates::new(); items.len()];
+        for (index, item) in items.iter().enumerate() {
             let Some(placement) = placements[index] else {
                 continue;
             };
@@ -2477,15 +2508,12 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
         let mut side_sizes = vec![(0, 0); atlas_sizes.len()];
         let mut side: Vec<SideSlots> = vec![SideSlots::default(); items.len()];
         for (atlas_index, side_size) in side_sizes.iter_mut().enumerate() {
-            let members: Vec<usize> = (0..items.len())
-                .filter(|index| {
-                    placements[*index].is_some_and(|placement| placement.atlas == atlas_index)
-                })
-                .collect();
-            let blurred: Vec<(usize, BlurSpec)> = members
-                .iter()
-                .filter_map(|index| Some((*index, items[*index].batched?.blur()?)))
-                .collect();
+            let members = (0..items.len()).filter(|index| {
+                placements[*index].is_some_and(|placement| placement.atlas == atlas_index)
+            });
+            let blurred = members
+                .clone()
+                .filter_map(|index| Some((index, items[index].batched?.blur()?)));
             let mut side_packer = AtlasPacker::new(limit);
             let mut first_atlas = |width: u32, height: u32| {
                 side_packer
@@ -2499,10 +2527,10 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                     blur_scratch_size(blur.radius_x * scale, blur.radius_y * scale, width, height);
                 side[index].blur = first_atlas(scaled_width, scaled_height);
             }
-            for index in &members {
-                for planned in &substrates[*index] {
+            for index in members {
+                for planned in &substrates[index] {
                     if let Some(slot) = first_atlas(planned.size.0, planned.size.1) {
-                        side[*index].substrates.push(slot);
+                        side[index].substrates.push(slot);
                     }
                 }
             }
@@ -2559,6 +2587,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
             regions.push(BlurRegion {
                 source: (placement.x, placement.y, width, height),
                 scratch,
+                dest: scratch,
                 radius_x,
                 radius_y,
                 tile_mode: blur.tile_mode,
@@ -2591,6 +2620,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                     SubstrateSpec::Blur { radius_px } => regions.push(BlurRegion {
                         source,
                         scratch,
+                        dest: scratch,
                         radius_x: radius_px,
                         radius_y: radius_px,
                         tile_mode: TileMode::Clamp,
@@ -2614,6 +2644,12 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
             }));
         }
         let (width, height) = view.side_size();
+        let direct_blurs = averaged.is_empty() && copies.len() == regions.len();
+        if direct_blurs {
+            for (region, (_, [x, y])) in regions.iter_mut().zip(copies.drain(..)) {
+                region.dest = (x, y, region.scratch.2, region.scratch.3);
+            }
+        }
         let scratch = self.acquire_transient("Backdrop Blur Scratch", width, height);
         let result = self.acquire_transient("Backdrop Blur Result", width, height);
         let device = self.renderer.device.clone();
@@ -2632,6 +2668,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
             AtlasSideWork {
                 blurs: &regions,
                 averages: &averaged,
+                blur_output: direct_blurs.then_some(atlas),
             },
         );
         for ((x, y, width, height), dest_origin) in copies {
@@ -2684,7 +2721,7 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                 dest: item.capture_rect.tuple(),
                 scissor: Some(item.support.unwrap_or(item.visible).tuple()),
                 kind: ResolvedCompositeKind::Shader {
-                    shader: Rc::new(shader.clone()),
+                    shader: Arc::clone(shader),
                     layer_pixel_rect,
                     source_region: None,
                     source_logical_size: None,
@@ -2776,11 +2813,11 @@ impl<'r, 'c, C: FrameCommandRecorder> FrameExecutor<'r, 'c, C> {
                     .collect()
             })
             .collect();
-        let fixups: Vec<Vec<DrawOp>> = regions
+        ensure_sorted_by_key(&mut pass.pending, |composite| composite.z_index);
+        let fixups: Vec<Cow<'_, [DrawOp]>> = regions
             .iter()
             .map(|region| pass.ops_below(region.z))
             .collect();
-        pass.pending.sort_by_key(|composite| composite.z_index);
         let target = PassTarget {
             view: &texture.view,
             width: texture.width,
@@ -3326,7 +3363,7 @@ fn beneath_for_child<'a>(
         placement,
     });
     let shift = shift.unwrap_or_default();
-    pass.pending.sort_by_key(|composite| composite.z_index);
+    ensure_sorted_by_key(&mut pass.pending, |composite| composite.z_index);
     let scene = &pass.layer.scene;
     let drawn = &pass.drawn[..pass
         .drawn
@@ -3411,7 +3448,7 @@ fn projected_placement(
 /// it and the shader itself, so the shader can draw straight into the final
 /// pass instead of through one more texture. `None` when the effect does not
 /// end in a shader.
-fn shader_tail(effect: &RenderEffect) -> Option<(Option<&RenderEffect>, &RuntimeShader)> {
+fn shader_tail(effect: &RenderEffect) -> Option<(Option<&RenderEffect>, &Arc<RuntimeShader>)> {
     match effect {
         RenderEffect::Shader { shader } => Some((None, shader)),
         RenderEffect::Chain { first, second } => match second.as_ref() {
@@ -3472,52 +3509,69 @@ fn surface_to_parent_device(
         .then(ProjectiveTransform::uniform_scale(scale))
 }
 
-/// The ops below `z_end` outside the excluded ranges. Ops are pushed in z
-/// order, so without exclusions this is a prefix of the list and borrows it.
 fn filtered_ops<'a>(
     ops: &'a [DrawOp],
     z_end: usize,
     excluded: &[(usize, usize)],
 ) -> Cow<'a, [DrawOp]> {
+    filtered_ops_in_range(ops, 0, z_end, excluded)
+}
+
+fn filtered_ops_in_range<'a>(
+    ops: &'a [DrawOp],
+    z_start: usize,
+    z_end: usize,
+    excluded: &[(usize, usize)],
+) -> Cow<'a, [DrawOp]> {
+    if z_end <= z_start {
+        return Cow::Borrowed(&[]);
+    }
+    let start = ops.partition_point(|op| op.z_index < z_start);
     let end = ops.partition_point(|op| op.z_index < z_end);
-    let prefix = &ops[..end];
+    let range = &ops[start..end];
     if excluded.is_empty() {
-        return Cow::Borrowed(prefix);
+        return Cow::Borrowed(range);
     }
     Cow::Owned(
-        prefix
+        range
             .iter()
             .filter(|op| {
                 !excluded
                     .iter()
-                    .any(|(start, end)| op.z_index >= *start && op.z_index < *end)
+                    .any(|(from, to)| op.z_index >= *from && op.z_index < *to)
             })
             .copied()
             .collect(),
     )
 }
 
-/// The ops with z in `z_start..z_end` outside the excluded ranges.
-fn filtered_ops_in_range(
-    ops: &[DrawOp],
-    z_start: usize,
-    z_end: usize,
+fn pending_draw_ops<'a>(
+    scene_ops: &'a [DrawOp],
+    drawn_z: usize,
+    z: usize,
     excluded: &[(usize, usize)],
-) -> Vec<DrawOp> {
-    if z_end <= z_start {
-        return Vec::new();
+    deferred: &'a [DrawOp],
+) -> Cow<'a, [DrawOp]> {
+    let ops = filtered_ops_in_range(scene_ops, drawn_z, z, excluded);
+    let deferred_end = deferred.partition_point(|op| op.z_index < z);
+    if deferred_end == 0 {
+        return ops;
     }
-    let start = ops.partition_point(|op| op.z_index < z_start);
-    let end = ops.partition_point(|op| op.z_index < z_end);
-    ops[start..end]
-        .iter()
-        .filter(|op| {
-            !excluded
-                .iter()
-                .any(|(from, to)| op.z_index >= *from && op.z_index < *to)
-        })
-        .copied()
-        .collect()
+    let deferred = &deferred[..deferred_end];
+    if ops.is_empty() {
+        return Cow::Borrowed(deferred);
+    }
+    let mut merged = match ops {
+        Cow::Owned(ops) => ops,
+        Cow::Borrowed(ops) => {
+            let mut merged = Vec::with_capacity(ops.len() + deferred.len());
+            merged.extend_from_slice(ops);
+            merged
+        }
+    };
+    merged.extend_from_slice(deferred);
+    merged.sort_by_key(|op| op.z_index);
+    Cow::Owned(merged)
 }
 
 /// The logical rect a child's surface covers: everything its content draws,
@@ -3635,6 +3689,91 @@ pub(crate) fn scene_bounds(layer: &LayerScene, scale: f32) -> Option<Rect> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn ensuring_z_order_sorts_changed_keys_and_preserves_ties() {
+        let mut values: Vec<_> = (0..96).map(|index| (index % 3, index)).collect();
+        let expected: Vec<_> = (0..3)
+            .flat_map(|z| (z..96).step_by(3).map(move |index| (z, index)))
+            .collect();
+        ensure_sorted_by_key(&mut values, |value| value.0);
+        assert_eq!(values, expected);
+        ensure_sorted_by_key(&mut values, |value| value.0);
+        assert_eq!(values, expected);
+        values[95].0 = 0;
+        ensure_sorted_by_key(&mut values, |value| value.0);
+        assert_eq!(values[32], (0, 95));
+        assert_eq!(&values[..32], &expected[..32]);
+        assert_eq!(&values[33..], &expected[32..95]);
+        values.clear();
+        ensure_sorted_by_key(&mut values, |value| value.0);
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn restricting_stage_layout_preserves_substrate_order_and_independent_storage() {
+        let specs = [
+            SubstrateSpec::Average { block: 4 },
+            SubstrateSpec::Blur { radius_px: 7.0 },
+            SubstrateSpec::Average { block: 8 },
+        ];
+        let mut layout = StageLayout {
+            atlas_sizes: vec![(256, 256)],
+            placements: vec![
+                Some(AtlasPlacement {
+                    atlas: 0,
+                    x: 0,
+                    y: 0
+                });
+                3
+            ],
+            substrates: (0..=specs.len() - 1)
+                .map(|member| {
+                    specs[..=member]
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, spec)| PlannedSubstrate {
+                            spec: *spec,
+                            size: (16, 8),
+                            atlas_slot: Some((slot as u32 * 16, member as u32 * 8, 16, 8)),
+                        })
+                        .collect()
+                })
+                .collect(),
+            side_sizes: vec![(128, 128)],
+            side: (0..specs.len())
+                .map(|member| SideSlots {
+                    blur: Some((0, member as u32 * 8, 16, 8)),
+                    substrates: (0..=member)
+                        .map(|slot| (slot as u32 * 16, member as u32 * 8, 16, 8))
+                        .collect(),
+                })
+                .collect(),
+        };
+        let selected = [2, 0, 1];
+        let restricted = layout.restrict(&selected);
+        for (index, original) in selected.into_iter().enumerate() {
+            assert_eq!(restricted.signature(index), layout.signature(original));
+            assert_eq!(restricted.substrates[index].len(), original + 1);
+            for (slot, planned) in restricted.substrates[index].iter().enumerate() {
+                assert_eq!(planned.spec, specs[slot]);
+                assert_eq!(planned.size, (16, 8));
+                assert_eq!(
+                    planned.atlas_slot,
+                    Some((slot as u32 * 16, original as u32 * 8, 16, 8))
+                );
+            }
+            assert_eq!(restricted.side[index].blur, layout.side[original].blur);
+            assert_eq!(
+                restricted.side[index].substrates,
+                layout.side[original].substrates
+            );
+            layout.substrates[original].clear();
+            layout.side[original].substrates.clear();
+            assert_eq!(restricted.substrates[index].len(), original + 1);
+            assert_eq!(restricted.side[index].substrates.len(), original + 1);
+        }
+    }
+
+    #[test]
     fn a_backdrop_keeps_its_capture_and_records_the_part_of_it_inside_the_effects_output_support() {
         let mut shader = RuntimeShader::new("fn glass_fs() {}");
         shader.set_input_padding(2.0);
@@ -3658,7 +3797,7 @@ mod tests {
                 clip: None,
                 rounded_clip: None,
                 snap_anchor: None,
-                effect: RenderEffect::Shader { shader },
+                effect: RenderEffect::runtime_shader(shader),
                 z_index: 0,
             };
             let planned =
@@ -3894,6 +4033,26 @@ mod tests {
     }
 
     #[test]
+    fn pending_draw_ops_keep_deferred_content_and_respect_capture_depth() {
+        let scene = [op(1), op(3), op(5), op(7)];
+        let deferred = [op(0), op(2), op(4), op(6)];
+        let depths = |ops: &[DrawOp]| ops.iter().map(|op| op.z_index).collect::<Vec<_>>();
+        let only_deferred = pending_draw_ops(&scene, 7, 6, &[], &deferred);
+        assert_eq!(depths(&only_deferred), [0, 2, 4]);
+        assert!(matches!(only_deferred, Cow::Borrowed(_)));
+        let only_scene = pending_draw_ops(&scene, 3, 6, &[], &[]);
+        assert_eq!(depths(&only_scene), [3, 5]);
+        assert!(matches!(only_scene, Cow::Borrowed(_)));
+        let mixed = pending_draw_ops(&scene, 3, 6, &[(5, 6)], &deferred);
+        assert_eq!(depths(&mixed), [0, 2, 3, 4]);
+        let excluded_scene = pending_draw_ops(&scene, 3, 6, &[(3, 6)], &deferred);
+        assert_eq!(depths(&excluded_scene), [0, 2, 4]);
+        assert!(matches!(excluded_scene, Cow::Borrowed(_)));
+        assert!(pending_draw_ops(&scene, 0, 0, &[], &deferred).is_empty());
+        assert_eq!(depths(&pending_draw_ops(&scene, 0, 3, &[(0, 3)], &[])), []);
+    }
+
+    #[test]
     fn an_inverted_op_range_is_empty_even_when_an_op_sits_at_its_end() {
         let ops = [op(1), op(3), op(3), op(5)];
         assert!(filtered_ops_in_range(&ops, 4, 3, &[]).is_empty());
@@ -3905,6 +4064,87 @@ mod tests {
                 .collect::<Vec<_>>(),
             [3, 3]
         );
+    }
+
+    #[test]
+    fn reused_coverage_scratch_replaces_prior_clips_and_respects_draw_order() {
+        let rect = |x, width| DeviceRect {
+            x,
+            y: 0.0,
+            width,
+            height: 10.0,
+        };
+        let holes: Vec<_> = (0..8)
+            .map(|index| Blocker {
+                z: index,
+                rect: rect(index as f32 * 3.0, 2.0),
+            })
+            .collect();
+        let mut covered = Vec::new();
+        collect_covered_rects(&holes, 7, rect(0.0, 24.0), &mut covered);
+        assert_eq!(covered.len(), 7);
+        assert_eq!(covered.last(), Some(&rect(18.0, 2.0)));
+        collect_covered_rects(&holes, 3, rect(4.0, 4.0), &mut covered);
+        assert_eq!(covered, [rect(4.0, 1.0), rect(6.0, 2.0)]);
+        collect_covered_rects(&holes, 3, rect(12.0, 6.0), &mut covered);
+        assert!(covered.is_empty());
+        collect_covered_rects(&[], usize::MAX, rect(0.0, 24.0), &mut covered);
+        assert!(covered.is_empty());
+    }
+
+    #[test]
+    fn many_overlapping_holes_preserve_every_uncovered_pixel_once() {
+        let rect = DeviceRect {
+            x: 0.0,
+            y: 0.0,
+            width: 20.0,
+            height: 20.0,
+        };
+        let mut holes: Vec<_> = (1..=4)
+            .map(|index| DeviceRect {
+                x: (index * 4 - 2) as f32,
+                y: 2.0,
+                width: 1.0,
+                height: 16.0,
+            })
+            .collect();
+        holes.extend([
+            DeviceRect {
+                x: -2.0,
+                y: 8.0,
+                width: 14.0,
+                height: 2.0,
+            },
+            DeviceRect {
+                x: 6.0,
+                y: 8.0,
+                width: 20.0,
+                height: 2.0,
+            },
+        ]);
+        let parts = rect.subtract_all(&holes);
+        assert!(parts.len() > 4);
+        for part in &parts {
+            assert_eq!(part.intersect(rect), Some(*part));
+        }
+        for y in 0..20 {
+            for x in 0..20 {
+                let pixel = DeviceRect {
+                    x: x as f32,
+                    y: y as f32,
+                    width: 1.0,
+                    height: 1.0,
+                };
+                let covered = holes.iter().any(|hole| hole.intersect(pixel).is_some());
+                let count = parts
+                    .iter()
+                    .filter(|part| part.intersect(pixel).is_some())
+                    .count();
+                assert_eq!(count, usize::from(!covered), "pixel=({x}, {y})");
+            }
+        }
+        holes.push(rect);
+        assert!(rect.subtract_all(&holes).is_empty());
     }
 
     #[test]
@@ -3930,6 +4170,12 @@ mod tests {
             },
         ];
         let parts = rect.subtract_all(&holes);
+        assert!(rect.subtract(rect).is_empty());
+        assert_eq!(
+            rect.subtract(rect.translated(Point { x: 10.0, y: 0.0 }))
+                .as_slice(),
+            &[rect]
+        );
         let area: f32 = parts.iter().map(|part| part.width * part.height).sum();
         assert_eq!(area, 100.0 - 9.0 - 16.0);
         for (index, a) in parts.iter().enumerate() {

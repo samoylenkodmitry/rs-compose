@@ -1,4 +1,4 @@
-use std::{ops::Range, rc::Rc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use cranpose_core::{MemoryApplier, NodeId};
 #[cfg(test)]
@@ -90,7 +90,7 @@ fn layer_shadow_run(rect: Rect, color: Color, shape: Option<RoundedCornerShape>)
     };
     let mut recorder = ShapeRecorder::default();
     recorder.push_primitive(primitive);
-    RunDraw::whole(recorder, Placement::at(origin, None, None)).expect("a shadow rect")
+    RunDraw::whole(Arc::new(recorder), Placement::at(origin, None, None)).expect("a shadow rect")
 }
 
 fn shadow_occluder(
@@ -1817,9 +1817,7 @@ pub(crate) fn update_from_applier(
         return SceneUpdateOutcome::Patched;
     }
 
-    scene.hits.clear();
-    scene.node_index.clear();
-    scene.next_hit_z = 0;
+    scene.clear_hits();
     let Some(graph) = scene.graph.take() else {
         render_from_applier(applier, root, scene, scale);
         return SceneUpdateOutcome::Rebuilt;
@@ -2001,7 +1999,7 @@ pub(crate) fn push_draw_primitive(
 /// layer's record space, painted by the layer, under `blend_mode`; false
 /// when the primitive is not a shape.
 fn record_shadow_caster(
-    recorder: &mut ShapeRecorder,
+    recorder: &mut Arc<ShapeRecorder>,
     primitive: DrawPrimitive,
     layer: &GraphicsLayer,
     blend_mode: BlendMode,
@@ -2009,10 +2007,13 @@ fn record_shadow_caster(
     let Some(shape) = loose_shape(&primitive, layer) else {
         return false;
     };
-    matches!(
-        recorder.push_primitive(blended(shape, Some(blend_mode))),
-        Recorded::Shape(_)
-    )
+    let recorder = Arc::make_mut(recorder);
+    let recorded = if blend_mode == BlendMode::SrcOver {
+        recorder.push_primitive(shape)
+    } else {
+        recorder.push_shape_primitive(shape, blend_mode)
+    };
+    matches!(recorded, Recorded::Shape(_))
 }
 
 fn push_shadow_primitive(
@@ -2035,19 +2036,32 @@ fn push_shadow_primitive(
             blur_radius,
             blend_mode,
         } => {
-            let mut shapes = ShapeRecorder::default();
-            if !record_shadow_caster(&mut shapes, *shape, layer, blend_mode) {
+            let mut shapes = scene.take_shadow_recorder();
+            if !record_shadow_caster(
+                &mut shapes,
+                std::rc::Rc::unwrap_or_clone(shape),
+                layer,
+                blend_mode,
+            ) {
                 return;
             }
-            let mut cutouts = ShapeRecorder::default();
-            if let Some(cutout) = cutout
-                && !record_shadow_caster(&mut cutouts, *cutout, layer, BlendMode::DstOut)
-            {
-                return;
-            }
+            let cutouts = if let Some(cutout) = cutout {
+                let mut recorder = scene.take_shadow_recorder();
+                if !record_shadow_caster(
+                    &mut recorder,
+                    std::rc::Rc::unwrap_or_clone(cutout),
+                    layer,
+                    BlendMode::DstOut,
+                ) {
+                    return;
+                }
+                RunDraw::whole(recorder, placement)
+            } else {
+                None
+            };
             scene.push_shadow_draw(ShadowDraw {
                 shapes: RunDraw::whole(shapes, placement),
-                post_blur_cutouts: RunDraw::whole(cutouts, placement),
+                post_blur_cutouts: cutouts,
                 texts: vec![],
                 blur_radius,
                 clip,
@@ -2063,10 +2077,18 @@ fn push_shadow_primitive(
             blend_mode,
             clip_rect,
         } => {
-            let mut shapes = ShapeRecorder::default();
-            if !record_shadow_caster(&mut shapes, *fill, layer, blend_mode)
-                || !record_shadow_caster(&mut shapes, *cutout, layer, BlendMode::DstOut)
-            {
+            let mut shapes = scene.take_shadow_recorder();
+            if !record_shadow_caster(
+                &mut shapes,
+                std::rc::Rc::unwrap_or_clone(fill),
+                layer,
+                blend_mode,
+            ) || !record_shadow_caster(
+                &mut shapes,
+                std::rc::Rc::unwrap_or_clone(cutout),
+                layer,
+                BlendMode::DstOut,
+            ) {
                 return;
             }
             let abs_clip = Rect {
@@ -2102,6 +2124,33 @@ mod tests {
 
     use super::*;
     use crate::scene::CompositorScene as Scene;
+
+    #[test]
+    fn shadow_casters_preserve_the_requested_cutout_blend() {
+        let mut recorder = Arc::new(ShapeRecorder::default());
+        let primitive = DrawPrimitive::Rect {
+            rect: Rect {
+                x: 2.0,
+                y: 3.0,
+                width: 8.0,
+                height: 9.0,
+            },
+            brush: Brush::solid(Color::WHITE),
+            stroke: None,
+        };
+        assert!(record_shadow_caster(
+            &mut recorder,
+            primitive,
+            &GraphicsLayer::default(),
+            BlendMode::DstOut,
+        ));
+        assert_eq!(recorder.tables().segments.len(), 1);
+        assert_eq!(recorder.tables().segments[0].blend, BlendMode::DstOut);
+        assert_eq!(
+            recorder.tables().shapes.get(0).unwrap().blend_mode(),
+            BlendMode::DstOut
+        );
+    }
 
     fn synthetic_text_layout(
         text: &str,
